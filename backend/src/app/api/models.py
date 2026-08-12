@@ -15,11 +15,12 @@ from app.schemas.requests import (
     CreateModelConfigRequest,
     CreateModelProviderRequest,
     TestModelRequest,
+    UpdateModelProviderCredentialRequest,
     UpdateModelConfigRequest,
 )
 from app.services.llm.gateway import test_model_config
 from app.services.model_config_resolver import normalize_provider_type
-from app.services.serialization import model_config_to_dict, model_provider_to_dict
+from app.services.serialization import model_config_to_dict, model_provider_to_dict, strip_sensitive
 from model_provider import get_builtin_providers
 
 
@@ -52,14 +53,15 @@ async def _resolve_provider_by_type(
     await ensure_model_tables(db)
     from model_provider import get_builtin_providers
 
-    # 查找已存在的同类型 provider（优先 owner_id 为 None 的内置记录）
+    # 内置元数据只是模板；每个用户持有自己的 provider 与凭据。
     provider = await db.scalar(
         select(ModelProvider)
         .where(
             ModelProvider.provider_type == provider_type,
+            ModelProvider.owner_id == user.id,
             ModelProvider.deleted_at.is_(None),
         )
-        .order_by(ModelProvider.owner_id.is_(None).desc())
+        .order_by(ModelProvider.created_at.asc())
     )
     if provider:
         return provider
@@ -71,11 +73,11 @@ async def _resolve_provider_by_type(
         raise ValidationAppError(f"不支持的 provider 类型: {provider_type}")
 
     provider = ModelProvider(
-        owner_id=None,
+        owner_id=user.id,
         name=meta["name"],
         provider_type=provider_type,
         base_url=meta.get("base_url", "").rstrip("/"),
-        api_key_ref="mock",
+        api_key_ref=None,
         default_model=meta.get("default_model", ""),
         supports_streaming=meta.get("supports_streaming", True),
         supports_embeddings=meta.get("supports_embeddings", False),
@@ -117,11 +119,11 @@ async def create_model_provider(
         name=payload.name,
         provider_type=payload.provider_type,
         base_url=payload.base_url.rstrip("/"),
-        api_key_ref=payload.api_key or "mock",
+        api_key_ref=payload.api_key or None,
         default_model=payload.default_model,
         supports_streaming=payload.supports_streaming,
         supports_embeddings=payload.supports_embeddings,
-        config=payload.config,
+        config=strip_sensitive(payload.config),
         status="active",
     )
     db.add(provider)
@@ -159,9 +161,29 @@ async def update_model_provider(
     provider.default_model = payload.default_model
     provider.supports_streaming = payload.supports_streaming
     provider.supports_embeddings = payload.supports_embeddings
-    provider.config = payload.config
+    provider.config = strip_sensitive(payload.config)
     await db.commit()
     return ok(model_provider_to_dict(provider), "模型供应商已更新")
+
+
+@router.patch(
+    "/model-providers/{provider_id}/credential",
+    response_model=ApiResponse[dict],
+)
+async def update_model_provider_credential(
+    provider_id: str,
+    payload: UpdateModelProviderCredentialRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    provider = await _get_provider(db, user, provider_id)
+    if provider.owner_id != user.id and user.role != "admin":
+        raise ForbiddenError("只有创建者或管理员可更新模型凭据")
+    provider.api_key_ref = payload.api_key.strip()
+    if not provider.api_key_ref:
+        raise ValidationAppError("API Key 不能为空")
+    await db.commit()
+    return ok({"id": provider.id, "api_key_set": True}, "模型凭据已更新")
 
 
 @router.delete("/model-providers/{provider_id}", response_model=ApiResponse[dict])
@@ -228,7 +250,7 @@ async def create_model_config(
         context_window=payload.context_window,
         max_output_tokens=payload.max_output_tokens,
         temperature_default=payload.temperature_default,
-        config=payload.config,
+        config=strip_sensitive(payload.config),
     )
     db.add(config)
     await db.commit()
@@ -269,7 +291,7 @@ async def update_model_config(
     if payload.temperature_default is not None:
         config.temperature_default = payload.temperature_default
     if payload.config is not None:
-        config.config = payload.config
+        config.config = strip_sensitive(payload.config)
     await db.commit()
     await db.refresh(config)
     return ok(model_config_to_dict(config), "模型配置已更新")

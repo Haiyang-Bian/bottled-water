@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
-from app.core.errors import UnauthorizedError, ValidationAppError
+from app.core.errors import ConflictError, UnauthorizedError, ValidationAppError
 from app.core.response import ok
 from app.core.security import create_access_token, hash_password, verify_password
 from app.deps import get_current_user
 from db import get_db
-from db.models import User, UserSettings, utcnow
+from db.models import Role, User, UserRole, UserSettings, utcnow
 from app.schemas.common import ApiResponse, LoginOut, OkResponse, UserResponse
 from app.schemas.requests import (
     ChangePasswordRequest,
@@ -18,7 +18,6 @@ from app.schemas.requests import (
     RegisterRequest,
     UpdateProfileRequest,
 )
-from app.services.seed import ensure_seed_data
 from app.services.serialization import user_to_dict
 
 
@@ -41,14 +40,15 @@ def _login_response(user: User) -> dict:
 
 
 async def _register(db: AsyncSession, payload: dict) -> tuple[dict, int]:
-    email = payload.get("email") or payload.get("username") or "demo@agenthub.local"
+    email = str(payload.get("email") or "").strip().lower()
     username = payload.get("username") or payload.get("name") or email.split("@")[0]
-    password = payload.get("password") or get_settings().demo_password
+    username = str(username or "").strip()
+    password = str(payload.get("password") or "")
     if not email or not username or not password:
         raise ValidationAppError("邮箱、用户名和密码不能为空")
     existing = await _find_user(db, email) or await _find_user(db, username)
     if existing:
-        return _login_response(existing), 409
+        raise ConflictError("邮箱或用户名已存在")
     user = User(
         email=email,
         username=username,
@@ -56,25 +56,30 @@ async def _register(db: AsyncSession, payload: dict) -> tuple[dict, int]:
         display_name=payload.get("display_name") or payload.get("name") or username,
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("邮箱或用户名已存在") from exc
     db.add(UserSettings(user_id=user.id, theme="light"))
+    member_role = await db.scalar(
+        select(Role).where(Role.code == "ROLE_USER", Role.deleted_at.is_(None))
+    )
+    if not member_role:
+        raise ValidationAppError("系统角色尚未初始化")
+    db.add(UserRole(user_id=user.id, role_id=member_role.id, assigned_by=user.id))
     await db.commit()
     await db.refresh(user)
     return _login_response(user), 201
 
 
 async def _login(db: AsyncSession, payload: dict) -> dict:
-    settings = get_settings()
-    if payload.get("demo") or payload.get("name") == "demo":
-        user = await ensure_seed_data(db)
-        return _login_response(user)
     username = payload.get("username") or payload.get("email") or payload.get("name")
-    password = payload.get("password") or settings.demo_password
-    if not username:
-        user = await ensure_seed_data(db)
-        return _login_response(user)
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise ValidationAppError("用户名和密码不能为空")
     user = await _find_user(db, username)
-    if not user or not verify_password(password, user.password_hash):
+    if not user or user.status != "active" or not verify_password(password, user.password_hash):
         raise UnauthorizedError("用户名或密码错误")
     user.last_login_at = utcnow()
     user.login_count += 1
@@ -125,19 +130,6 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         包含访问令牌和用户信息的成功响应。
     """
     return ok(await _login(db, payload.model_dump()), "登录成功")
-
-
-@router.post("/auth/demo", response_model=ApiResponse[LoginOut])
-async def demo_login(db: AsyncSession = Depends(get_db)):
-    """演示用户快速登录。
-
-    Args:
-        db: 数据库会话。
-
-    Returns:
-        演示用户的访问令牌和基本信息。
-    """
-    return ok(_login_response(await ensure_seed_data(db)), "演示用户已登录")
 
 
 @router.get("/auth/me", response_model=UserResponse)

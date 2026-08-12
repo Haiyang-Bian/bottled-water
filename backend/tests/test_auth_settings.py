@@ -40,6 +40,39 @@ def test_user_can_register_login_and_change_password(client: Any) -> None:
     assert new_login.status_code == 200, new_login.text
 
 
+def test_duplicate_registration_returns_conflict_without_token(client: Any) -> None:
+    suffix = uuid.uuid4().hex[:8]
+    payload = {
+        "email": f"duplicate-{suffix}@example.com",
+        "username": f"duplicate_{suffix}",
+        "display_name": "Original User",
+        "password": "Original123!",
+    }
+    first = client.post("/api/v1/auth/register", json=payload)
+    assert first.status_code == 200, first.text
+
+    duplicate = client.post(
+        "/api/v1/auth/register",
+        json={**payload, "display_name": "Attacker", "password": "Attacker123!"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    body = duplicate.json()
+    assert "access_token" not in body
+    assert "token" not in body
+    assert not body.get("data") or "access_token" not in body["data"]
+
+    attacker_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": payload["email"], "password": "Attacker123!"},
+    )
+    assert attacker_login.status_code == 401
+
+
+def test_demo_login_route_is_removed(client: Any) -> None:
+    response = client.post("/api/v1/auth/demo")
+    assert response.status_code == 404
+
+
 def test_user_can_update_profile_signature(client: Any) -> None:
     suffix = uuid.uuid4().hex[:8]
     registered = client.post(

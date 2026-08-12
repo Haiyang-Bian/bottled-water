@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, ValidationAppError
@@ -11,16 +11,12 @@ from app.deps import get_current_user
 from db import get_db
 from db.models import AuditLog, Permission, Role, RolePermission, User, UserRole, utcnow
 from app.schemas.common import ApiResponse
-from app.services.audit import permissions_for_user, write_audit_log
+from app.services.access_control import permissions_for_user, require_permission, roles_for_user
+from app.services.audit import write_audit_log
 from app.services.serialization import iso
 
 
 router = APIRouter(tags=["security-ops"])
-
-
-def _security_admin(user: User) -> None:
-    if user.role not in {"admin", "developer"} and user.username != "demo":
-        raise ForbiddenError("需要安全管理权限")
 
 
 async def _role_to_dict(db: AsyncSession, role: Role) -> dict:
@@ -97,15 +93,17 @@ async def _roles_for_user_value(db: AsyncSession, role_value: str) -> tuple[str,
 
 
 @router.get("/permissions/me", response_model=ApiResponse[dict])
-async def my_permissions(user: User = Depends(get_current_user)):
-    permissions = permissions_for_user(user)
+async def my_permissions(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    permissions = await permissions_for_user(db, user)
+    roles = await roles_for_user(db, user)
     return ok(
         {
             "user_id": user.id,
             "role": user.role,
-            "roles": ["ROLE_USER", f"ROLE_{user.role.upper()}"]
-            if user.role != "member"
-            else ["ROLE_USER"],
+            "roles": roles,
             "permissions": permissions,
         }
     )
@@ -116,6 +114,7 @@ async def list_permissions(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    await require_permission(db, user, "security:view")
     permissions = (
         await db.scalars(select(Permission).order_by(Permission.resource, Permission.action))
     ).all()
@@ -129,6 +128,7 @@ async def list_roles(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    await require_permission(db, user, "security:view")
     roles = (
         await db.scalars(select(Role).where(Role.deleted_at.is_(None)).order_by(Role.code))
     ).all()
@@ -147,7 +147,7 @@ async def create_role(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _security_admin(user)
+    await require_permission(db, user, "security:manage")
     code = str(payload.code or "").strip().upper()
     if not code.startswith("ROLE_"):
         code = f"ROLE_{code or 'CUSTOM'}"
@@ -174,7 +174,7 @@ async def create_role(
 
 
 class UpdateRolePermissionsRequest(BaseModel):
-    permission_codes: list[str] = []
+    permission_codes: list[str] = Field(default_factory=list)
 
 
 @router.patch("/security/roles/{role_id}/permissions", response_model=ApiResponse[dict])
@@ -184,16 +184,22 @@ async def update_role_permissions(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _security_admin(user)
+    await require_permission(db, user, "security:manage")
     role = await db.get(Role, role_id)
     if not role or role.deleted_at is not None:
         raise ForbiddenError("Role not found")
+    if role.is_system:
+        raise ForbiddenError("System role permissions are immutable")
     codes = [str(item) for item in payload.permission_codes]
     permissions = (
         (await db.scalars(select(Permission).where(Permission.code.in_(codes)))).all()
         if codes
         else []
     )
+    found_codes = {item.code for item in permissions}
+    missing_codes = sorted(set(codes) - found_codes)
+    if missing_codes:
+        raise ValidationAppError(f"Permission not found: {', '.join(missing_codes)}")
     for row in (
         await db.scalars(select(RolePermission).where(RolePermission.role_id == role.id))
     ).all():
@@ -219,17 +225,15 @@ async def list_security_users(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role in {"admin", "developer"} or user.username == "demo":
-        users = (
-            await db.scalars(
-                select(User)
-                .where(User.deleted_at.is_(None))
-                .order_by(User.created_at.desc())
-                .limit(200)
-            )
-        ).all()
-    else:
-        users = [user]
+    await require_permission(db, user, "user:manage")
+    users = (
+        await db.scalars(
+            select(User)
+            .where(User.deleted_at.is_(None))
+            .order_by(User.created_at.desc())
+            .limit(200)
+        )
+    ).all()
     role_rows = (await db.scalars(select(UserRole))).all()
     by_user: dict[str, list[str]] = {}
     role_map = {role.id: role.code for role in (await db.scalars(select(Role))).all()}
@@ -267,12 +271,27 @@ async def update_user_role(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _security_admin(user)
+    await require_permission(db, user, "user:manage")
     target = await db.get(User, target_user_id)
     if not target or target.deleted_at is not None:
         raise ForbiddenError("User not found")
     previous_role = target.role
     normalized_role, roles = await _roles_for_user_value(db, payload.role)
+    if target.id == user.id and normalized_role != "admin":
+        raise ForbiddenError("Administrators cannot demote themselves")
+    if previous_role == "admin" and normalized_role != "admin":
+        active_admin_count = await db.scalar(
+            select(func.count(User.id))
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                Role.code == "ROLE_ADMIN",
+                User.status == "active",
+                User.deleted_at.is_(None),
+            )
+        )
+        if int(active_admin_count or 0) <= 1:
+            raise ForbiddenError("Cannot demote the last active administrator")
     target.role = normalized_role
     target.updated_at = utcnow()
     for row in (
@@ -315,7 +334,8 @@ async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in {"admin", "developer"}:
+    can_view_all = "log:view:all" in await permissions_for_user(db, user)
+    if not can_view_all:
         query = select(AuditLog).where(AuditLog.actor_id == user.id)
     else:
         query = select(AuditLog)
@@ -359,7 +379,8 @@ async def audit_stats(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in {"admin", "developer"} and user.username != "demo":
+    can_view_all = "log:view:all" in await permissions_for_user(db, user)
+    if not can_view_all:
         query = select(AuditLog).where(AuditLog.actor_id == user.id)
     else:
         query = select(AuditLog)
@@ -381,7 +402,9 @@ async def audit_stats(
 
 
 @router.get("/admin/guard", response_model=ApiResponse[dict])
-async def admin_guard(user: User = Depends(get_current_user)):
-    if user.role != "admin":
-        raise ForbiddenError("需要管理员权限")
+async def admin_guard(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await require_permission(db, user, "user:manage")
     return ok({"allowed": True})

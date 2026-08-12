@@ -4,7 +4,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -20,6 +22,14 @@ class DBSettings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
 
     database_url: str = "postgresql+psycopg://agenthub:agenthub@localhost:54326/agenthub"
+
+    @model_validator(mode="after")
+    def validate_production_database(self) -> "DBSettings":
+        if self.environment == "production":
+            password = make_url(self.database_url).password
+            if password in {None, "", "agenthub", "agenthub_secret"}:
+                raise ValueError("DATABASE_URL must use a non-placeholder password in production")
+        return self
 
     @property
     def resolved_database_url(self) -> str:

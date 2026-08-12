@@ -6,8 +6,7 @@ class LoginRequest(BaseModel):
     username: str | None = None
     email: str | None = None
     name: str | None = None
-    password: str = "agenthub"
-    demo: bool = False
+    password: str
 
 
 class RegisterRequest(BaseModel):
@@ -325,6 +324,10 @@ class CreateModelProviderRequest(BaseModel):
     supports_streaming: bool = True
     supports_embeddings: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateModelProviderCredentialRequest(BaseModel):
+    api_key: str = Field(min_length=1)
 
 
 class CreateModelConfigRequest(BaseModel):
