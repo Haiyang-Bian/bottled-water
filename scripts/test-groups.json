@@ -13,12 +13,12 @@
       "tests/test_workspace_security_deploy_task.py::test_member_cannot_update_user_roles"
     ],
     "providers:unit": [
-      "tests/model_provider/test_ark_provider.py",
       "tests/model_provider/test_ark_provider_streaming_http.py",
+      "tests/model_provider/test_deepseek_provider.py",
       "tests/test_model_provider_streaming.py"
     ],
     "providers:integration": [
-      "tests/test_model_mcp_sandbox.py"
+      "tests/test_deepseek_api.py"
     ],
     "agents:unit": [
       "tests/test_agent_runtime/test_core_types.py",
@@ -27,6 +27,7 @@
     ],
     "agents:integration": [
       "tests/test_agent_conversation_capabilities.py",
+      "tests/test_function_calling.py",
       "tests/test_orchestrator.py",
       "tests/test_orchestrator_output.py"
     ],
@@ -40,7 +41,10 @@
       "tests/test_chat_stability.py",
       "tests/test_websocket.py"
     ],
-    "providers:live": []
+    "providers:live": [
+      "tests/model_provider/test_ark_provider.py",
+      "tests/model_provider/test_deepseek_live.py"
+    ]
   },
   "frontend": {
     "auth:component": [

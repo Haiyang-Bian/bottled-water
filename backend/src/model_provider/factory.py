@@ -11,6 +11,8 @@ from common.logger import get_logger
 from .core.interfaces import BaseModelProvider
 from .core.config import ModelConfig
 from .providers.ark import ArkProvider
+from .providers.deepseek import DeepSeekProvider
+from .providers.openai_compatible import OpenAICompatibleProvider
 
 logger = get_logger(__name__)
 
@@ -18,9 +20,9 @@ logger = get_logger(__name__)
 _PROVIDER_REGISTRY: Dict[str, type] = {
     "ark": ArkProvider,
     "volcengine": ArkProvider,
-    # 别名映射
-    "openai_compatible": ArkProvider,
-    "openai": ArkProvider,
+    "openai_compatible": OpenAICompatibleProvider,
+    "openai": OpenAICompatibleProvider,
+    "deepseek": DeepSeekProvider,
 }
 
 # 内置 Provider 元数据（前端厂商列表来源）
@@ -45,6 +47,20 @@ _PROVIDER_METADATA: Dict[str, dict] = {
         "default_model": "",
         "supports_streaming": True,
         "supports_embeddings": False,
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "models": [
+            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash"},
+            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+        ],
+        "supports_streaming": True,
+        "supports_embeddings": False,
+        "supports_tools": True,
+        "supports_thinking": True,
+        "reasoning_efforts": ["high", "max"],
     },
 }
 

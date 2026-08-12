@@ -453,6 +453,7 @@ class AgentLoop:
                 role="assistant",
                 content=content,
                 tool_calls=tool_calls,
+                reasoning_content=response.reasoning_content or None,
             )
             messages.append(assistant_msg)
 
@@ -1581,6 +1582,7 @@ class AgentLoop:
     ) -> ChatResponse:
         """流式对话，emit agent.token 事件，组装成 ChatResponse"""
         content_parts: List[str] = []
+        reasoning_parts: List[str] = []
         token_filter = _StatusReportStreamFilter()
         stream_started = False
         stream_context = stream_context or {}
@@ -1630,6 +1632,7 @@ class AgentLoop:
 
             # 1.5 思考过程
             if chunk.reasoning:
+                reasoning_parts.append(chunk.reasoning)
                 await ensure_stream_started()
                 await _emit(
                     "agent.thinking",
@@ -1681,6 +1684,7 @@ class AgentLoop:
         return ChatResponse(
             content=full_content,
             tool_calls=final_tool_calls,
+            reasoning_content="".join(reasoning_parts),
         )
 
     async def _build_model_context(
@@ -1787,6 +1791,7 @@ class AgentLoop:
                     name=raw.get("name"),
                     tool_calls=raw.get("tool_calls"),
                     tool_call_id=raw.get("tool_call_id"),
+                    reasoning_content=raw.get("reasoning_content"),
                 )
             )
         system_prompt = "\n\n".join(part for part in system_parts if part) or fallback_system_prompt

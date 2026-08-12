@@ -21,6 +21,15 @@ class FragmentedToolProvider(BaseModelProvider):
         yield StreamChunk(content="done")
 
 
+class ReasoningProvider(BaseModelProvider):
+    async def chat(self, *args, **kwargs):  # pragma: no cover - this helper must not use chat
+        raise AssertionError("collect_chat_stream must consume chat_stream")
+
+    async def chat_stream(self, *args, **kwargs):
+        yield StreamChunk(reasoning="private reasoning")
+        yield StreamChunk(content="public answer", finish_reason="stop")
+
+
 @pytest.mark.asyncio
 async def test_collect_chat_stream_merges_fragmented_tool_calls():
     provider = FragmentedToolProvider({"model": "test-model"})
@@ -38,3 +47,16 @@ async def test_collect_chat_stream_merges_fragmented_tool_calls():
             "function": {"name": "lookup", "arguments": '{"query":"hello"}'},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_collect_chat_stream_keeps_reasoning_separate_from_content():
+    provider = ReasoningProvider({"model": "test-model"})
+
+    response = await collect_chat_stream(
+        provider,
+        messages=[ChatMessage(role="user", content="think")],
+    )
+
+    assert response.content == "public answer"
+    assert response.reasoning_content == "private reasoning"

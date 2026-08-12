@@ -18,6 +18,7 @@ class ChatMessage:
     name: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
     tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 @dataclass
@@ -27,6 +28,8 @@ class ChatResponse:
     tool_calls: Optional[List[Dict]] = None
     usage: Optional[Dict[str, int]] = None
     model: Optional[str] = None
+    reasoning_content: str = ""
+    finish_reason: Optional[str] = None
 
 
 @dataclass

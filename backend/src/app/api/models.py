@@ -272,11 +272,7 @@ async def update_model_config(
     )
     if not config:
         raise NotFoundError("模型配置不存在")
-    if (
-        config.provider.owner_id != user.id
-        and config.provider.owner_id is not None
-        and user.role != "admin"
-    ):
+    if config.provider.owner_id != user.id and user.role != "admin":
         raise ForbiddenError("无权修改该模型配置")
     if payload.name is not None:
         config.name = payload.name
@@ -310,11 +306,7 @@ async def delete_model_config(
     )
     if not config:
         raise NotFoundError("模型配置不存在")
-    if (
-        config.provider.owner_id != user.id
-        and config.provider.owner_id is not None
-        and user.role != "admin"
-    ):
+    if config.provider.owner_id != user.id and user.role != "admin":
         raise ForbiddenError("无权删除该模型配置")
     config.deleted_at = utcnow()
     config.status = "deleted"
@@ -359,7 +351,17 @@ async def test_model(
 ):
     await ensure_model_tables(db)
     model_id = payload.model_config_id
-    if not model_id:
+    if model_id:
+        selected = await db.scalar(
+            select(ModelConfig)
+            .options(selectinload(ModelConfig.provider))
+            .where(ModelConfig.id == model_id, ModelConfig.deleted_at.is_(None))
+        )
+        if not selected:
+            raise NotFoundError("模型配置不存在")
+        if selected.provider.owner_id not in {None, user.id} and user.role != "admin":
+            raise ForbiddenError("无权测试该模型配置")
+    else:
         model = await db.scalar(
             select(ModelConfig)
             .join(ModelProvider)
