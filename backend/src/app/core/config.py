@@ -139,8 +139,14 @@ class Settings(BaseSettings):
             "agenthub-dev-secret-change-me",
             "change-me-in-production",
             "change-me-before-public-deploy",
+            "replace-with-at-least-32-random-characters",
         }
-        if self.secret_key in placeholders or len(self.secret_key) < 32:
+        normalized_secret = self.secret_key.strip().lower()
+        if (
+            normalized_secret in placeholders
+            or normalized_secret.startswith(("change-me", "replace-with"))
+            or len(self.secret_key) < 32
+        ):
             raise ValueError("SECRET_KEY must be a non-placeholder value of at least 32 characters")
         bootstrap_values = (
             self.bootstrap_admin_email,

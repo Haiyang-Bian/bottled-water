@@ -3,7 +3,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import pytest
+
 from app.core.config import Settings
+from db.config import DBSettings
 
 
 def unwrap(body: dict[str, Any]) -> Any:
@@ -45,6 +48,22 @@ def test_production_settings_reject_debug_and_placeholder_secret() -> None:
         assert "DEBUG" in str(exc)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("Production settings accepted insecure defaults")
+
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        Settings(
+            environment="production",
+            debug=False,
+            secret_key="replace-with-at-least-32-random-characters",
+        )
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        DBSettings(
+            environment="production",
+            database_url=(
+                "postgresql+psycopg://agenthub:"
+                "replace-with-a-strong-database-password@postgres:5432/agenthub"
+            ),
+        )
 
 
 def test_model_secrets_are_never_serialized(client: Any) -> None:

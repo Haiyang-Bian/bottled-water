@@ -27,7 +27,13 @@ class DBSettings(BaseSettings):
     def validate_production_database(self) -> "DBSettings":
         if self.environment == "production":
             password = make_url(self.database_url).password
-            if password in {None, "", "agenthub", "agenthub_secret"}:
+            normalized_password = (password or "").strip().lower()
+            if normalized_password in {
+                "",
+                "agenthub",
+                "agenthub_secret",
+                "replace-with-a-strong-database-password",
+            } or normalized_password.startswith(("change-me", "replace-with")):
                 raise ValueError("DATABASE_URL must use a non-placeholder password in production")
         return self
 
