@@ -51,6 +51,16 @@ testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
+markers = [
+    "unit: isolated logic tests without external services",
+    "integration: API, database, or multi-component integration tests",
+    "live: tests that call an explicitly configured external service",
+    "auth: authentication and account lifecycle tests",
+    "security: authorization, secret handling, and security configuration tests",
+    "providers: model provider adapter and discovery tests",
+    "agents: agent behavior and orchestration tests",
+    "runtime: scheduling, event bus, and runtime infrastructure tests",
+]
 
 log_cli = true
 log_cli_level = "INFO"
