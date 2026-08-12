@@ -10,7 +10,6 @@ import {
   App as AntApp,
 } from "antd";
 import {
-  ApiOutlined,
   LockOutlined,
   LoginOutlined,
   SafetyCertificateOutlined,
@@ -49,22 +48,13 @@ export function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
       } else {
         onLogin(
           await api.login(
-            values.email ?? "demo",
-            values.password ?? "agenthub",
+            values.email ?? "",
+            values.password ?? "",
           ),
         );
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "登录失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const demo = async () => {
-    setLoading(true);
-    try {
-      onLogin(await api.demoLogin());
     } finally {
       setLoading(false);
     }
@@ -109,7 +99,6 @@ export function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
             <Form.Item
               label={mode === "register" ? "邮箱" : "账号"}
               name="email"
-              initialValue={mode === "login" ? "demo" : undefined}
               rules={
                 mode === "register"
                   ? [
@@ -119,14 +108,14 @@ export function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
                         message: "请输入有效邮箱",
                       },
                     ]
-                  : undefined
+                  : [{ required: true, message: "请输入用户名或邮箱" }]
               }
             >
               <Input
                 size="large"
                 prefix={<UserOutlined />}
                 placeholder={
-                  mode === "register" ? "name@example.com" : "demo 或邮箱"
+                  mode === "register" ? "name@example.com" : "用户名或邮箱"
                 }
                 aria-label="email"
               />
@@ -150,18 +139,17 @@ export function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
             <Form.Item
               label="密码"
               name="password"
-              initialValue={mode === "login" ? "agenthub" : undefined}
               rules={
                 mode === "register"
                   ? [{ required: true, min: 6, message: "密码至少 6 位" }]
-                  : undefined
+                  : [{ required: true, message: "请输入密码" }]
               }
             >
               <Input.Password
                 size="large"
                 prefix={<LockOutlined />}
                 placeholder={
-                  mode === "register" ? "至少 6 位密码" : "agenthub"
+                  mode === "register" ? "至少 6 位密码" : "输入密码"
                 }
                 aria-label="password"
               />
@@ -188,19 +176,6 @@ export function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
               {mode === "register" ? "注册并进入" : "点击登录"}
             </Button>
 
-            {mode === "login" && (
-              <Button
-                size="large"
-                icon={<ApiOutlined />}
-                onClick={demo}
-                loading={loading}
-                data-testid="demo-login"
-                block
-                className="login-demo"
-              >
-                使用演示用户
-              </Button>
-            )}
           </Form>
 
           <Space className="login-footnote" split={<span />}>

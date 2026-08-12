@@ -1,9 +1,27 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-test("demo user completes the AgentHub collaboration loop", async ({ page }) => {
+async function registerTestUser(page: Page) {
+  const suffix = `${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+  const response = await page.request.post("/api/v1/auth/signup", {
+    data: {
+      email: `e2e-${suffix}@example.test`,
+      username: `e2e${suffix}`,
+      password: `E2e-${suffix}-Pass!42`,
+      display_name: "E2E User",
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  const token = body.data?.access_token ?? body.access_token;
+  expect(token).toBeTruthy();
+  await page.addInitScript((accessToken: string) => {
+    window.localStorage.setItem("agenthub_token", accessToken);
+  }, token);
+}
+
+test("registered user completes the AgentHub collaboration loop", async ({ page }) => {
+  await registerTestUser(page);
   await page.goto(process.env.AGENTHUB_E2E_PATH ?? "/");
-
-  await page.getByTestId("demo-login").click();
   await expect(page.getByTestId("new-group-chat")).toBeVisible();
 
   await page.getByTestId("new-group-chat").click();
@@ -64,8 +82,8 @@ test("demo user completes the AgentHub collaboration loop", async ({ page }) => 
 });
 
 test("settings split global models from per-group workflow and workspace control plane", async ({ page }) => {
+  await registerTestUser(page);
   await page.goto(process.env.AGENTHUB_E2E_PATH ?? "/");
-  await page.getByTestId("demo-login").click();
 
   await page.getByTestId("global-settings").click();
   await expect(page.getByText("全局设置")).toBeVisible();
@@ -113,8 +131,8 @@ test("settings split global models from per-group workflow and workspace control
 });
 
 test("agent marketplace supports AI generated config and editing custom agents", async ({ page }) => {
+  await registerTestUser(page);
   await page.goto(process.env.AGENTHUB_E2E_PATH ?? "/");
-  await page.getByTestId("demo-login").click();
   await page.getByTestId("agent-directory").click();
 
   const agentPrefix = `E2E${Date.now()}`;

@@ -19,6 +19,7 @@ import {
   DeleteOutlined,
   SaveOutlined,
   RocketOutlined,
+  ReloadOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -31,6 +32,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Tag,
   Typography,
   Dropdown,
@@ -40,6 +42,7 @@ import {
 import type { MenuProps } from "antd";
 import { api } from "@/api";
 import type { ModelConfig, ModelProvider, BuiltinProvider, User } from "@/types";
+import type { AvailableModel } from "@/api/model";
 
 const { Text } = Typography;
 
@@ -68,7 +71,9 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
   const [modelProviders, setModelProviders] = useState<ModelProvider[]>([]);
   const [builtinProviders, setBuiltinProviders] = useState<BuiltinProvider[]>([]);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // === 视图状态 ===
   const [view, setView] = useState<View>("list");
@@ -79,6 +84,7 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
 
   // === 表单 ===
   const [configForm] = Form.useForm();
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
 
   // === 测试 ===
   const [testResult, setTestResult] = useState("");
@@ -88,14 +94,16 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
   const loadModels = async () => {
     setLoading(true);
     try {
-      const [providers, configs, builtins] = await Promise.all([
+      const [providers, configs, builtins, available] = await Promise.all([
         api.modelProviders(),
         api.modelConfigs(),
         api.builtinProviders(),
+        api.availableModels().catch(() => [] as AvailableModel[]),
       ]);
       setModelProviders(providers);
       setModelConfigs(configs);
       setBuiltinProviders(builtins);
+      setAvailableModels(available);
     } finally {
       setLoading(false);
     }
@@ -135,21 +143,45 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
   /** 保存编辑后的模型配置 */
   const handleSaveEdit = async (values: Record<string, unknown>) => {
     if (!editingConfig) return;
-    const config: Record<string, unknown> = {};
-    if (values.api_key) {
-      config.api_key = String(values.api_key);
+    const provider = modelProviders.find((item) => item.id === editingConfig.provider_id);
+    const config: Record<string, unknown> = { ...(editingConfig.config || {}) };
+    delete config.api_key;
+    if (provider?.provider_type === "deepseek") {
+      config.thinking_enabled = Boolean(values.thinking_enabled);
+      config.reasoning_effort = String(values.reasoning_effort || "high");
     }
-    await api.updateModelConfig(editingConfig.id, {
+    const temperature = Number(values.temperature_default);
+    const updated = await api.updateModelConfig(editingConfig.id, {
       name: String(values.name),
       model_id: String(values.model_id),
       purpose: String(values.purpose),
       context_window: Number(values.context_window) || 128000,
       max_output_tokens: Number(values.max_output_tokens) || 4096,
-      temperature_default: Number(values.temperature_default) || 0.4,
+      temperature_default: Number.isFinite(temperature) ? temperature : 0.4,
       config,
     });
+    const apiKey = String(values.api_key || "").trim();
+    if (apiKey && provider) {
+      await api.updateModelProviderCredential(provider.id, apiKey);
+      configForm.setFieldValue("api_key", "");
+    }
+    setEditingConfig(updated);
     message.success("模型配置已更新");
     await loadModels();
+  };
+
+  const handleRefreshModels = async () => {
+    setRefreshing(true);
+    try {
+      const models = await api.availableModels(true);
+      setAvailableModels(models);
+      await loadModels();
+      message.success("模型列表已刷新");
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "刷新模型列表失败");
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   /** 测试模型连通性 */
@@ -204,20 +236,18 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
   const openEditor = (config: ModelConfig) => {
     setEditingConfig(config);
     setTestResult("");
-    const apiKey =
-      config.config &&
-      typeof config.config === "object" &&
-      "api_key" in config.config
-        ? String(config.config.api_key)
-        : "";
+    const thinking = config.config?.thinking_enabled === true;
+    setThinkingEnabled(thinking);
     configForm.setFieldsValue({
       name: config.name,
       model_id: config.model_id,
-      api_key: apiKey,
+      api_key: "",
       purpose: config.purpose,
       context_window: config.context_window,
       max_output_tokens: config.max_output_tokens,
       temperature_default: config.temperature_default,
+      thinking_enabled: thinking,
+      reasoning_effort: config.config?.reasoning_effort || "high",
     });
     setView("edit");
   };
@@ -231,6 +261,11 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
     label: p.name,
     icon: <ApiOutlined />,
   }));
+  const deepSeekBuiltin = builtinProviders.find((p) => p.provider_type === "deepseek");
+  const hasDeepSeekConfig = modelConfigs.some((config) => {
+    const provider = modelProviders.find((item) => item.id === config.provider_id);
+    return provider?.provider_type === "deepseek";
+  });
 
   // -----------------------------------------------------------
   // 渲染：列表视图
@@ -257,7 +292,37 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
           >
             查看厂商
           </Button>
+          <Button
+            icon={<ReloadOutlined />}
+            loading={refreshing}
+            onClick={handleRefreshModels}
+          >
+            刷新模型
+          </Button>
         </Space>
+
+        {deepSeekBuiltin && !hasDeepSeekConfig && (
+          <Card
+            size="small"
+            data-testid="deepseek-provider-card"
+            style={{ marginBottom: 16 }}
+            actions={[
+              <Button
+                type="link"
+                key="add-deepseek"
+                onClick={() => handleQuickCreate("deepseek")}
+              >
+                添加 DeepSeek
+              </Button>,
+            ]}
+          >
+            <Card.Meta
+              avatar={<Avatar icon={<ApiOutlined />} />}
+              title="DeepSeek"
+              description="OpenAI 兼容 API；默认使用 deepseek-v4-flash，可切换 V4 Pro。"
+            />
+          </Card>
+        )}
 
         {loading && modelConfigs.length === 0 ? (
           <Spin tip="加载中..." />
@@ -374,6 +439,8 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
                         {provider.supports_embeddings && (
                           <Tag>支持 Embedding</Tag>
                         )}
+                        {provider.supports_tools && <Tag>支持工具调用</Tag>}
+                        {provider.supports_thinking && <Tag>支持思考模式</Tag>}
                       </Space>
                     </Space>
                   }
@@ -394,6 +461,18 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
     const provider = modelProviders.find(
       (p) => p.id === editingConfig.provider_id,
     );
+    const builtinProvider = builtinProviders.find(
+      (p) => p.provider_type === provider?.provider_type,
+    );
+    const modelOptions = [
+      ...(builtinProvider?.models || []),
+      ...availableModels
+        .filter((item) => item.provider_id === provider?.id)
+        .map((item) => ({ id: item.model_id, name: item.name })),
+    ].filter(
+      (item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index,
+    );
+    const isDeepSeek = provider?.provider_type === "deepseek";
     return (
       <div>
         <Button
@@ -411,19 +490,33 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
             </Space>
           }
           extra={
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => handleDeleteConfig(editingConfig)}
-            >
-              删除
-            </Button>
+            <Space>
+              <Button
+                icon={<ReloadOutlined />}
+                loading={refreshing}
+                onClick={handleRefreshModels}
+              >
+                刷新模型
+              </Button>
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => handleDeleteConfig(editingConfig)}
+              >
+                删除
+              </Button>
+            </Space>
           }
         >
           <Form
             form={configForm}
             layout="vertical"
             onFinish={handleSaveEdit}
+            onValuesChange={(changed) => {
+              if ("thinking_enabled" in changed) {
+                setThinkingEnabled(Boolean(changed.thinking_enabled));
+              }
+            }}
           >
             <Form.Item label="厂商">
               <Input value={provider?.name} disabled />
@@ -441,12 +534,56 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
                 label="模型 ID"
                 rules={[{ required: true }]}
               >
-                <Input placeholder="doubao-seed-2-0-lite" />
+                {isDeepSeek ? (
+                  <Select
+                    style={{ width: 240 }}
+                    options={modelOptions.map((item) => ({
+                      label: item.name,
+                      value: item.id,
+                    }))}
+                    data-testid="deepseek-model-select"
+                  />
+                ) : (
+                  <Input placeholder="doubao-seed-2-0-lite" />
+                )}
               </Form.Item>
             </Space>
-            <Form.Item name="api_key" label="API Key">
-              <Input.Password placeholder="在此输入该模型的 API Key" />
+            <Form.Item
+              name="api_key"
+              label={
+                <Space>
+                  <span>API Key</span>
+                  {provider?.api_key_set && <Tag color="green">已配置</Tag>}
+                </Space>
+              }
+              extra="密钥永不回填；留空会保留当前密钥。"
+            >
+              <Input.Password
+                placeholder={provider?.api_key_set ? "已配置；留空保留" : "输入 API Key"}
+                autoComplete="new-password"
+              />
             </Form.Item>
+            {isDeepSeek && (
+              <Space align="start">
+                <Form.Item
+                  name="thinking_enabled"
+                  label="思考模式"
+                  valuePropName="checked"
+                >
+                  <Switch data-testid="deepseek-thinking-switch" />
+                </Form.Item>
+                <Form.Item name="reasoning_effort" label="推理强度">
+                  <Select
+                    style={{ width: 120 }}
+                    disabled={!thinkingEnabled}
+                    options={[
+                      { label: "High", value: "high" },
+                      { label: "Max", value: "max" },
+                    ]}
+                  />
+                </Form.Item>
+              </Space>
+            )}
             <Space align="start">
               <Form.Item name="purpose" label="用途">
                 <Select style={{ width: 150 }} options={PURPOSE_OPTIONS} />
@@ -458,7 +595,12 @@ export function ModelSettings({ message, user, onUserUpdated }: ModelSettingsPro
                 <Input type="number" />
               </Form.Item>
               <Form.Item name="temperature_default" label="温度">
-                <Input type="number" step="0.1" />
+                <Input
+                  type="number"
+                  step="0.1"
+                  disabled={isDeepSeek && thinkingEnabled}
+                  data-testid="model-temperature-input"
+                />
               </Form.Item>
             </Space>
             <Space>

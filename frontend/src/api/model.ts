@@ -44,6 +44,16 @@ export async function updateModelProvider(
   return await patch<ModelProvider>(`/model-providers/${id}`, payload);
 }
 
+export async function updateModelProviderCredential(
+  id: string,
+  apiKey: string,
+): Promise<{ id: string; api_key_set: boolean }> {
+  return await patch<{ id: string; api_key_set: boolean }>(
+    `/model-providers/${id}/credential`,
+    { api_key: apiKey },
+  );
+}
+
 export async function deleteModelProvider(id: string): Promise<{ id: string; deleted: boolean }> {
   return await del<{ id: string; deleted: boolean }>(`/model-providers/${id}`);
 }

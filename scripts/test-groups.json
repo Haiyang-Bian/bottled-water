@@ -53,7 +53,9 @@
     "security:component": [
       "tests/security-ops-panel.test.tsx"
     ],
-    "models:component": [],
+    "models:component": [
+      "tests/model-settings-deepseek.test.tsx"
+    ],
     "chat:unit": [
       "tests/message-cleaning.test.ts",
       "tests/message-filter.test.ts",
