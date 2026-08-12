@@ -4,7 +4,7 @@ This file is the compact status reference for current docs. It avoids historical
 
 ## Stable For Local Development And Demos
 
-- Authentication, demo login, users, workspaces, projects, and conversation management.
+- Authentication, open member registration, database-backed RBAC, administrator bootstrap, users, workspaces, projects, and conversation management.
 - Single-agent and group conversations with persisted messages and streaming responses.
 - New conversation defaults that select one Daily Chat Agent instead of preselecting every specialist agent.
 - Actor-runtime multi-agent coordination with Team Leader planning, suitable-agent selection, visible progress, agent reports, and optional aggregated final deliverables.
@@ -12,7 +12,7 @@ This file is the compact status reference for current docs. It avoids historical
 - Tool catalog, built-in tools, invocation records, and permission checks.
 - Interactive terminal tools for real CLI scaffolding and prompts, including stdin send, wait, snapshot, stop, and persisted invocation records.
 - Unified external coding agent tool invocation for Codex, Claude Code, and compatible adapters, including persisted runs and status/cancel paths.
-- Model provider management and Ark/OpenAI-compatible fallback configuration.
+- Owner-scoped model provider management for Ark, OpenAI-compatible endpoints, and DeepSeek V4 Flash/Pro, including encrypted credentials and optional thinking mode.
 - File upload, workspace file tree, preview/download operations, and attachment context.
 - Artifact generation, preview, versioning, diff, export, and deployment preview records, including local/Docker-stack container mode.
 - Workflow generation, editing, save/enable, run start, polling, runtime state persistence, and real node execution for supported node types.
@@ -31,6 +31,10 @@ This file is the compact status reference for current docs. It avoids historical
 
 ## Recently Hardened
 
+- Duplicate registration no longer logs into an existing account; disabled users and legacy Demo JWTs are rejected.
+- Demo authentication and its username permission bypass were removed. Database roles and permissions are now the authorization source of truth, with final-administrator protection.
+- Production rejects unsafe debug, secret, and sample database settings; unhandled errors return an `error_id` without exception details.
+- Provider credentials are encrypted, owner-scoped, and write-only through the API; model configuration responses do not contain keys.
 - Team Leader final messages are now emitted only from `scheduler.summary` when publication is appropriate; the old fallback that synthesized a Team Leader message after any multi-agent completion has been removed.
 - Multi-agent progress uses short planned task labels and does not repeat the whole user prompt for every agent.
 - Complex collaborative final answers aggregate source outputs, dependency chain, compliance checks, final products, and risks while preserving real artifact references.

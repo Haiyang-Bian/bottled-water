@@ -43,14 +43,12 @@ Open `http://localhost:5173`.
 
 ```powershell
 pnpm build
-pnpm exec vitest run --config tests/vitest.config.ts
+cd ..
+.\scripts\run-tests.ps1 -Stack frontend -Module models -Type component
+.\scripts\run-tests.ps1 -Stack frontend -Module workflow -Type unit
 ```
 
-Targeted workflow checks:
-
-```powershell
-pnpm exec vitest run tests/workflow-board-panel.test.tsx tests/workflow-studio.test.tsx tests/workflow-utils.test.ts --config tests/vitest.config.ts
-```
+Use `-List` to inspect groups. A full frontend Vitest run requires explicit `-All`.
 
 ## Important Surfaces
 

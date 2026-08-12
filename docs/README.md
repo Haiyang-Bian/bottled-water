@@ -12,6 +12,7 @@ This directory contains the current documentation for AgentHub. Historical desig
 - [Workflow runtime](./agent-workflow-runtime.md): single chat, group chat, workflow canvas, node execution, and persisted run state.
 - [Event protocol](./event-protocol.md): SSE/WebSocket event names and frontend merge behavior.
 - [Capability and data boundaries](./capability-data-boundaries.md): permissions, data ownership, and runtime safety boundaries.
+- [Security and model providers](./security-and-model-providers.md): RBAC, administrator bootstrap, secret handling, and DeepSeek setup.
 - [Current status](./implementation-status.md): what is complete, what is hardened enough for demos, and what remains a roadmap item.
 - [AI collaboration record](./ai-collaboration-record/README.md): Feishu-ready collaboration record, Spec, Rules, Skills, artifact links, and review checklist.
 
@@ -21,8 +22,6 @@ This directory contains the current documentation for AgentHub. Historical desig
 - Frontend source of truth: `frontend/src`.
 - Database schema source of truth: `backend/src/db/models` plus `backend/alembic/versions`.
 - Deployment source of truth: `docker/docker-compose.yml`, `docker/Dockerfile.backend`, `docker/Dockerfile.frontend`, and `docker/nginx.conf`.
-
-`backend/app-old` is historical reference only. Do not use it for new implementation or documentation examples.
 
 ## Current Architecture At A Glance
 

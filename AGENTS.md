@@ -2,26 +2,25 @@
 
 ## Project Structure & Module Organization
 
-AgentHub is a multi-client monorepo. Active Python code lives in `backend/src`; keep API routers in `app/api`, business logic in `app/services`, database models in `db/models`, and migrations in `backend/alembic`. `backend/app-old` is historical reference only. The React/Vite application is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; its tests are in `frontend/tests`. Electron and Capacitor/PWA clients live in `desktop-client` and `mobile-client`. Use `e2e` for Playwright scenarios, `docker` for deployment files, `scripts` for repository utilities, and `docs` for architecture and operating guidance.
+AgentHub is a multi-client monorepo. Python code lives in `backend/src`; keep routers in `app/api`, business logic in `app/services`, models in `db/models`, and migrations in `backend/alembic`. The React/Vite app is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; tests live in `frontend/tests`. Use `e2e` for Playwright, `docker` for deployment, `scripts` for repository utilities, and `docs` for architecture and operations. Electron and Capacitor/PWA clients live in `desktop-client` and `mobile-client`.
 
 ## Build, Test, and Development Commands
 
 Use Python 3.11, `uv`, Node.js 20+, and `pnpm` for the main application.
 
 ```powershell
-cd backend; uv sync --extra dev
-uv run alembic upgrade head
+cd backend; uv sync --extra dev; uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-uv run ruff check .; uv run pytest -q
+cd ../frontend; pnpm install; pnpm dev
 ```
 
 ```powershell
-cd frontend; pnpm install; pnpm dev
-pnpm lint; pnpm build
-pnpm exec vitest run --config tests/vitest.config.ts
+.\scripts\run-tests.ps1 -List
+.\scripts\run-tests.ps1 -Stack backend -Module providers -Type unit
+.\scripts\run-tests.ps1 -Stack frontend -Module models -Type component
 ```
 
-Run the complete stack from the repository root with `docker compose -f docker/docker-compose.yml up --build`. Client-specific scripts are documented in each client’s `README.md`; for example, `npm run check` validates desktop or mobile JavaScript.
+The test runner refuses an unspecified run; use `-All` explicitly for a full stack. Run `uv run ruff check <paths>` or `pnpm exec eslint <paths>` for touched files, and `pnpm build` for frontend integration. Start the full stack with `docker compose --env-file docker/.env -f docker/docker-compose.yml up --build`.
 
 ## Coding Style & Naming Conventions
 
@@ -29,7 +28,7 @@ Python uses four-space indentation, type hints where practical, and Ruff’s 100
 
 ## Testing Guidelines
 
-Name backend tests `test_*.py`, frontend tests `*.test.ts` or `*.test.tsx`, and browser tests `*.spec.ts`. Add regression coverage for changed behavior. Run targeted tests while iterating, then the relevant full Ruff/pytest or lint/build/Vitest gate before review. No numeric coverage threshold is enforced.
+Name backend tests `test_*.py`, frontend tests `*.test.ts(x)`, and browser tests `*.spec.ts`. Classify new coverage in `scripts/test-groups.json` by module and type (`unit`, `integration`, `component`, or `live`). Live tests must require explicit credentials. No numeric coverage threshold is enforced.
 
 ## Commit & Pull Request Guidelines
 
@@ -37,4 +36,4 @@ Prefer imperative Conventional Commit subjects used by project guidance, such as
 
 ## Security & Configuration
 
-Copy from `.env.example` or `docker/env.example`; never commit credentials, local databases, logs, or generated artifacts. Do not expose provider secrets in frontend code or claim tool/deployment success without a persisted backend result.
+Copy from `.env.example` or `docker/env.example`; never commit credentials, databases, logs, or generated artifacts. Production rejects placeholder `SECRET_KEY`, `DEBUG=true`, and sample database passwords. Provider keys belong in the encrypted credential field and must never be returned to the frontend.

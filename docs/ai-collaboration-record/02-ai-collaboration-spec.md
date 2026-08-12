@@ -55,7 +55,7 @@ flowchart TD
 | 后端主代码 | `backend/src` |
 | 前端主代码 | `frontend/src` |
 | 文档 | `docs` |
-| 旧代码 | `backend/app-old` 仅历史参考，不新增实现 |
+| 旧代码 | 旧后端副本已删除，不恢复或新增实现 |
 | 工具结果 | 不能只在前端假造，必须后端持久化 |
 | 产物 | 必须有真实 Artifact / File / Deployment 记录 |
 | 权限 | Tool / Skill / MCP / External Agent 必须走授权和审计 |
