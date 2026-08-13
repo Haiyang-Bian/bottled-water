@@ -227,6 +227,28 @@ def test_thinking_is_disabled_by_default_and_enabled_mode_omits_sampling(fake_cl
     assert "tool_choice" not in payload
 
 
+def test_runtime_budget_is_capped_by_model_and_deepseek_output_limits(fake_client):
+    configured = make_provider(fake_client, max_tokens=4096)
+    payload = configured._build_payload(
+        [ChatMessage(role="user", content="hello")],
+        None,
+        None,
+        0.7,
+        500_000,
+    )
+    assert payload["max_tokens"] == 4096
+
+    provider_maximum = make_provider(fake_client, max_tokens=500_000)
+    payload = provider_maximum._build_payload(
+        [ChatMessage(role="user", content="hello")],
+        None,
+        None,
+        0.7,
+        500_000,
+    )
+    assert payload["max_tokens"] == 393_216
+
+
 @pytest.mark.asyncio
 async def test_invalid_internal_tool_names_are_aliased_and_restored(fake_client):
     provider = make_provider(fake_client)

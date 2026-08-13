@@ -151,12 +151,23 @@ class OpenAICompatibleProvider(BaseModelProvider):
         }
         if self.config.get("top_p") is not None:
             payload["top_p"] = self.config["top_p"]
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        effective_max_tokens = self._effective_max_tokens(max_tokens)
+        if effective_max_tokens is not None:
+            payload["max_tokens"] = effective_max_tokens
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         return payload
+
+    def _effective_max_tokens(self, requested: Optional[int]) -> Optional[int]:
+        limits: list[int] = []
+        for value in (requested, self.config.get("max_tokens")):
+            if value is None:
+                continue
+            parsed = int(value)
+            if parsed > 0:
+                limits.append(parsed)
+        return min(limits) if limits else None
 
     @staticmethod
     def _build_messages(

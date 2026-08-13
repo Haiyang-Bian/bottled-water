@@ -71,6 +71,23 @@ class TestAgentLoopBasic:
         assert report.confidence == 0.9
 
     @pytest.mark.asyncio
+    async def test_plain_final_text_without_status_report_completes(
+        self,
+        agent_config,
+        mock_provider,
+    ):
+        mock_provider.responses = [
+            ChatResponse(content="这是一个正常的聊天回答。"),
+        ]
+
+        loop = AgentLoop(agent_config, mock_provider)
+        result = await loop.run("讲一个笑话", {}, None)
+
+        assert result["work_product"] == "这是一个正常的聊天回答。"
+        assert result["status_report"].state == AgentState.COMPLETED
+        assert result["status_report"].will == AgentWill.COMPLETE
+
+    @pytest.mark.asyncio
     async def test_run_with_tool_calls(self, agent_config, mock_provider, mock_tool_executor):
         """测试工具调用循环"""
         mock_provider.responses = [

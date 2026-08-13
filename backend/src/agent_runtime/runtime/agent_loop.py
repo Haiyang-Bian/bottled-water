@@ -698,6 +698,26 @@ class AgentLoop:
                     stream_context=self._stream_context_payload(context_metadata),
                 )
         if (
+            status_report.state == AgentState.UNKNOWN
+            and work_product.strip()
+            and not tool_results
+        ):
+            # A direct model answer is a completed single assignment even when
+            # the model omits the internal scheduling report. Runtime control
+            # must not depend on a user-facing chat model following hidden
+            # orchestration syntax perfectly.
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.COMPLETED,
+                will=AgentWill.COMPLETE,
+                target_task=status_report.target_task,
+                blockers=status_report.blockers,
+                priority=status_report.priority,
+                confidence=max(status_report.confidence, 0.8),
+                rationale="Direct response produced without tool execution.",
+                expected_duration=status_report.expected_duration,
+            )
+        if (
             self._artifact_tool_succeeded(tool_results)
             and status_report.state == AgentState.UNKNOWN
             and work_product.strip()

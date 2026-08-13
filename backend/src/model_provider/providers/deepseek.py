@@ -11,6 +11,8 @@ from .openai_compatible import OpenAICompatibleProvider
 class DeepSeekProvider(OpenAICompatibleProvider):
     """DeepSeek V4 Flash/Pro with optional thinking mode."""
 
+    MAX_OUTPUT_TOKENS = 393_216
+
     def __init__(self, config: Dict[str, Any]):
         value = {**config, "base_url": config.get("base_url") or "https://api.deepseek.com"}
         super().__init__(value)
@@ -33,6 +35,11 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         payload["extra_body"] = {
             "thinking": {"type": "enabled" if self.thinking_enabled else "disabled"}
         }
+        if payload.get("max_tokens") is not None:
+            payload["max_tokens"] = min(
+                int(payload["max_tokens"]),
+                self.MAX_OUTPUT_TOKENS,
+            )
         if self.thinking_enabled:
             payload.pop("temperature", None)
             payload.pop("top_p", None)
