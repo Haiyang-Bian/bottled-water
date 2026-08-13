@@ -22,6 +22,8 @@ from agent_runtime.core.ports import ContextConflictError
 from agent_runtime.core.run_types import RunSnapshot
 from app.persistence.runtime_journal import SQLRunJournal
 from app.persistence.runtime_store import SQLContextStore
+from app.api.runtime_events import list_runtime_events
+from app.core.errors import NotFoundError
 from db.base import Base
 from db.models import Conversation, RuntimeEvent, RuntimeRun, User
 
@@ -208,5 +210,99 @@ async def test_sql_run_journal_process_lost_recovery_appends_atomic_terminal_eve
         ]
         assert page.items[-1].payload["reason_code"] == "process_lost"
         assert page.terminal is True
+    finally:
+        await engine.dispose()
+
+
+async def test_runtime_event_query_pages_events_and_enforces_conversation_access(tmp_path):
+    engine, factory = await _database(tmp_path)
+    journal = SQLRunJournal(factory)
+    now = datetime.now(UTC)
+    request = RunRequest(
+        run_id="api-run",
+        context_scope_id="scope",
+        input="work",
+        agents=(AgentConfig(id="agent", name="Agent", system_prompt="work"),),
+        policy=NeverCalledPolicy(),
+    )
+    snapshot = RunSnapshot(
+        run_id=request.run_id,
+        context_scope_id=request.context_scope_id,
+        state=RunState.RUNNING,
+        reason_code=None,
+        sequence=0,
+        decision_count=0,
+        no_progress_count=0,
+        usage=Usage(),
+        context_version=0,
+        limits=RuntimeLimits(),
+        started_at=now,
+        finished_at=None,
+    )
+    try:
+        await journal.create_run(request, snapshot)
+        for sequence in range(1, 4):
+            await journal.append_event(
+                EventEnvelope(
+                    event_id=f"api-event-{sequence}",
+                    run_id=request.run_id,
+                    context_scope_id=request.context_scope_id,
+                    sequence=sequence,
+                    type="agent.token",
+                    payload={"token": str(sequence)},
+                )
+            )
+        async with factory() as db:
+            owner = await db.get(User, "user")
+            outsider = User(
+                id="outsider",
+                email="outsider@example.com",
+                username="outsider",
+                password_hash="x",
+            )
+            db.add(outsider)
+            await db.commit()
+
+            first = await list_runtime_events(
+                "scope",
+                request.run_id,
+                after_sequence=0,
+                limit=2,
+                db=db,
+                user=owner,
+            )
+            assert [item["sequence"] for item in first["data"]["items"]] == [1, 2]
+            assert first["data"]["next_sequence"] == 2
+            assert first["data"]["last_sequence"] == 3
+            assert first["data"]["terminal"] is False
+            assert first["data"]["items"][0]["projected_type"] == "agent.token"
+            assert first["data"]["items"][0]["projected_payload"] == {
+                "token": "1",
+                "generation_id": "api-run",
+                "conversation_id": "scope",
+                "runtime_event_id": "api-event-1",
+                "runtime_sequence": 1,
+                "runtime_run_id": "api-run",
+                "runtime_replayed": True,
+            }
+
+            second = await list_runtime_events(
+                "scope",
+                request.run_id,
+                after_sequence=2,
+                limit=2,
+                db=db,
+                user=owner,
+            )
+            assert [item["sequence"] for item in second["data"]["items"]] == [3]
+            with pytest.raises(NotFoundError):
+                await list_runtime_events(
+                    "scope",
+                    request.run_id,
+                    after_sequence=0,
+                    limit=200,
+                    db=db,
+                    user=outsider,
+                )
     finally:
         await engine.dispose()

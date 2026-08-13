@@ -80,30 +80,49 @@ class SQLRunJournal:
         if limit <= 0:
             raise ValueError("limit must be positive")
         async with self._session_factory() as db:
-            run = await db.get(RuntimeRun, run_id)
-            if run is None:
-                raise KeyError(run_id)
-            rows = list(
-                (
-                    await db.scalars(
-                        select(RuntimeEvent)
-                        .where(
-                            RuntimeEvent.run_id == run_id,
-                            RuntimeEvent.sequence > after_sequence,
-                        )
-                        .order_by(RuntimeEvent.sequence)
-                        .limit(limit)
+            return await self.read_events_with_session(
+                db,
+                run_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+
+    @staticmethod
+    async def read_events_with_session(
+        db,
+        run_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 200,
+    ) -> EventPage:  # noqa: ANN001
+        if after_sequence < 0:
+            raise ValueError("after_sequence must be non-negative")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        run = await db.get(RuntimeRun, run_id)
+        if run is None:
+            raise KeyError(run_id)
+        rows = list(
+            (
+                await db.scalars(
+                    select(RuntimeEvent)
+                    .where(
+                        RuntimeEvent.run_id == run_id,
+                        RuntimeEvent.sequence > after_sequence,
                     )
-                ).all()
-            )
-            items = tuple(_event_from_row(row) for row in rows)
-            return EventPage(
-                items=items,
-                next_sequence=items[-1].sequence if items else after_sequence,
-                last_sequence=run.last_event_sequence,
-                terminal=_is_terminal(run.state),
-                history_complete=run.journal_version is not None,
-            )
+                    .order_by(RuntimeEvent.sequence)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        items = tuple(_event_from_row(row) for row in rows)
+        return EventPage(
+            items=items,
+            next_sequence=items[-1].sequence if items else after_sequence,
+            last_sequence=run.last_event_sequence,
+            terminal=_is_terminal(run.state),
+            history_complete=run.journal_version is not None,
+        )
 
     async def recover_process_lost(self, context_scope_id: str | None = None) -> list[str]:
         return await self._finish_abandoned("failed", "process_lost", context_scope_id)

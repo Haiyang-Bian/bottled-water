@@ -149,6 +149,175 @@ describe("conversation SSE stream", () => {
 });
 
 describe("conversation WebSocket stream", () => {
+  it("buffers out-of-order runtime events and suppresses duplicates", async () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    window.localStorage.setItem("agenthub_token", "test-token");
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const promise = sendMessageWs(
+      "conversation-ordered",
+      { content: { text: "hello" } },
+      { onToken, onDone },
+    );
+
+    await vi.waitFor(() => expect(FakeWebSocket.latest).toBeDefined());
+    const ws = FakeWebSocket.latest!;
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+    const runtimePayload = (sequence: number, token: string) => ({
+      conversation_id: "conversation-ordered",
+      agent_id: "agent-1",
+      token,
+      runtime_event_id: `event-${sequence}`,
+      runtime_sequence: sequence,
+      runtime_run_id: "run-ordered",
+    });
+
+    ws.emit("agent.token", runtimePayload(2, "B"));
+    expect(onToken).not.toHaveBeenCalled();
+    ws.emit("agent.token", runtimePayload(1, "A"));
+    ws.emit("agent.token", runtimePayload(2, "B"));
+
+    expect(onToken.mock.calls.map((call) => call[1])).toEqual(["A", "B"]);
+    expect(
+      JSON.parse(
+        window.sessionStorage.getItem(
+          "agenthub:runtime-cursor:conversation-ordered",
+        )!,
+      ),
+    ).toEqual({ run_id: "run-ordered", last_sequence: 2 });
+
+    ws.emit("system.session_completed", {
+      conversation_id: "conversation-ordered",
+      runtime_event_id: "event-3",
+      runtime_sequence: 3,
+      runtime_run_id: "run-ordered",
+      status: "completed",
+    });
+    await expect(promise).resolves.toBe("completed");
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+
+  it("replays a gap after reconnect without fabricating a failure", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("WebSocket", FakeWebSocket);
+      window.localStorage.setItem("agenthub_token", "test-token");
+      let resolveFetch!: (response: Response) => void;
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const onToken = vi.fn();
+      const onDone = vi.fn();
+      const onRuntimeEvent = vi.fn();
+      const promise = sendMessageWs(
+        "conversation-replay",
+        { content: { text: "hello" } },
+        { onToken, onDone, onRuntimeEvent },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      const ws = FakeWebSocket.latest!;
+      expect(ws.sent.length).toBeGreaterThan(0);
+      ws.emit("chat.ack", { accepted: true });
+      await expect(promise).resolves.toBe("ok");
+      ws.emit("agent.token", {
+        conversation_id: "conversation-replay",
+        agent_id: "agent-1",
+        token: "A",
+        runtime_event_id: "replay-event-1",
+        runtime_sequence: 1,
+        runtime_run_id: "run-replay",
+      });
+
+      ws.close();
+      expect(onDone).not.toHaveBeenCalled();
+      expect(onRuntimeEvent).not.toHaveBeenCalledWith(
+        "generation:failed",
+        expect.anything(),
+      );
+
+      ws.readyState = FakeWebSocket.OPEN;
+      ws.onopen?.();
+      await Promise.resolve();
+      ws.emit("system.session_completed", {
+        conversation_id: "conversation-replay",
+        status: "completed",
+        runtime_event_id: "replay-event-3",
+        runtime_sequence: 3,
+        runtime_run_id: "run-replay",
+      });
+      expect(onDone).not.toHaveBeenCalled();
+
+      resolveFetch(
+        new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              items: [
+                {
+                  event_id: "replay-event-2",
+                  run_id: "run-replay",
+                  sequence: 2,
+                  type: "agent.token",
+                  payload: { token: "B" },
+                  projected_type: "agent.token",
+                  projected_payload: {
+                    conversation_id: "conversation-replay",
+                    agent_id: "agent-1",
+                    token: "B",
+                    runtime_event_id: "replay-event-2",
+                    runtime_sequence: 2,
+                    runtime_run_id: "run-replay",
+                    runtime_replayed: true,
+                  },
+                },
+                {
+                  event_id: "replay-event-3",
+                  run_id: "run-replay",
+                  sequence: 3,
+                  type: "system.run_completed",
+                  payload: { status: "completed" },
+                  projected_type: "system.session_completed",
+                  projected_payload: {
+                    conversation_id: "conversation-replay",
+                    status: "completed",
+                    runtime_event_id: "replay-event-3",
+                    runtime_sequence: 3,
+                    runtime_run_id: "run-replay",
+                    runtime_replayed: true,
+                  },
+                },
+              ],
+              next_sequence: 3,
+              last_sequence: 3,
+              terminal: true,
+              history_complete: true,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+      await vi.waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+      expect(onToken.mock.calls.map((call) => call[1])).toEqual(["A", "B"]);
+      expect(onRuntimeEvent).toHaveBeenCalledWith(
+        "system.session_completed",
+        expect.objectContaining({ runtime_event_id: "replay-event-3" }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("after_sequence=1&limit=200"),
+        expect.anything(),
+      );
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("dispatches actor agent.token payloads without requiring message_start", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     window.localStorage.setItem("agenthub_token", "test-token");
