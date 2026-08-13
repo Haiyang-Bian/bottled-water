@@ -1234,9 +1234,9 @@ async def delete_conversation(
     conversation_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ):
     conversation = await _get(db, user, conversation_id)
-    from app.services.conversation_session_manager import ConversationRunManager
+    from app.services.conversation_run_manager import ConversationRunManager
 
-    await ConversationRunManager.get_instance().close_session(conversation_id)
+    await ConversationRunManager.get_instance().close_conversation(conversation_id)
     conversation.deleted_at = utcnow()
     conversation.status = "deleted"
     await db.commit()

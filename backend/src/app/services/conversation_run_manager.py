@@ -34,7 +34,7 @@ from app.services.runtime.event_projection import project_runtime_event
 from app.services.runtime_service import OrchestratorService, RuntimeBinding
 from common.logger import get_logger
 
-logger = get_logger("app.services.conversation_session_manager")
+logger = get_logger("app.services.conversation_run_manager")
 
 
 class RunManagerNotReadyError(Exception):
@@ -564,8 +564,8 @@ class ConversationRunManager:
         except RuntimeError:
             logger.warning("Generation finalization task failed to start", conversation_id=conversation_id)
 
-    async def close_session(self, conversation_id: str) -> None:
-        """Close and forget a cached session."""
+    async def close_conversation(self, conversation_id: str) -> None:
+        """Cancel active work and forget cached adapters for a conversation."""
 
 
 

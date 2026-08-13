@@ -1,212 +1,137 @@
+from __future__ import annotations
+
 import asyncio
 
 import pytest
-from model_provider import ChatResponse
 
-from agent_runtime.context.blackboard import BlackboardManager
-from agent_runtime.core.interfaces import AgentContextBuildResult
-from agent_runtime.core.protocol import AGENT_REPORT, CONTROL_ASSIGN, CONTROL_COMPLETE
-from agent_runtime.core.types import AgentConfig, AgentState, Event
+from agent_runtime import AgentConfig, AgentMemory, AgentReport, AgentState, AgentWill
+from agent_runtime.core.run_types import (
+    AgentExecutionRequest,
+    AgentExecutionResult,
+    ContextSnapshot,
+)
 from agent_runtime.runtime.agent_actor import AgentActor
-from agent_runtime.runtime.event_dispatcher import EventDispatcher
+from agent_runtime.runtime.cancellation import CancellationScope, RunLease
 
 
-@pytest.mark.asyncio
-async def test_agent_actor_runs_assignment_and_publishes_report(mock_provider, mock_tool_executor):
-    mock_provider.responses = [
-        ChatResponse(
-            content='done\n```status_report\n{"state": "completed", "will": "complete", "confidence": 0.9}\n```'
+pytestmark = [pytest.mark.unit, pytest.mark.agents]
+
+
+def _agent(agent_id: str = "worker") -> AgentConfig:
+    return AgentConfig(id=agent_id, name="Worker", system_prompt="Work")
+
+
+def _request(agent_id: str = "worker", run_id: str = "run-1") -> AgentExecutionRequest:
+    return AgentExecutionRequest(
+        run_id=run_id,
+        context_scope_id="scope-1",
+        agent=_agent(agent_id),
+        task="do work",
+        input="do work",
+        context=ContextSnapshot(scope_id="scope-1"),
+        token_budget_remaining=100,
+    )
+
+
+class RecordingExecutor:
+    def __init__(self) -> None:
+        self.task_name = ""
+
+    async def execute(self, request, *, emit, cancellation, lease):
+        self.task_name = asyncio.current_task().get_name()
+        await emit("model.output", {"content": "done"}, "model", None, None, None)
+        return AgentExecutionResult(
+            agent_id=request.agent.id,
+            report=AgentReport(
+                agent_id=request.agent.id,
+                state=AgentState.COMPLETED,
+                will=AgentWill.COMPLETE,
+            ),
+            output="done",
+            memory=AgentMemory(agent_id=request.agent.id, summary="done"),
         )
-    ]
-    bus = EventDispatcher()
-    blackboard = BlackboardManager(event_bus=bus)
-    events: list[Event] = []
-    bus.subscribe("*", lambda event: _append(events, event), target="*")
+
+
+async def test_agent_actor_executes_mailbox_assignment_in_owned_task():
+    emitted = []
+
+    async def emit(*args):
+        emitted.append(args)
+
+    executor = RecordingExecutor()
     actor = AgentActor(
-        session_id="sess_actor",
-        agent_config=AgentConfig(id="coder", name="Coder", system_prompt="You code."),
-        model_provider=mock_provider,
-        event_bus=bus,
-        tool_executor=mock_tool_executor,
-        blackboard_mgr=blackboard,
-        use_streaming=False,
+        run_id="run-1",
+        agent_config=_agent(),
+        executor=executor,
+        emit=emit,
+        cancellation=CancellationScope(),
+        lease=RunLease("run-1"),
     )
     actor.start()
 
-    await bus.publish(
-        Event(
-            type=CONTROL_ASSIGN,
-            payload={
-                "task": "write a helper",
-                "task_input": {
-                    "user_request": "build feature",
-                    "assigned_task": "write a helper",
-                    "upstream_outputs": {"planner": {"output": "plan done"}},
-                },
-            },
-            source="scheduler",
-            target="coder",
-        )
-    )
-    report_event = await _wait_for(events, AGENT_REPORT)
+    result = await actor.assign(_request())
     await actor.stop()
 
-    assert report_event.payload["agent_id"] == "coder"
-    assert report_event.payload["report"]["state"] == AgentState.COMPLETED.value
-    assert report_event.payload["input"]["user_request"] == "build feature"
-    assert report_event.payload["output"]["work_product"]
-    assert report_event.payload["tool_events"] == []
-    stored = await blackboard.get("sess_actor")
-    assert stored is not None
-    assert any(item.get("type") == "agent_work" for item in stored["raw_history"])
-    history = next(item for item in stored["raw_history"] if item.get("type") == "agent_work")
-    assert history["input"]["assigned_task"] == "write a helper"
-    assert history["output"]["work_product"]
+    assert result.output == "done"
+    assert executor.task_name == "runtime-actor:run-1:worker"
+    assert emitted[0][0] == "model.output"
 
 
-@pytest.mark.asyncio
-async def test_agent_actor_report_carries_stream_message_id(mock_provider, mock_tool_executor):
-    mock_provider.responses = [
-        ChatResponse(
-            content='done\n```status_report\n{"state": "completed", "will": "complete"}\n```'
-        )
-    ]
-    bus = EventDispatcher()
-    events: list[Event] = []
-    bus.subscribe("*", lambda event: _append(events, event), target="*")
+async def test_agent_actor_rejects_cross_run_or_cross_agent_assignment():
+    async def emit(*_args):
+        return None
+
     actor = AgentActor(
-        session_id="sess_actor_stream",
-        agent_config=AgentConfig(id="coder", name="Coder", system_prompt="You code."),
-        model_provider=mock_provider,
-        event_bus=bus,
-        tool_executor=mock_tool_executor,
-        use_streaming=True,
+        run_id="run-1",
+        agent_config=_agent(),
+        executor=RecordingExecutor(),
+        emit=emit,
+        cancellation=CancellationScope(),
+        lease=RunLease("run-1"),
     )
     actor.start()
 
-    await bus.publish(
-        Event(
-            type=CONTROL_ASSIGN,
-            payload={"task": "write a helper"},
-            source="scheduler",
-            target="coder",
-        )
-    )
-    report_event = await _wait_for(events, AGENT_REPORT)
+    with pytest.raises(ValueError, match="does not match"):
+        await actor.assign(_request(run_id="run-2"))
+    with pytest.raises(ValueError, match="does not match"):
+        await actor.assign(_request(agent_id="other"))
+
     await actor.stop()
 
-    stream_id = str(report_event.payload.get("stream_message_id") or "")
-    start_event = next(event for event in events if event.type == "message_start")
-    assert stream_id.startswith("stream-coder-")
-    assert report_event.payload["agent_message_id"] == stream_id
-    assert start_event.payload["agent_message_id"] == stream_id
+
+class BlockingExecutor:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.stopped = asyncio.Event()
+
+    async def execute(self, request, *, emit, cancellation, lease):
+        self.started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            self.stopped.set()
 
 
-@pytest.mark.asyncio
-async def test_agent_actor_passes_assignment_context_metadata(mock_provider, mock_tool_executor):
-    captured: dict = {}
+async def test_agent_actor_force_stop_cancels_inflight_assignment():
+    async def emit(*_args):
+        return None
 
-    class Provider:
-        async def build_agent_context(self, request):
-            captured["request"] = request
-            return AgentContextBuildResult(
-                messages=[
-                    {"role": "system", "content": "system with context"},
-                    {"role": "user", "content": "user with memory"},
-                ]
-            )
-
-    mock_provider.responses = [
-        ChatResponse(
-            content='done\n```status_report\n{"state": "completed", "will": "complete"}\n```'
-        )
-    ]
-    bus = EventDispatcher()
-    events: list[Event] = []
-    bus.subscribe("*", lambda event: _append(events, event), target="*")
+    executor = BlockingExecutor()
     actor = AgentActor(
-        session_id="sess_actor_context",
-        agent_config=AgentConfig(id="coder", name="Coder", system_prompt="You code."),
-        model_provider=mock_provider,
-        event_bus=bus,
-        tool_executor=mock_tool_executor,
-        use_streaming=False,
-        context_provider=Provider(),
+        run_id="run-1",
+        agent_config=_agent(),
+        executor=executor,
+        emit=emit,
+        cancellation=CancellationScope(),
+        lease=RunLease("run-1"),
     )
     actor.start()
+    assignment = asyncio.create_task(actor.assign(_request()))
+    await executor.started.wait()
 
-    await bus.publish(
-        Event(
-            type=CONTROL_ASSIGN,
-            payload={
-                "task": "write a helper",
-                "task_input": {
-                    "user_request": "build feature",
-                    "assigned_task": "write a helper",
-                    "upstream_outputs": {"planner": {"output": "plan done"}},
-                },
-                "context_metadata": {
-                    "conversation_id": "conv-1",
-                    "user_message_id": "msg-1",
-                    "client_message_id": "client-1",
-                    "visible_content": "visible text",
-                },
-            },
-            source="scheduler",
-            target="coder",
-        )
+    await actor.stop(force=True)
+
+    assert executor.stopped.is_set()
+    assert assignment.cancelled() or isinstance(
+        (await asyncio.gather(assignment, return_exceptions=True))[0], asyncio.CancelledError
     )
-    await _wait_for(events, AGENT_REPORT)
-    await actor.stop()
-
-    assert captured["request"].metadata["user_message_id"] == "msg-1"
-    assert captured["request"].metadata["client_message_id"] == "client-1"
-    assert captured["request"].metadata["visible_content"] == "visible text"
-    assert captured["request"].metadata["task_input"]["upstream_outputs"]["planner"]["output"] == "plan done"
-    thinking_event = next(event for event in events if event.type == "agent.thinking")
-    assert thinking_event.payload["user_message_id"] == "msg-1"
-    assert thinking_event.payload["client_message_id"] == "client-1"
-
-
-@pytest.mark.asyncio
-async def test_agent_actor_exits_on_control_complete(mock_provider, mock_tool_executor):
-    bus = EventDispatcher()
-    events: list[Event] = []
-    bus.subscribe("*", lambda event: _append(events, event), target="*")
-    actor = AgentActor(
-        session_id="sess_complete",
-        agent_config=AgentConfig(id="reviewer", name="Reviewer", system_prompt="You review."),
-        model_provider=mock_provider,
-        event_bus=bus,
-        tool_executor=mock_tool_executor,
-        use_streaming=False,
-    )
-    task = actor.start()
-
-    await bus.publish(
-        Event(
-            type=CONTROL_COMPLETE,
-            payload={"reason": "workflow_done"},
-            source="scheduler",
-            target="reviewer",
-        )
-    )
-    report_event = await _wait_for(events, AGENT_REPORT)
-    await asyncio.wait_for(task, timeout=1)
-    actor.mailbox.close()
-
-    assert report_event.payload["agent_id"] == "reviewer"
-    assert report_event.payload["report"]["state"] == AgentState.COMPLETED.value
-
-
-async def _append(target: list[Event], event: Event) -> None:
-    target.append(event)
-
-
-async def _wait_for(events: list[Event], event_type: str) -> Event:
-    for _ in range(50):
-        for event in events:
-            if event.type == event_type:
-                return event
-        await asyncio.sleep(0.02)
-    raise AssertionError(f"event {event_type} was not published")

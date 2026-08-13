@@ -16,7 +16,7 @@ import uuid
 from typing import Dict, Any, Optional, List
 
 from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatResponse
-from model_provider.core.streaming import collect_chat_stream
+from model_provider.core.streaming import OutputTokenLimitExceeded, collect_chat_stream
 
 from common.logger import get_logger
 from ..core.types import AgentConfig, AgentReport, AgentState, AgentWill, ToolCall, ToolResult
@@ -330,6 +330,7 @@ class AgentLoop:
 
             try:
                 tools_for_round = None if self._artifact_tool_succeeded(tool_results) else (tools if tools else None)
+                remaining_tokens = self._remaining_token_budget()
                 if self.use_streaming:
                     response = await self._chat_streaming(
                         messages=messages,
@@ -339,6 +340,7 @@ class AgentLoop:
                         stream_message_id=stream_message_id,
                         stream_context=self._stream_context_payload(context_metadata),
                         defer_stop_if_tool_calls=True,
+                        max_tokens=remaining_tokens,
                     )
                 else:
                     response = await collect_chat_stream(
@@ -346,7 +348,7 @@ class AgentLoop:
                         messages=messages,
                         system_prompt=system_prompt,
                         tools=tools_for_round,
-                        max_tokens=self.max_output_tokens,
+                        max_tokens=remaining_tokens,
                     )
                 self._record_usage(response, system_prompt, messages)
             except Exception as e:
@@ -621,6 +623,7 @@ class AgentLoop:
                     ),
                 ]
                 if self.use_streaming:
+                    remaining_tokens = self._remaining_token_budget()
                     summary_response = await self._chat_streaming(
                         messages=summary_messages,
                         system_prompt=system_prompt,
@@ -628,19 +631,24 @@ class AgentLoop:
                         _emit=_emit,
                         stream_message_id=stream_message_id,
                         stream_context=self._stream_context_payload(context_metadata),
+                        max_tokens=remaining_tokens,
                     )
                 else:
                     summary_response = await collect_chat_stream(
                         self.model,
                         messages=summary_messages,
                         system_prompt=system_prompt,
+                        max_tokens=self._remaining_token_budget(),
                     )
+                self._record_usage(summary_response, system_prompt, summary_messages)
                 final_content = summary_response.content or ""
                 await self._run_checkpoint(
                     checkpoint,
                     "after_summary",
                     {"content_length": len(final_content)},
                 )
+            except OutputTokenLimitExceeded:
+                raise
             except Exception as e:
                 logger.error("Agent 总结调用失败", agent_id=self.agent.id, error=str(e))
                 final_content = "工具调用完成，但总结失败。"
@@ -784,11 +792,24 @@ class AgentLoop:
         if usage:
             self.usage["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
             self.usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
-            return
-        prompt = system_prompt + "\n" + "\n".join(message.content or "" for message in messages)
-        self.usage["prompt_tokens"] += self._estimate_tokens(prompt)
-        self.usage["completion_tokens"] += self._estimate_tokens(response.content or "")
-        self.usage_estimated = True
+        else:
+            prompt = system_prompt + "\n" + "\n".join(message.content or "" for message in messages)
+            self.usage["prompt_tokens"] += self._estimate_tokens(prompt)
+            self.usage["completion_tokens"] += self._estimate_tokens(response.content or "")
+            self.usage_estimated = True
+        if (
+            self.max_output_tokens is not None
+            and sum(self.usage.values()) >= self.max_output_tokens
+        ):
+            raise OutputTokenLimitExceeded("token_budget_exhausted")
+
+    def _remaining_token_budget(self) -> int | None:
+        if self.max_output_tokens is None:
+            return None
+        remaining = self.max_output_tokens - sum(self.usage.values())
+        if remaining <= 0:
+            raise OutputTokenLimitExceeded("token_budget_exhausted")
+        return remaining
 
     def _estimate_tokens(self, text: str) -> int:
         counter = getattr(self.model, "count_tokens", None)
@@ -1611,6 +1632,7 @@ class AgentLoop:
         stream_message_id: str,
         stream_context: Optional[Dict[str, Any]] = None,
         defer_stop_if_tool_calls: bool = False,
+        max_tokens: int | None = None,
     ) -> ChatResponse:
         """流式对话，emit agent.token 事件，组装成 ChatResponse"""
         content_parts: List[str] = []
@@ -1641,10 +1663,19 @@ class AgentLoop:
             messages=messages,
             system_prompt=system_prompt,
             tools=tools,
-            max_tokens=self.max_output_tokens,
+            max_tokens=max_tokens,
         )
 
         async for chunk in stream:
+            candidate = "".join(content_parts) + (chunk.content or "")
+            candidate += "".join(reasoning_parts) + (chunk.reasoning or "")
+            if chunk.tool_call:
+                candidate += str(chunk.tool_call)
+            if max_tokens is not None and self._estimate_tokens(candidate) >= max_tokens:
+                close = getattr(stream, "aclose", None)
+                if callable(close):
+                    await close()
+                raise OutputTokenLimitExceeded("token_budget_exhausted")
             # 1. 文本内容
             if chunk.content:
                 content_parts.append(chunk.content)

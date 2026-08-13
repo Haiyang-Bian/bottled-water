@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from typing import Any
 
+from model_provider.core.streaming import OutputTokenLimitExceeded
+
 from ..context.scope_store import InMemoryContextStore, VersionedBlackboard
 from ..core.ports import AgentExecutor, ContextConflictError, ContextStore, RunEventSink, RunStore
 from ..core.run_types import (
@@ -27,6 +29,7 @@ from ..core.run_types import (
 )
 from .cancellation import CancellationScope, RunLease
 from .adapter_isolation import AdapterNotCancellableError, AdapterTimeoutError
+from .agent_actor import AgentActor
 from .run_store import InMemoryRunStore
 from .run_watchdog import RunWatchdog
 
@@ -51,8 +54,18 @@ class RuntimeEngine:
         self.run_store = run_store or InMemoryRunStore()
         self.event_sink = event_sink
         self.limits = limits or RuntimeLimits()
+        self._active: dict[str, RunKernel] = {}
+        self._closed = False
+
+    @property
+    def active_run_count(self) -> int:
+        return len(self._active)
 
     async def start(self, request: RunRequest) -> "RunHandle":
+        if self._closed:
+            raise RuntimeError("RuntimeEngine has been shut down")
+        if request.run_id in self._active:
+            raise ValueError(f"Run is already active: {request.run_id}")
         kernel = RunKernel(
             request=request,
             agent_executor=self.agent_executor,
@@ -60,9 +73,23 @@ class RuntimeEngine:
             run_store=self.run_store,
             event_sink=self.event_sink,
             limits=self.limits,
+            on_terminal=self._active.pop,
         )
+        self._active[request.run_id] = kernel
         kernel.start()
         return RunHandle(kernel)
+
+    async def shutdown(self) -> tuple[RunResult, ...]:
+        """Fail every active Run and reject future starts."""
+
+        self._closed = True
+        kernels = tuple(self._active.values())
+        if not kernels:
+            return ()
+        results = await asyncio.gather(
+            *(kernel.fail("runtime_shutdown") for kernel in kernels)
+        )
+        return tuple(results)
 
 
 class RunHandle:
@@ -98,6 +125,7 @@ class RunKernel:
         run_store: RunStore,
         event_sink: RunEventSink | None,
         limits: RuntimeLimits,
+        on_terminal=None,
     ) -> None:
         self.request = request
         self.agent_executor = agent_executor
@@ -119,6 +147,7 @@ class RunKernel:
         self._finish_lock = asyncio.Lock()
         self._sequence_lock = asyncio.Lock()
         self._managed_tasks: set[asyncio.Task] = set()
+        self._actors: dict[str, AgentActor] = {}
         self._main_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -129,6 +158,8 @@ class RunKernel:
         self._reports = []
         self._outputs: list[str] = []
         self._last_event: EventEnvelope | None = None
+        self._forced_failure_reason: str | None = None
+        self._on_terminal = on_terminal
         self._watchdog = RunWatchdog(limits, self._fail_from_watchdog)
 
     @property
@@ -187,8 +218,11 @@ class RunKernel:
                 source="caller",
                 require_lease=False,
             )
-            for task in list(self._managed_tasks):
-                task.cancel()
+            await asyncio.gather(
+                *(actor.request_cancel(self.cancellation.reason or "user_cancelled") for actor in self._actors.values()),
+                return_exceptions=True,
+            )
+            self._cancel_work()
             if self._main_task and self._main_task is not asyncio.current_task():
                 self._main_task.cancel()
         try:
@@ -198,8 +232,19 @@ class RunKernel:
             )
         except asyncio.TimeoutError:
             self.lease.revoke()
+            await self._stop_actors(force=True)
             await self._finish(RunState.CANCELLED, self.cancellation.reason or "user_cancelled")
             return await self.result_future
+
+    async def fail(self, reason_code: str) -> RunResult:
+        if self.state.is_terminal:
+            return await self.result_future
+        self._forced_failure_reason = reason_code
+        self.cancellation.cancel(reason_code)
+        self._cancel_work()
+        if self._main_task and self._main_task is not asyncio.current_task():
+            self._main_task.cancel()
+        return await self.result_future
 
     async def _run(self) -> None:
         try:
@@ -209,6 +254,7 @@ class RunKernel:
             self._memories = dict(self._context.agent_memories)
             await self.run_store.create(self.request, self.snapshot())
             self.state = RunState.RUNNING
+            self._start_actors()
             self._watchdog_task = asyncio.create_task(
                 self._watchdog.run(), name=f"runtime-watchdog:{self.request.run_id}"
             )
@@ -256,6 +302,7 @@ class RunKernel:
                     if budget_reason is not None:
                         await self._abort(budget_reason)
                         return
+                    await self._stop_actors()
                     await self._commit_context()
                     await self._finish(RunState.COMPLETED, "completed", "\n\n".join(self._outputs))
                     return
@@ -276,9 +323,12 @@ class RunKernel:
                 await self._abort("policy_error")
                 return
         except asyncio.CancelledError:
+            await self._stop_actors(force=True)
+            state = RunState.FAILED if self._forced_failure_reason else RunState.CANCELLED
+            reason = self._forced_failure_reason or self.cancellation.reason or "user_cancelled"
             await self._finish(
-                RunState.CANCELLED,
-                self.cancellation.reason or "user_cancelled",
+                state,
+                reason,
             )
         except ContextConflictError:
             await self._abort("context_conflict")
@@ -286,6 +336,8 @@ class RunKernel:
             await self._abort("adapter_timeout")
         except AdapterNotCancellableError:
             await self._abort("adapter_not_cancellable")
+        except OutputTokenLimitExceeded:
+            await self._abort("token_budget_exhausted")
         except Exception:
             await self._abort("internal_error")
 
@@ -321,7 +373,7 @@ class RunKernel:
             or any(target not in known for target in targets)
             or any(target not in allowed for target in targets)
         ):
-            await self._finish(RunState.FAILED, "policy_error")
+            await self._abort("policy_error")
             return
         requests = [
             AgentExecutionRequest(
@@ -338,14 +390,17 @@ class RunKernel:
             )
             for target in targets
         ]
+        for target in targets:
+            await self._emit(
+                "control.assign",
+                {"agent_id": target, "task": task or self.request.input},
+                source="kernel",
+                target=target,
+                causation_id=self._last_event.event_id if self._last_event else None,
+            )
         tasks = {
             asyncio.create_task(
-                self.agent_executor.execute(
-                    request,
-                    emit=self._executor_emit,
-                    cancellation=self.cancellation,
-                    lease=self.lease,
-                ),
+                self._actors[request.agent.id].assign(request),
                 name=f"runtime-agent:{self.request.run_id}:{request.agent.id}",
             )
             for request in requests
@@ -477,12 +532,42 @@ class RunKernel:
     async def _abort(self, reason_code: str) -> None:
         if self.state.is_terminal:
             return
+        self._forced_failure_reason = reason_code
         self.cancellation.cancel(reason_code)
-        await self._finish(RunState.FAILED, reason_code)
-        for task in list(self._managed_tasks):
-            task.cancel()
+        self._cancel_work()
         if self._main_task and self._main_task is not asyncio.current_task():
             self._main_task.cancel()
+            return
+        await self._stop_actors(force=True)
+        await self._finish(RunState.FAILED, reason_code)
+
+    def _start_actors(self) -> None:
+        for agent in self.request.agents:
+            actor = AgentActor(
+                run_id=self.request.run_id,
+                agent_config=agent,
+                executor=self.agent_executor,
+                emit=self._executor_emit,
+                cancellation=self.cancellation,
+                lease=self.lease,
+            )
+            self._actors[agent.id] = actor
+            actor.start()
+
+    def _cancel_work(self) -> None:
+        for task in list(self._managed_tasks):
+            task.cancel()
+        for actor in self._actors.values():
+            if actor.task is not None:
+                actor.task.cancel()
+
+    async def _stop_actors(self, *, force: bool = False) -> None:
+        if not self._actors:
+            return
+        await asyncio.gather(
+            *(actor.stop(force=force) for actor in self._actors.values()),
+            return_exceptions=True,
+        )
 
     async def _emit(
         self,
@@ -564,4 +649,6 @@ class RunKernel:
             if not self.result_future.done():
                 self.result_future.set_result(result)
             await self._events.put(_EVENTS_CLOSED)
+            if self._on_terminal is not None:
+                self._on_terminal(self.request.run_id, None)
             return True

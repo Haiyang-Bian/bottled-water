@@ -15,6 +15,7 @@ from agent_runtime import (
     RuntimeLimits,
     SchedulingProposal,
     Usage,
+    AgentLoopExecutor,
 )
 from agent_runtime.core.run_types import AgentExecutionResult
 from agent_runtime.runtime.adapter_isolation import (
@@ -22,6 +23,7 @@ from agent_runtime.runtime.adapter_isolation import (
     run_cancellable_adapter,
 )
 from agent_runtime.runtime.cancellation import CancellationScope, RunLease
+from model_provider.core.interfaces import StreamChunk
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.runtime]
@@ -195,3 +197,34 @@ async def test_cancellable_adapter_invokes_termination_hook():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert terminated.is_set()
+
+
+class EndlessStreamingProvider:
+    def __init__(self) -> None:
+        self.closed = asyncio.Event()
+
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+    async def chat_stream(self, **_kwargs):
+        try:
+            while True:
+                yield StreamChunk(content="xxxx")
+                await asyncio.sleep(0)
+        finally:
+            self.closed.set()
+
+
+async def test_stream_is_closed_when_remaining_token_budget_is_exhausted():
+    provider = EndlessStreamingProvider()
+    engine = RuntimeEngine(
+        agent_executor=AgentLoopExecutor(model_provider=provider),
+        limits=RuntimeLimits(max_total_tokens=20),
+    )
+    handle = await engine.start(_request(AssignForeverPolicy(), run_id="run-stream-budget"))
+
+    result = await asyncio.wait_for(handle.result(), timeout=1)
+
+    assert result.state is RunState.FAILED
+    assert result.reason_code == "token_budget_exhausted"
+    assert provider.closed.is_set()

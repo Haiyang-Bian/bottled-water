@@ -15,7 +15,7 @@ from app.core.security import decode_access_token
 from app.events import WebSocketSink
 from app.services.chat.message_prompt import agent_mentions_for_message, runtime_prompt_for_message
 from app.services.chat.user_messages import message_text, save_user_message
-from app.services.conversation_session_manager import ConversationRunManager
+from app.services.conversation_run_manager import ConversationRunManager
 from common.logger import get_logger
 from db.models import Conversation, Message, User
 from db.session import AsyncSessionLocal

@@ -17,7 +17,7 @@ from agent_runtime import (
     SingleAgentPolicy,
 )
 from agent_runtime.core.run_types import AgentExecutionResult
-from app.services.conversation_session_manager import ConversationRunManager
+from app.services.conversation_run_manager import ConversationRunManager
 from app.services.runtime.event_projection import project_runtime_event
 from app.services.runtime_service import OrchestratorService, RuntimeBinding
 from db.base import Base

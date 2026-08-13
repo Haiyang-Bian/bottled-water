@@ -111,6 +111,8 @@ async def test_run_completes_once_and_commits_structured_context():
     )
     assert context.agent_memories["worker"].summary == "Implemented the task"
     assert "reasoning" not in repr(context)
+    assert any(event.type == "control.assign" and event.target == "worker" for event in events)
+    assert engine.active_run_count == 0
 
 
 class NeverCompletesExecutor:
@@ -219,3 +221,35 @@ def test_runtime_limits_have_safe_defaults_and_reject_zero():
     )
     with pytest.raises(ValueError):
         RuntimeLimits(max_decisions=0)
+
+
+async def test_runtime_shutdown_fails_active_run_and_forgets_it():
+    executor = NeverCompletesExecutor()
+    engine = RuntimeEngine(agent_executor=executor)
+    handle = await engine.start(
+        RunRequest(
+            run_id="run-shutdown",
+            context_scope_id="scope-shutdown",
+            input="wait",
+            agents=(_agent(),),
+            policy=AssignThenCompletePolicy(),
+        )
+    )
+    await executor.started.wait()
+
+    results = await engine.shutdown()
+
+    assert results == (await handle.result(),)
+    assert results[0].state is RunState.FAILED
+    assert results[0].reason_code == "runtime_shutdown"
+    assert engine.active_run_count == 0
+    with pytest.raises(RuntimeError, match="shut down"):
+        await engine.start(
+            RunRequest(
+                run_id="run-after-shutdown",
+                context_scope_id="scope-shutdown",
+                input="no",
+                agents=(_agent(),),
+                policy=AssignThenCompletePolicy(),
+            )
+        )

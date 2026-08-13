@@ -5,6 +5,10 @@ from typing import Any, List, Optional
 from .interfaces import BaseModelProvider, ChatMessage, ChatResponse
 
 
+class OutputTokenLimitExceeded(RuntimeError):
+    """Raised after actively closing a stream that exhausted its output budget."""
+
+
 async def collect_chat_stream(
     provider: BaseModelProvider,
     *,
@@ -25,21 +29,38 @@ async def collect_chat_stream(
     reasoning_parts: list[str] = []
     tool_calls: dict[int, dict[str, Any]] = {}
 
-    async for chunk in provider.chat_stream(
+    stream = provider.chat_stream(
         messages=messages,
         system_prompt=system_prompt,
         tools=tools,
         temperature=temperature,
         max_tokens=max_tokens,
-    ):
-        if chunk.content:
-            content_parts.append(chunk.content)
-        if chunk.reasoning:
-            reasoning_parts.append(chunk.reasoning)
-        if chunk.tool_call:
-            index = _tool_call_index(tool_calls, chunk.tool_call)
-            existing = tool_calls.setdefault(index, {})
-            _merge_tool_call(existing, chunk.tool_call)
+    )
+    budget_exhausted = False
+    try:
+        async for chunk in stream:
+            candidate = "".join(content_parts) + (chunk.content or "")
+            candidate += "".join(reasoning_parts) + (chunk.reasoning or "")
+            if chunk.tool_call:
+                candidate += str(chunk.tool_call)
+            if max_tokens is not None and _count_tokens(provider, candidate) >= max_tokens:
+                budget_exhausted = True
+                break
+            if chunk.content:
+                content_parts.append(chunk.content)
+            if chunk.reasoning:
+                reasoning_parts.append(chunk.reasoning)
+            if chunk.tool_call:
+                index = _tool_call_index(tool_calls, chunk.tool_call)
+                existing = tool_calls.setdefault(index, {})
+                _merge_tool_call(existing, chunk.tool_call)
+    finally:
+        if budget_exhausted:
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                await close()
+    if budget_exhausted:
+        raise OutputTokenLimitExceeded("token_budget_exhausted")
 
     return ChatResponse(
         content="".join(content_parts),
@@ -48,6 +69,13 @@ async def collect_chat_stream(
         model=getattr(provider, "model", None),
         reasoning_content="".join(reasoning_parts),
     )
+
+
+def _count_tokens(provider: BaseModelProvider, text: str) -> int:
+    counter = getattr(provider, "count_tokens", None)
+    if callable(counter):
+        return max(0, int(counter(text)))
+    return max(1, len(text) // 4)
 
 
 def _merge_tool_call(target: dict[str, Any], source: dict[str, Any]) -> None:

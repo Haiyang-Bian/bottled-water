@@ -83,7 +83,7 @@ async def _send_async(
     text = _message_text(payload).strip()
 
     if trigger_agent:
-        from app.services.conversation_session_manager import ConversationRunManager
+        from app.services.conversation_run_manager import ConversationRunManager
 
         session_manager = ConversationRunManager.get_instance()
         await session_manager.get_or_create_engine(
@@ -276,7 +276,7 @@ async def stream_conversation(
 
     # Bridge runtime events into the SSE response stream.
     async def generator():
-        from app.services.conversation_session_manager import ConversationRunManager
+        from app.services.conversation_run_manager import ConversationRunManager
 
         session_manager = ConversationRunManager.get_instance()
         conversation = await _get_conversation(db, user, conversation_id)
@@ -325,7 +325,7 @@ async def cancel_stream(
     user: User = Depends(get_current_user),
 ):
     """Cancel the active generation."""
-    from app.services.conversation_session_manager import ConversationRunManager
+    from app.services.conversation_run_manager import ConversationRunManager
 
     conversation = await _get_conversation(db, user, conversation_id)
 
@@ -400,7 +400,7 @@ async def compat_cancel_stream(
     user: User = Depends(get_current_user),
 ):
     """Cancel the active generation for compatibility routes."""
-    from app.services.conversation_session_manager import ConversationRunManager
+    from app.services.conversation_run_manager import ConversationRunManager
 
     conversation = await _get_conversation(db, user, conversation_id)
 
