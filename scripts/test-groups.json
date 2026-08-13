@@ -61,6 +61,9 @@
     "security:component": [
       "tests/security-ops-panel.test.tsx"
     ],
+    "security:unit": [
+      "tests/api-log-redaction.test.ts"
+    ],
     "models:component": [
       "tests/model-settings-deepseek.test.tsx"
     ],

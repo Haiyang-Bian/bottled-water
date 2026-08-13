@@ -2,8 +2,34 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import re
 import sys
 from pathlib import Path
+
+
+_SENSITIVE_LOG_TEXT = (
+    (re.compile(r"([?&](?:token|access_token|api_key)=)[^&\s]+", re.IGNORECASE), r"\1<redacted>"),
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "Bearer <redacted>"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b", re.IGNORECASE), "<redacted>"),
+)
+
+
+def _redact_log_text(value: str) -> str:
+    for pattern, replacement in _SENSITIVE_LOG_TEXT:
+        value = pattern.sub(replacement, value)
+    return value
+
+
+class _SensitiveLogFilter(logging.Filter):
+    """Redact credentials before any console or file handler formats a record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_log_text(record.getMessage())
+        record.args = ()
+        context = getattr(record, "context", None)
+        if isinstance(context, str):
+            record.context = _redact_log_text(context)
+        return True
 
 
 def _make_log_dir() -> Path:
@@ -29,8 +55,13 @@ def configure_logging(
 
     后端日志写入 application-YYYY-MM-DD.log，按日期轮转，保留 30 天。
     """
-    log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
-    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
+    log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s %(context)s"
+    formatter = logging.Formatter(
+        log_format,
+        datefmt="%Y-%m-%d %H:%M:%S",
+        defaults={"context": ""},
+    )
+    sensitive_filter = _SensitiveLogFilter()
 
     log_dir = log_dir or _make_log_dir()
     backend_log = log_dir / "application.log"
@@ -44,9 +75,11 @@ def configure_logging(
     )
     backend_handler.suffix = "%Y-%m-%d.log"
     backend_handler.setFormatter(formatter)
+    backend_handler.addFilter(sensitive_filter)
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(sensitive_filter)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
@@ -66,6 +99,11 @@ def configure_logging(
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    # WatchFiles observes raw writes to runtime logs and SQLite sidecars even
+    # when Uvicorn later filters them out. Suppress its feedback-loop noise.
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info("后端日志系统已初始化，文件: %s", backend_log)
 
