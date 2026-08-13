@@ -33,6 +33,7 @@
     ],
     "runtime:unit": [
       "tests/test_agent_runtime/test_run_kernel.py",
+      "tests/test_agent_runtime/test_run_watchdog_v1.py",
       "tests/test_agent_runtime/test_watchdog.py",
       "tests/test_agent_runtime/test_actor_orchestrator.py",
       "tests/test_agent_runtime/test_eventbus.py",

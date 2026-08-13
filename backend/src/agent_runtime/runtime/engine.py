@@ -26,7 +26,9 @@ from ..core.run_types import (
     utc_now,
 )
 from .cancellation import CancellationScope, RunLease
+from .adapter_isolation import AdapterNotCancellableError, AdapterTimeoutError
 from .run_store import InMemoryRunStore
+from .run_watchdog import RunWatchdog
 
 
 _EVENTS_CLOSED = object()
@@ -118,6 +120,7 @@ class RunKernel:
         self._sequence_lock = asyncio.Lock()
         self._managed_tasks: set[asyncio.Task] = set()
         self._main_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._result_future: asyncio.Future[RunResult] | None = None
         self._context: ContextSnapshot | None = None
@@ -126,6 +129,7 @@ class RunKernel:
         self._reports = []
         self._outputs: list[str] = []
         self._last_event: EventEnvelope | None = None
+        self._watchdog = RunWatchdog(limits, self._fail_from_watchdog)
 
     @property
     def result_future(self) -> asyncio.Future[RunResult]:
@@ -203,6 +207,9 @@ class RunKernel:
             self._memories = dict(self._context.agent_memories)
             await self.run_store.create(self.request, self.snapshot())
             self.state = RunState.RUNNING
+            self._watchdog_task = asyncio.create_task(
+                self._watchdog.run(), name=f"runtime-watchdog:{self.request.run_id}"
+            )
             await self._emit(
                 "system.run_started",
                 {
@@ -212,11 +219,25 @@ class RunKernel:
             )
             while not self.state.is_terminal:
                 self.cancellation.raise_if_cancelled()
-                proposal = await self.request.policy.propose(
-                    await self._policy_snapshot(), self._last_event
-                )
+                budget_reason = self._watchdog.check_decisions(self.decision_count)
+                if budget_reason is not None:
+                    await self._abort(budget_reason)
+                    return
+                try:
+                    proposal = await self.request.policy.propose(
+                        await self._policy_snapshot(), self._last_event
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    await self._abort("policy_error")
+                    return
                 self.decision_count += 1
                 self.usage.add(proposal.usage)
+                budget_reason = self._watchdog.check_tokens(self.usage.total_tokens)
+                if budget_reason is not None:
+                    await self._abort(budget_reason)
+                    return
                 self._last_event = await self._emit(
                     "scheduler.proposal",
                     {
@@ -229,6 +250,10 @@ class RunKernel:
                     source="policy",
                 )
                 if proposal.action == "complete":
+                    budget_reason = self._current_budget_reason()
+                    if budget_reason is not None:
+                        await self._abort(budget_reason)
+                        return
                     await self._commit_context()
                     await self._finish(RunState.COMPLETED, "completed", "\n\n".join(self._outputs))
                     return
@@ -239,9 +264,14 @@ class RunKernel:
                     await self._execute_targets(targets, proposal.task)
                     continue
                 if proposal.action == "wait":
+                    self.no_progress_count += 1
+                    budget_reason = self._watchdog.check_no_progress(self.no_progress_count)
+                    if budget_reason is not None:
+                        await self._abort(budget_reason)
+                        return
                     await asyncio.sleep(0)
                     continue
-                await self._finish(RunState.FAILED, "policy_error")
+                await self._abort("policy_error")
                 return
         except asyncio.CancelledError:
             await self._finish(
@@ -249,9 +279,13 @@ class RunKernel:
                 self.cancellation.reason or "user_cancelled",
             )
         except ContextConflictError:
-            await self._finish(RunState.FAILED, "context_conflict")
+            await self._abort("context_conflict")
+        except AdapterTimeoutError:
+            await self._abort("adapter_timeout")
+        except AdapterNotCancellableError:
+            await self._abort("adapter_not_cancellable")
         except Exception:
-            await self._finish(RunState.FAILED, "internal_error")
+            await self._abort("internal_error")
 
     async def _policy_snapshot(self) -> PolicySnapshot:
         assert self._context is not None and self._blackboard is not None
@@ -287,6 +321,9 @@ class RunKernel:
                 task=task or self.request.input,
                 input=self.request.input,
                 context=(await self._policy_snapshot()).context,
+                token_budget_remaining=max(
+                    0, self.limits.max_total_tokens - self.usage.total_tokens
+                ),
                 metadata=deepcopy(self.request.metadata),
             )
             for target in targets
@@ -314,6 +351,10 @@ class RunKernel:
     async def _accept_agent_result(self, result: AgentExecutionResult) -> None:
         self.lease.require_valid()
         self.usage.add(result.usage)
+        budget_reason = self._watchdog.check_tokens(self.usage.total_tokens)
+        if budget_reason is not None:
+            await self._abort(budget_reason)
+            return
         self._reports.append(result.report)
         if result.output:
             self._outputs.append(result.output)
@@ -323,6 +364,15 @@ class RunKernel:
             assert self._blackboard is not None
             version, _ = await self._blackboard.read()
             await self._blackboard.update(version, result.blackboard_update)
+        if result.progress:
+            self.no_progress_count = 0
+            self._watchdog.record_progress()
+        else:
+            self.no_progress_count += 1
+            budget_reason = self._watchdog.check_no_progress(self.no_progress_count)
+            if budget_reason is not None:
+                await self._abort(budget_reason)
+                return
         self._last_event = await self._emit(
             "agent.report",
             {
@@ -363,14 +413,57 @@ class RunKernel:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> None:
-        await self._emit(
-            event_type,
-            payload,
-            source=source,
-            target=target,
-            correlation_id=correlation_id,
-            causation_id=causation_id,
+        try:
+            await self._emit(
+                event_type,
+                payload,
+                source=source,
+                target=target,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
+        except Exception:
+            if not self.lease.valid:
+                await self._emit_rejected(event_type, source)
+            raise
+
+    async def _emit_rejected(self, event_type: str, source: str) -> None:
+        if self.event_sink is None:
+            return
+        async with self._sequence_lock:
+            self.sequence += 1
+            event = EventEnvelope(
+                run_id=self.request.run_id,
+                context_scope_id=self.request.context_scope_id,
+                sequence=self.sequence,
+                type="system.late_event_rejected",
+                payload={"rejected_type": event_type},
+                source=source,
+            )
+            try:
+                await self.event_sink.emit(event)
+            except Exception:
+                pass
+
+    def _current_budget_reason(self) -> str | None:
+        return (
+            self._watchdog.reason()
+            or self._watchdog.check_tokens(self.usage.total_tokens)
+            or self._watchdog.check_no_progress(self.no_progress_count)
         )
+
+    async def _fail_from_watchdog(self, reason_code: str) -> None:
+        await self._abort(reason_code)
+
+    async def _abort(self, reason_code: str) -> None:
+        if self.state.is_terminal:
+            return
+        self.cancellation.cancel(reason_code)
+        await self._finish(RunState.FAILED, reason_code)
+        for task in list(self._managed_tasks):
+            task.cancel()
+        if self._main_task and self._main_task is not asyncio.current_task():
+            self._main_task.cancel()
 
     async def _emit(
         self,
@@ -430,6 +523,9 @@ class RunKernel:
                 return False
             self.state = state
             self.reason_code = reason_code
+            self._watchdog.stop()
+            if self._watchdog_task and self._watchdog_task is not asyncio.current_task():
+                self._watchdog_task.cancel()
             terminal_type = {
                 RunState.COMPLETED: "system.run_completed",
                 RunState.FAILED: "system.run_failed",

@@ -165,6 +165,7 @@ class AgentExecutionRequest:
     task: str
     input: str
     context: ContextSnapshot
+    token_budget_remaining: int
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -176,6 +177,7 @@ class AgentExecutionResult:
     usage: Usage = field(default_factory=Usage)
     memory: AgentMemory | None = None
     blackboard_update: dict[str, Any] = field(default_factory=dict)
+    progress: bool = True
 
 
 @dataclass(frozen=True)

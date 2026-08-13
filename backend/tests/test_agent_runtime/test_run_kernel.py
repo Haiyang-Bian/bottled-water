@@ -65,6 +65,14 @@ async def _collect_events(handle):
     return [event async for event in handle.events()]
 
 
+class CollectingSink:
+    def __init__(self) -> None:
+        self.events = []
+
+    async def emit(self, event):
+        self.events.append(event)
+
+
 async def test_run_completes_once_and_commits_structured_context():
     context_store = InMemoryContextStore()
     run_store = InMemoryRunStore()
@@ -119,7 +127,8 @@ class NeverCompletesExecutor:
 async def test_repeated_cancel_converges_and_late_results_lose_write_authority():
     executor = NeverCompletesExecutor()
     run_store = InMemoryRunStore()
-    engine = RuntimeEngine(agent_executor=executor, run_store=run_store)
+    sink = CollectingSink()
+    engine = RuntimeEngine(agent_executor=executor, run_store=run_store, event_sink=sink)
     handle = await engine.start(
         RunRequest(
             run_id="run-cancel",
@@ -142,6 +151,49 @@ async def test_repeated_cancel_converges_and_late_results_lose_write_authority()
     assert first.state is RunState.CANCELLED
     assert len(run_store.finished) == 1
     assert sum(event.type == "system.run_cancelled" for event in events) == 1
+    assert sink.events[-1].type == "system.late_event_rejected"
+
+
+class CompleteOnSignalPolicy:
+    def __init__(self) -> None:
+        self.ready = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def propose(self, snapshot, trigger):
+        self.ready.set()
+        await self.release.wait()
+        return SchedulingProposal(action="complete")
+
+
+async def test_completion_and_cancellation_race_commit_exactly_one_terminal_state():
+    policy = CompleteOnSignalPolicy()
+    run_store = InMemoryRunStore()
+    engine = RuntimeEngine(agent_executor=SuccessfulExecutor(), run_store=run_store)
+    handle = await engine.start(
+        RunRequest(
+            run_id="run-race",
+            context_scope_id="conversation-race",
+            input="finish",
+            agents=(_agent(),),
+            policy=policy,
+        )
+    )
+    events_task = asyncio.create_task(_collect_events(handle))
+    await policy.ready.wait()
+
+    cancel_task = asyncio.create_task(handle.cancel("user_cancelled"))
+    policy.release.set()
+    result = await cancel_task
+    events = await events_task
+
+    terminal_events = [
+        event
+        for event in events
+        if event.type in {"system.run_completed", "system.run_failed", "system.run_cancelled"}
+    ]
+    assert result.state in {RunState.COMPLETED, RunState.CANCELLED}
+    assert len(terminal_events) == 1
+    assert len(run_store.finished) == 1
 
 
 async def test_blackboard_and_context_store_reject_stale_versions():
