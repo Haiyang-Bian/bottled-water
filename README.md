@@ -25,7 +25,7 @@
 - `backend/src`：FastAPI、SQLAlchemy、Alembic、运行时服务、工具、技能、MCP、文件、成果和工作流执行。
 - `frontend/src`：React 18、TypeScript、Vite、Ant Design、Zustand、聊天工作台、平台面板、预览面板、工作流画布和文档页。
 - `docker/`：一键本地部署，包含 nginx、后端、PostgreSQL 和 Redis。
-- `desktop-client/`：轻量 Electron 桌面端，封装 Web 应用并补充托盘、全局快捷键、快速输入、通知和独立窗口。
+- `desktop-client/`：Tauri 2 本地桌面端，内置 React 前端和 FastAPI sidecar，使用本地 SQLite 并自动执行迁移。
 - `mobile-client/`：PWA / Capacitor 移动端，用于轻量会话、成果核验、进度跟踪和安装流程。
 
 ## 当前能力
@@ -64,6 +64,16 @@ pnpm dev
 
 浏览器打开 `http://localhost:5173`。
 
+无需分别启动前后端的 Windows 桌面版：
+
+```powershell
+cd desktop-client
+pnpm install
+pnpm build:win
+```
+
+安装包生成在 `desktop-client/src-tauri/target/release/bundle/nsis/`。开发桌面窗口使用 `pnpm dev`；首次运行会先构建 Python sidecar。
+
 ## Docker 部署
 
 复制模板、替换其中所有 `replace-with-*` 值，再在仓库根目录运行：
@@ -81,7 +91,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 
 ## 客户端
 
-- `desktop-client/`：桌面端，与 Web 能力同步，并提供托盘、全局快捷键、快速输入、通知和独立窗口。
+- `desktop-client/`：Tauri 本地桌面端，负责启动打包后的后端、初始化 SQLite 并加载同一套 Web 前端。
 - `mobile-client/`：移动端 / PWA，用于轻量会话、成果核验、安装流程和进度跟踪。
 
 ## 配置

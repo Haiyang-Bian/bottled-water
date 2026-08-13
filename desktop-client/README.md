@@ -1,66 +1,55 @@
-# AgentHub Desktop Client
+# AgentHub Tauri Desktop
 
-轻量桌面客户端。定位类似豆包 PC 客户端：主体能力直接承载 Web 主端，账号、对话、文件、提示词、模型能力、额度和权限规则完全同步；桌面端只补系统级效率能力。
+本目录提供 AgentHub 的本地桌面发行版。Tauri 2 承载编译后的 React 前端，并在启动时自动运行打包的 FastAPI sidecar；用户不需要分别启动前端、后端、PostgreSQL 或 Redis。
 
-## 和 Web 主端一致的能力
+## 本地数据与进程
 
-- 同一账号体系，登录状态、会话、文件、收藏和工作区数据走同一套 Web 后端。
-- 问答、写作、翻译、代码、图片生成、联网检索、深度思考等 AI 能力不在桌面端重复实现。
-- 会员权益、计费规则、模型额度和权限由 Web 主端统一控制。
-- 实验功能仍由 Web 主端发布，桌面端加载同一地址即可获得。
+- sidecar 每次选择空闲的本机端口，仅监听 `127.0.0.1`。
+- 数据库使用 SQLite，文件、日志和稳定加密密钥保存在系统的 AgentHub AppLocalData 目录。
+- 首次启动自动执行 Alembic migration，退出桌面应用时终止 sidecar。
+- 应用采用单实例运行；重复启动只聚焦已有窗口，避免两个进程同时写 SQLite。
+- Provider API Key 仍由后端加密保存，不写入 Tauri 配置或命令行。
 
-## 桌面端增强
+Electron 客户端已经移除。Tauri V1 聚焦“安装后双击即用”；旧桌面壳的托盘、全局快捷键和截图浮窗暂未迁移。
+Codex、Claude Code、Docker、Office 转换器等外部程序仍需用户单独安装；桌面包不会私自携带或安装这些工具。
 
-- 全局快捷键：默认 `Alt+Space` 呼出悬浮输入框。
-- 悬浮输入：在任意软件里输入内容后，会写入当前 AgentHub 聊天输入框。
-- 截图问答快捷键：默认 `Alt+Shift+Space` 截取当前屏幕到剪贴板，并把“请分析截图”写入当前聊天输入框。
-- 后台常驻：关闭主窗口后留在系统托盘，可继续接收通知。
-- 商业化自绘标题栏：无系统默认菜单栏，提供后退、前进、刷新、悬浮输入、截图问答、复制链接、窗口控制。
-- 多窗口：从网页打开的新窗口也使用同款自绘标题栏，避免系统默认旧式窗口。
-- 原生通知：任务完成、同步异常等可使用系统通知提醒。
-- 独立 Chromium：减少浏览器标签页休眠、关闭页面造成的任务中断体验。
+## 开发
 
-## 本地运行
+需要 Python 3.11、`uv`、Node.js 20+、`pnpm`、Rust MSVC toolchain 和 WebView2。首次准备：
+
+```powershell
+cd backend
+uv sync --extra dev
+cd ../frontend
+pnpm install
+cd ../desktop-client
+pnpm install
+```
+
+启动 Tauri 开发窗口：
 
 ```powershell
 cd desktop-client
-npm install
-npm run dev
+pnpm dev
 ```
 
-指定 Web 主端地址：
-
-```powershell
-.\scripts\run-local.ps1 -WebAppUrl "http://127.0.0.1:5174"
-```
-
-也可以通过环境变量指定：
-
-```powershell
-$env:AGENTHUB_DESKTOP_WEB_URL="http://127.0.0.1:5174"
-npm run dev
-```
+首次执行会通过 PyInstaller 构建 Python sidecar，后续只在后端输入更新时重建。前端由 Tauri 的 `beforeDevCommand` 自动启动。
 
 ## Windows 安装包
 
 ```powershell
 cd desktop-client
-npm run installable:win
+pnpm build:win
 ```
 
-产物输出在 `desktop-client/release/`：
+NSIS 安装包输出到 `desktop-client/src-tauri/target/release/bundle/nsis/`。安装器按当前用户安装，并嵌入 WebView2 bootstrapper。sidecar 中包含完整 Python 运行时和后端依赖，因此安装包体积主要由 Python、ONNX Runtime 和文档处理依赖决定。
 
-- `AgentHub Desktop-0.1.0-x64.exe`：NSIS 安装包。
-- `AgentHub Desktop-0.1.0-portable-x64.exe`：Portable 免安装包。
-
-## 目录
+## 关键目录
 
 ```text
-assets/icon.svg           应用图标
-config/default.json       Web 主端地址、快捷键、托盘策略
-scripts/build-win.ps1     Windows 安装包构建脚本
-scripts/run-local.ps1     本地调试启动脚本
-src/main/main.js          Electron 主进程、Web 壳、托盘、快捷键、多窗口
-src/preload/preload.js    安全 IPC 桥
-src/renderer/*            Web 不可用时的轻量设置页与悬浮输入框
+src-tauri/src/lib.rs         sidecar 生命周期与 Tauri 窗口
+src-tauri/tauri.conf.json    构建、CSP、安装包和外部二进制配置
+scripts/build-sidecar.ps1    PyInstaller sidecar 构建
+scripts/prepare-tauri.ps1    前端与 sidecar 打包准备
+../backend/desktop_entry.py  桌面环境、密钥、迁移与 Uvicorn 入口
 ```

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-AgentHub is a multi-client monorepo. Python code lives in `backend/src`; keep routers in `app/api`, business logic in `app/services`, models in `db/models`, and migrations in `backend/alembic`. The React/Vite app is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; tests live in `frontend/tests`. Use `e2e` for Playwright, `docker` for deployment, `scripts` for repository utilities, and `docs` for architecture and operations. Electron and Capacitor/PWA clients live in `desktop-client` and `mobile-client`.
+AgentHub is a multi-client monorepo. Python code lives in `backend/src`; keep routers in `app/api`, business logic in `app/services`, models in `db/models`, and migrations in `backend/alembic`. The React/Vite app is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; tests live in `frontend/tests`. Use `e2e` for Playwright, `docker` for deployment, `scripts` for repository utilities, and `docs` for architecture and operations. The Tauri 2 desktop client lives in `desktop-client`; Capacitor/PWA code lives in `mobile-client`.
 
 ## Build, Test, and Development Commands
 
@@ -21,6 +21,8 @@ cd ../frontend; pnpm install; pnpm dev
 ```
 
 The test runner refuses an unspecified run; use `-All` explicitly for a full stack. Run `uv run ruff check <paths>` or `pnpm exec eslint <paths>` for touched files, and `pnpm build` for frontend integration. Start the full stack with `docker compose --env-file docker/.env -f docker/docker-compose.yml up --build`.
+
+For the self-contained Windows desktop app, run `cd desktop-client; pnpm dev` or build the NSIS installer with `pnpm build:win`. Do not commit generated sidecar binaries or `src-tauri/target`.
 
 ## Coding Style & Naming Conventions
 
