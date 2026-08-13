@@ -19,6 +19,11 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 from model_provider.core.streaming import OutputTokenLimitExceeded, collect_chat_stream
 
 from common.logger import get_logger
+from common.artifact_heuristics import (
+    HTML_ARTIFACT_TOOLS,
+    artifact_arguments,
+    detect_artifact_tool,
+)
 from ..core.types import AgentConfig, AgentReport, AgentState, AgentWill, ToolCall, ToolResult
 from ..core.interfaces import (
     AgentContextBuildRequest,
@@ -1233,10 +1238,6 @@ class AgentLoop:
             return None
         if self._looks_like_project_code_delivery(task):
             return None
-        try:
-            from app.services.llm.tool_calls import artifact_arguments, detect_artifact_tool
-        except Exception:
-            return None
         available = {
             str(tool.get("function", {}).get("name") or "")
             for tool in tools
@@ -1487,11 +1488,6 @@ class AgentLoop:
 
     @staticmethod
     def _recover_tool_call_arguments(tool_name: str, task: str) -> dict[str, Any] | None:
-        try:
-            from app.services.llm.html_artifacts import HTML_ARTIFACT_TOOLS
-            from app.services.llm.tool_calls import artifact_arguments
-        except Exception:
-            return None
         if tool_name not in HTML_ARTIFACT_TOOLS:
             return None
         return artifact_arguments(tool_name, task)

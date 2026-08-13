@@ -3,9 +3,10 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from common.artifact_heuristics import HTML_ARTIFACT_TOOLS as _HTML_ARTIFACT_TOOLS
 
-HTML_ARTIFACT_TOOLS = {"artifact.create_html", "artifact.create_web_app"}
 
+HTML_ARTIFACT_TOOLS = _HTML_ARTIFACT_TOOLS
 
 def html_artifact_arguments(prompt: str) -> dict[str, str]:
     title = _title_from_prompt(prompt)

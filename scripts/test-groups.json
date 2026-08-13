@@ -32,8 +32,9 @@
       "tests/test_orchestrator.py",
       "tests/test_orchestrator_output.py"
     ],
-    "runtime:unit": [
-      "tests/test_agent_runtime/test_run_kernel.py",
+      "runtime:unit": [
+        "tests/test_agent_runtime/test_dependency_boundary.py",
+        "tests/test_agent_runtime/test_run_kernel.py",
       "tests/test_agent_runtime/test_run_journal.py",
       "tests/test_agent_runtime/test_run_watchdog_v1.py",
       "tests/test_agent_runtime/test_scheduler_policies.py",
