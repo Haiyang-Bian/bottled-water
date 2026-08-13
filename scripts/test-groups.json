@@ -32,6 +32,9 @@
       "tests/test_orchestrator_output.py"
     ],
     "runtime:unit": [
+      "tests/test_agent_runtime/test_run_kernel.py",
+      "tests/test_agent_runtime/test_watchdog.py",
+      "tests/test_agent_runtime/test_actor_orchestrator.py",
       "tests/test_agent_runtime/test_eventbus.py",
       "tests/test_agent_runtime/test_tools.py",
       "tests/test_output_filter.py"

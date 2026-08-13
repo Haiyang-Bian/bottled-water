@@ -4,20 +4,7 @@ agent_runtime - 多智能体运行时
 纯 Python 库，不依赖任何 Web 框架。
 可独立使用，也可被 FastAPI/Flask/其他框架集成。
 
-使用示例：
-    from agent_runtime import Session, AgentConfig
-    from model_provider import create_provider, ModelConfig
-
-    provider = create_provider(ModelConfig(provider="ark", model="ep-xxx", api_key="xxx"))
-
-    session = Session.create(
-        agents=[AgentConfig(id="coder", name="程序员", system_prompt="...")],
-        scheduler_config={"strategy": "tech_lead"},
-        model_provider=provider,
-    )
-
-    async for event in session.run("实现登录功能"):
-        print(event)
+Runtime Kernel V1 的公开入口是 RuntimeEngine、RunRequest 与 RunHandle。
 """
 
 from .core.types import (
@@ -45,6 +32,21 @@ from .runtime.actor_orchestrator import ActorOrchestrator
 from .runtime.event_dispatcher import EventDispatcher
 from .runtime.mailbox import Mailbox
 from .runtime.watchdog import Watchdog, WatchdogConfig
+from .runtime.engine import RuntimeEngine, RunHandle
+from .runtime.cancellation import CancellationScope, RunLease
+from .core.run_types import (
+    AgentMemory,
+    ContextDelta,
+    ContextSnapshot,
+    EventEnvelope,
+    RunRequest,
+    RunResult,
+    RunSnapshot,
+    RunState,
+    RuntimeLimits,
+    SchedulingProposal,
+    Usage,
+)
 from .strategies.scheduler_agent import SchedulerAgent
 from .strategies.base import Scheduler
 from .strategies.tech_lead import TechLeadScheduler
@@ -80,6 +82,21 @@ __all__ = [
     "Mailbox",
     "Watchdog",
     "WatchdogConfig",
+    "RuntimeEngine",
+    "RunHandle",
+    "RunRequest",
+    "RunResult",
+    "RunSnapshot",
+    "RunState",
+    "RuntimeLimits",
+    "EventEnvelope",
+    "ContextSnapshot",
+    "ContextDelta",
+    "AgentMemory",
+    "SchedulingProposal",
+    "Usage",
+    "CancellationScope",
+    "RunLease",
     # 调度策略
     "Scheduler",
     "TechLeadScheduler",
