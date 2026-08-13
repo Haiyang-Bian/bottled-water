@@ -487,7 +487,7 @@ class ConversationRunManager:
             )
         binding = self._bindings.get(conversation_id)
         cancel_abandoned = (
-            getattr(binding.engine.run_store, "cancel_abandoned", None) if binding else None
+            getattr(binding.engine.run_journal, "cancel_abandoned", None) if binding else None
         )
         if cancel_abandoned:
             await cancel_abandoned(conversation_id)

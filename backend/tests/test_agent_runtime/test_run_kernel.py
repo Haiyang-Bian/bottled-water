@@ -21,7 +21,8 @@ from agent_runtime.context.scope_store import InMemoryContextStore, VersionedBla
 from agent_runtime.core.ports import ContextConflictError
 from agent_runtime.core.run_types import AgentExecutionResult
 from agent_runtime.runtime.cancellation import RunLeaseRevokedError
-from agent_runtime.runtime.run_store import InMemoryRunStore
+from agent_runtime.runtime.run_journal import InMemoryRunJournal
+from agent_runtime.runtime.run_journal import EventJournalError
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.runtime]
@@ -61,6 +62,24 @@ class SuccessfulExecutor:
         )
 
 
+class ThinkingExecutor(SuccessfulExecutor):
+    async def execute(self, request, *, emit, cancellation, lease):
+        await emit(
+            "agent.thinking",
+            {"agent_id": request.agent.id, "thinking": "private reasoning"},
+            f"agent:{request.agent.id}",
+            None,
+            None,
+            None,
+        )
+        return await super().execute(
+            request,
+            emit=emit,
+            cancellation=cancellation,
+            lease=lease,
+        )
+
+
 async def _collect_events(handle):
     return [event async for event in handle.events()]
 
@@ -73,13 +92,24 @@ class CollectingSink:
         self.events.append(event)
 
 
+class JournalCheckingSink(CollectingSink):
+    def __init__(self, journal) -> None:
+        super().__init__()
+        self.journal = journal
+
+    async def emit(self, event):
+        page = await self.journal.read_events(event.run_id)
+        assert any(item.event_id == event.event_id for item in page.items)
+        await super().emit(event)
+
+
 async def test_run_completes_once_and_commits_structured_context():
     context_store = InMemoryContextStore()
-    run_store = InMemoryRunStore()
+    run_store = InMemoryRunJournal()
     engine = RuntimeEngine(
         agent_executor=SuccessfulExecutor(),
         context_store=context_store,
-        run_store=run_store,
+        run_journal=run_store,
     )
 
     handle = await engine.start(
@@ -115,6 +145,91 @@ async def test_run_completes_once_and_commits_structured_context():
     assert engine.active_run_count == 0
 
 
+async def test_multiple_handle_subscribers_receive_the_same_durable_stream():
+    journal = InMemoryRunJournal()
+    sink = JournalCheckingSink(journal)
+    engine = RuntimeEngine(
+        agent_executor=SuccessfulExecutor(),
+        run_journal=journal,
+        event_sink=sink,
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="run-multi-reader",
+            context_scope_id="conversation-multi-reader",
+            input="ship it",
+            agents=(_agent(),),
+            policy=AssignThenCompletePolicy(),
+        )
+    )
+
+    first_task = asyncio.create_task(_collect_events(handle))
+    second_task = asyncio.create_task(_collect_events(handle))
+    await handle.result()
+    first, second = await asyncio.gather(first_task, second_task)
+
+    assert first == second
+    assert sink.events == first
+    assert first[-1].type == "system.run_completed"
+
+
+async def test_handle_keeps_live_thinking_ephemeral_while_journal_redacts_it():
+    journal = InMemoryRunJournal()
+    engine = RuntimeEngine(agent_executor=ThinkingExecutor(), run_journal=journal)
+    handle = await engine.start(
+        RunRequest(
+            run_id="run-live-thinking",
+            context_scope_id="conversation-live-thinking",
+            input="ship it",
+            agents=(_agent(),),
+            policy=AssignThenCompletePolicy(),
+        )
+    )
+
+    live_events = await _collect_events(handle)
+    thinking = next(event for event in live_events if event.type == "agent.thinking")
+    persisted = await journal.read_events(handle.run_id)
+    persisted_thinking = next(event for event in persisted.items if event.type == "agent.thinking")
+
+    assert thinking.payload["thinking"] == "private reasoning"
+    assert persisted_thinking.payload == {"agent_id": "worker", "redacted": True}
+
+
+class FailingJournal(InMemoryRunJournal):
+    async def append_event(self, event):
+        raise EventJournalError("database unavailable")
+
+    async def try_finish(self, result, terminal_event):
+        raise EventJournalError("database unavailable")
+
+
+async def test_journal_failure_converges_locally_without_publishing_uncommitted_events():
+    journal = FailingJournal()
+    sink = CollectingSink()
+    engine = RuntimeEngine(
+        agent_executor=SuccessfulExecutor(),
+        run_journal=journal,
+        event_sink=sink,
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="run-journal-failure",
+            context_scope_id="conversation-journal-failure",
+            input="ship it",
+            agents=(_agent(),),
+            policy=AssignThenCompletePolicy(),
+        )
+    )
+
+    events_task = asyncio.create_task(_collect_events(handle))
+    result = await handle.result()
+
+    assert result.state is RunState.FAILED
+    assert result.reason_code == "event_store_error"
+    assert await events_task == []
+    assert sink.events == []
+
+
 class NeverCompletesExecutor:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -128,9 +243,9 @@ class NeverCompletesExecutor:
 
 async def test_repeated_cancel_converges_and_late_results_lose_write_authority():
     executor = NeverCompletesExecutor()
-    run_store = InMemoryRunStore()
+    run_store = InMemoryRunJournal()
     sink = CollectingSink()
-    engine = RuntimeEngine(agent_executor=executor, run_store=run_store, event_sink=sink)
+    engine = RuntimeEngine(agent_executor=executor, run_journal=run_store, event_sink=sink)
     handle = await engine.start(
         RunRequest(
             run_id="run-cancel",
@@ -169,8 +284,8 @@ class CompleteOnSignalPolicy:
 
 async def test_completion_and_cancellation_race_commit_exactly_one_terminal_state():
     policy = CompleteOnSignalPolicy()
-    run_store = InMemoryRunStore()
-    engine = RuntimeEngine(agent_executor=SuccessfulExecutor(), run_store=run_store)
+    run_store = InMemoryRunJournal()
+    engine = RuntimeEngine(agent_executor=SuccessfulExecutor(), run_journal=run_store)
     handle = await engine.start(
         RunRequest(
             run_id="run-race",

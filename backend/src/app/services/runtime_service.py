@@ -33,7 +33,8 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 
 from db.models import Agent, Artifact, Conversation, Message, User
 from db.session import AsyncSessionLocal
-from app.persistence.runtime_store import SQLContextStore, SQLRunStore
+from app.persistence.runtime_journal import SQLRunJournal
+from app.persistence.runtime_store import SQLContextStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
 from app.services.agents.capability_permissions import (
@@ -320,7 +321,7 @@ class OrchestratorService:
                 use_streaming=True,
             ),
             context_store=SQLContextStore(session_factory),
-            run_store=SQLRunStore(session_factory),
+            run_journal=SQLRunJournal(session_factory),
         )
         return RuntimeBinding(
             engine=engine,

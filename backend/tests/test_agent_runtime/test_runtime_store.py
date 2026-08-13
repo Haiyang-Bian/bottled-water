@@ -21,7 +21,7 @@ from agent_runtime import (
 from agent_runtime.core.ports import ContextConflictError
 from agent_runtime.core.run_types import RunSnapshot
 from app.persistence.runtime_journal import SQLRunJournal
-from app.persistence.runtime_store import SQLContextStore, SQLRunStore
+from app.persistence.runtime_store import SQLContextStore
 from db.base import Base
 from db.models import Conversation, RuntimeEvent, RuntimeRun, User
 
@@ -81,62 +81,6 @@ async def test_sql_context_store_commits_structured_state_and_rejects_conflicts(
         assert "reasoning" not in repr(committed)
         with pytest.raises(ContextConflictError):
             await store.commit("scope", ContextDelta(expected_version=0, blackboard={}))
-    finally:
-        await engine.dispose()
-
-
-async def test_sql_run_store_terminal_cas_and_process_lost_recovery(tmp_path):
-    engine, factory = await _database(tmp_path)
-    store = SQLRunStore(factory)
-    now = datetime.now(UTC)
-    request = RunRequest(
-        run_id="run",
-        context_scope_id="scope",
-        input="work",
-        agents=(AgentConfig(id="agent", name="Agent", system_prompt="work"),),
-        policy=NeverCalledPolicy(),
-    )
-    snapshot = RunSnapshot(
-        run_id="run",
-        context_scope_id="scope",
-        state=RunState.RUNNING,
-        reason_code=None,
-        sequence=0,
-        decision_count=0,
-        no_progress_count=0,
-        usage=Usage(),
-        context_version=0,
-        limits=RuntimeLimits(),
-        started_at=now,
-        finished_at=None,
-    )
-    try:
-        await store.create(request, snapshot)
-        result = RunResult(
-            run_id="run",
-            context_scope_id="scope",
-            state=RunState.COMPLETED,
-            reason_code="completed",
-            started_at=now,
-            finished_at=now,
-            usage=Usage(),
-        )
-        assert await store.try_finish(result) is True
-        assert await store.try_finish(result) is False
-
-        lost_request = RunRequest(
-            run_id="lost",
-            context_scope_id="scope",
-            input="work",
-            agents=request.agents,
-            policy=NeverCalledPolicy(),
-        )
-        await store.create(lost_request, snapshot.__class__(**{**snapshot.__dict__, "run_id": "lost"}))
-        assert await store.recover_process_lost("scope") == ["lost"]
-        async with factory() as db:
-            lost = await db.get(RuntimeRun, "lost")
-            assert lost.state == "failed"
-            assert lost.reason_code == "process_lost"
     finally:
         await engine.dispose()
 
@@ -215,5 +159,54 @@ async def test_sql_run_journal_persists_ordered_redacted_events_and_atomic_termi
             assert run.output == "answer"
             assert run.last_event_sequence == 2
             assert len(events) == 2
+    finally:
+        await engine.dispose()
+
+
+async def test_sql_run_journal_process_lost_recovery_appends_atomic_terminal_event(tmp_path):
+    engine, factory = await _database(tmp_path)
+    journal = SQLRunJournal(factory)
+    now = datetime.now(UTC)
+    request = RunRequest(
+        run_id="lost-run",
+        context_scope_id="scope",
+        input="work",
+        agents=(AgentConfig(id="agent", name="Agent", system_prompt="work"),),
+        policy=NeverCalledPolicy(),
+    )
+    snapshot = RunSnapshot(
+        run_id=request.run_id,
+        context_scope_id=request.context_scope_id,
+        state=RunState.RUNNING,
+        reason_code=None,
+        sequence=0,
+        decision_count=0,
+        no_progress_count=0,
+        usage=Usage(),
+        context_version=0,
+        limits=RuntimeLimits(),
+        started_at=now,
+        finished_at=None,
+    )
+    try:
+        await journal.create_run(request, snapshot)
+        await journal.append_event(
+            EventEnvelope(
+                run_id=request.run_id,
+                context_scope_id=request.context_scope_id,
+                sequence=1,
+                type="system.run_started",
+                payload={},
+            )
+        )
+        assert await journal.recover_process_lost("scope") == [request.run_id]
+        assert await journal.recover_process_lost("scope") == []
+        page = await journal.read_events(request.run_id)
+        assert [event.type for event in page.items] == [
+            "system.run_started",
+            "system.run_failed",
+        ]
+        assert page.items[-1].payload["reason_code"] == "process_lost"
+        assert page.terminal is True
     finally:
         await engine.dispose()
