@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agent_runtime import (
@@ -17,11 +18,16 @@ from agent_runtime import (
     SingleAgentPolicy,
 )
 from agent_runtime.core.run_types import AgentExecutionResult
-from app.services.conversation_run_manager import ConversationRunManager
+from agent_runtime.core.types import Event as RuntimeEvent
+from app.services.conversation_run_manager import (
+    ConversationRunManager,
+    RuntimeProjectionGapError,
+)
+from app.persistence.runtime_journal import SQLRunJournal
 from app.services.runtime.event_projection import project_runtime_event
 from app.services.runtime_service import OrchestratorService, RuntimeBinding
 from db.base import Base
-from db.models import Conversation, Message, User
+from db.models import Conversation, Message, RuntimeEventConsumer, User
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.runtime]
@@ -95,9 +101,9 @@ async def _database(tmp_path):
     return engine, factory
 
 
-def _binding(executor) -> RuntimeBinding:
+def _binding(executor, journal) -> RuntimeBinding:
     return RuntimeBinding(
-        engine=RuntimeEngine(agent_executor=executor),
+        engine=RuntimeEngine(agent_executor=executor, run_journal=journal),
         agents=(AgentConfig(id="agent", name="Agent", system_prompt="work"),),
         policy_factory=SingleAgentPolicy,
         scheduling_strategy="single_agent",
@@ -107,7 +113,7 @@ def _binding(executor) -> RuntimeBinding:
 async def _prepare_manager(tmp_path, executor):
     engine, factory = await _database(tmp_path)
     manager = ConversationRunManager(session_factory=factory)
-    binding = _binding(executor)
+    binding = _binding(executor, SQLRunJournal(factory))
     agent = SimpleNamespace(id="agent", name="Agent", type="worker")
     async with factory() as db:
         conversation = await db.get(Conversation, "conversation")
@@ -167,6 +173,16 @@ async def test_run_manager_projects_streams_and_clears_active_run(tmp_path):
                 ).all()
             )
             assert any(message.content.get("text") == "done" for message in messages)
+            assert all("thinking" not in (message.content or {}) for message in messages)
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": conversation.extra["runtime"]["generations"][-1]["id"],
+                },
+            )
+            assert consumer is not None
+            assert consumer.last_sequence > 0
     finally:
         await engine.dispose()
 
@@ -212,5 +228,167 @@ def test_event_projection_preserves_frontend_protocol_names():
     )
 
     assert started.type == "system.session_started"
+    assert started.payload["runtime_event_id"]
+    assert started.payload["runtime_sequence"] == 1
+    assert started.payload["runtime_replayed"] is False
     assert proposal.type == "scheduler.decision"
     assert proposal.payload["decision"]["target_agent_id"] == "agent"
+
+
+async def test_generation_projection_skips_duplicates_and_rejects_sequence_gaps(tmp_path):
+    executor = StreamingExecutor()
+    engine, factory, manager = await _prepare_manager(tmp_path, executor)
+    emitted = []
+
+    async def collect(_sink, event):
+        emitted.append(event)
+
+    try:
+        with patch("app.events.WebSocketSink.emit", new=collect):
+            await manager.start_generation("conversation", "work")
+            await manager._running_tasks["conversation"]
+            await asyncio.sleep(0.05)
+
+        durable = next(
+            event
+            for event in emitted
+            if isinstance(event.payload, dict) and event.payload.get("runtime_sequence")
+        )
+        generation_id = str(durable.payload["runtime_run_id"])
+        assert await manager._record_generation_event(
+            "conversation", generation_id, durable
+        ) is False
+
+        async with factory() as db:
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": generation_id,
+                },
+            )
+            last_sequence = consumer.last_sequence
+
+        gap = RuntimeEvent(
+            type="agent.report",
+            payload={
+                "generation_id": generation_id,
+                "runtime_run_id": generation_id,
+                "runtime_event_id": "gap-event",
+                "runtime_sequence": last_sequence + 2,
+                "agent_id": "agent",
+            },
+        )
+        with pytest.raises(RuntimeProjectionGapError):
+            await manager._record_generation_event("conversation", generation_id, gap)
+    finally:
+        await engine.dispose()
+
+
+async def test_generation_projection_rolls_back_read_model_and_cursor_together(tmp_path):
+    executor = StreamingExecutor()
+    engine, factory, manager = await _prepare_manager(tmp_path, executor)
+    try:
+        with patch("app.events.WebSocketSink.emit", new=AsyncMock()):
+            await manager.start_generation("conversation", "work")
+            await manager._running_tasks["conversation"]
+            await asyncio.sleep(0.05)
+
+        async with factory() as db:
+            conversation = await db.get(Conversation, "conversation")
+            generation = conversation.extra["runtime"]["generations"][-1]
+            generation_id = str(generation["id"])
+            before_counts = dict(generation.get("event_counts") or {})
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": generation_id,
+                },
+            )
+            before_sequence = consumer.last_sequence
+
+        next_event = RuntimeEvent(
+            type="agent.report",
+            payload={
+                "generation_id": generation_id,
+                "runtime_run_id": generation_id,
+                "runtime_event_id": "rollback-event",
+                "runtime_sequence": before_sequence + 1,
+                "agent_id": "agent",
+                "work_product": "must roll back",
+            },
+        )
+        with patch.object(
+            manager,
+            "_persist_agent_report_message",
+            new=AsyncMock(side_effect=RuntimeError("projection failed")),
+        ):
+            with pytest.raises(RuntimeError, match="projection failed"):
+                await manager._record_generation_event(
+                    "conversation", generation_id, next_event
+                )
+
+        async with factory() as db:
+            conversation = await db.get(Conversation, "conversation")
+            generation = conversation.extra["runtime"]["generations"][-1]
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": generation_id,
+                },
+            )
+            assert generation.get("event_counts") == before_counts
+            assert consumer.last_sequence == before_sequence
+    finally:
+        await engine.dispose()
+
+
+async def test_generation_projection_catches_up_from_durable_journal(tmp_path):
+    executor = StreamingExecutor()
+    engine, factory, manager = await _prepare_manager(tmp_path, executor)
+    try:
+        with patch("app.events.WebSocketSink.emit", new=AsyncMock()):
+            await manager.start_generation("conversation", "work")
+            await manager._running_tasks["conversation"]
+            await asyncio.sleep(0.05)
+
+        async with factory() as db:
+            conversation = await db.get(Conversation, "conversation")
+            extra = deepcopy(conversation.extra)
+            generation = extra["runtime"]["generations"][-1]
+            generation_id = str(generation["id"])
+            generation["event_counts"] = {}
+            conversation.extra = extra
+            await db.execute(
+                delete(RuntimeEventConsumer).where(
+                    RuntimeEventConsumer.run_id == generation_id
+                )
+            )
+            await db.commit()
+
+        journal = manager._bindings["conversation"].engine.run_journal
+        page = await journal.read_events(generation_id)
+        with patch("app.events.WebSocketSink.emit", new=AsyncMock()):
+            cursor = await manager._catch_up_generation_projection(
+                "conversation",
+                generation_id,
+                journal,
+            )
+
+        assert cursor == page.last_sequence
+        async with factory() as db:
+            conversation = await db.get(Conversation, "conversation")
+            generation = conversation.extra["runtime"]["generations"][-1]
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": generation_id,
+                },
+            )
+            assert generation["event_counts"]
+            assert consumer.last_sequence == page.last_sequence
+    finally:
+        await engine.dispose()

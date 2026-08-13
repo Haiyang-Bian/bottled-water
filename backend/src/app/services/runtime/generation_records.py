@@ -18,7 +18,7 @@ from agent_runtime.core.protocol import (
     SCHEDULER_SUMMARY,
 )
 from agent_runtime.core.types import Event
-from db.models import Conversation, utcnow
+from db.models import Conversation, RuntimeRun, utcnow
 
 MAX_GENERATION_HISTORY = 20
 MAX_DECISION_HISTORY = 20
@@ -162,7 +162,6 @@ async def record_generation_event(
     generations[index] = record
     runtime["generations"] = generations
     _set_runtime(conversation, runtime)
-    await db.commit()
 
 
 async def finish_generation_record(
@@ -172,6 +171,7 @@ async def finish_generation_record(
     *,
     status: str,
     error: str | None = None,
+    commit: bool = True,
 ) -> None:
     """把 generation 收敛到 completed / failed / cancelled。"""
     conversation = await db.get(Conversation, conversation_id)
@@ -200,7 +200,51 @@ async def finish_generation_record(
     conversation.generation_status = "idle" if terminal_status == "completed" else terminal_status
     if conversation.active_run_id == generation_id:
         conversation.active_run_id = None
-    await db.commit()
+    if commit:
+        await db.commit()
+
+
+async def reconcile_terminal_run_records(
+    db: AsyncSession,
+    run_ids: Iterable[str],
+) -> list[RecoveredGeneration]:
+    """Project terminal RuntimeRun truth onto legacy generation read models."""
+
+    identifiers = tuple(dict.fromkeys(str(run_id) for run_id in run_ids if run_id))
+    if not identifiers:
+        return []
+    runs = list(
+        (
+            await db.scalars(
+                select(RuntimeRun)
+                .where(RuntimeRun.id.in_(identifiers))
+                .order_by(RuntimeRun.finished_at, RuntimeRun.id)
+            )
+        ).all()
+    )
+    recovered: list[RecoveredGeneration] = []
+    for run in runs:
+        if run.state not in {"completed", "failed", "cancelled"}:
+            continue
+        await finish_generation_record(
+            db,
+            run.context_scope_id,
+            run.id,
+            status=run.state,
+            error=run.reason_code,
+            commit=False,
+        )
+        recovered.append(
+            RecoveredGeneration(
+                conversation_id=run.context_scope_id,
+                generation_id=run.id,
+                status=run.state,
+                error=run.reason_code,
+            )
+        )
+    if recovered:
+        await db.commit()
+    return recovered
 
 
 async def fail_abandoned_generation_record(

@@ -247,9 +247,10 @@ class RunKernel:
                 *(actor.request_cancel(self.cancellation.reason or "user_cancelled") for actor in self._actors.values()),
                 return_exceptions=True,
             )
-            self._cancel_work()
-            if self._main_task and self._main_task is not asyncio.current_task():
-                self._main_task.cancel()
+            async with self._sequence_lock:
+                self._cancel_work()
+                if self._main_task and self._main_task is not asyncio.current_task():
+                    self._main_task.cancel()
         try:
             return await asyncio.wait_for(
                 asyncio.shield(self.result_future),

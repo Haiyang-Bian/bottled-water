@@ -14,7 +14,7 @@ from app.core.errors import AppError
 from db.session import AsyncSessionLocal
 from app.core.logging_config import configure_logging
 from app.core.response import fail, ok
-from app.services.runtime.generation_records import fail_abandoned_generation_records
+from app.services.runtime.generation_records import reconcile_terminal_run_records
 from app.persistence.runtime_journal import SQLRunJournal
 from app.services.admin_bootstrap import bootstrap_admin_from_settings
 from app.services.system_seed import ensure_system_data
@@ -32,8 +32,8 @@ async def lifespan(_app: FastAPI):
         await ensure_system_data(db)
         await bootstrap_admin_from_settings(db, settings)
         try:
-            recovered = await fail_abandoned_generation_records(db, reason="process_lost")
-            await SQLRunJournal().recover_process_lost()
+            recovered_run_ids = await SQLRunJournal().recover_process_lost()
+            recovered = await reconcile_terminal_run_records(db, recovered_run_ids)
             if recovered:
                 logger.info("Recovered abandoned generations", count=len(recovered))
         except Exception as exc:
