@@ -160,6 +160,8 @@ async def test_run_manager_projects_streams_and_clears_active_run(tmp_path):
             "message_start",
             "agent.token",
             "agent.thinking",
+            "system.session_completed",
+            "generation_finished",
         }
         async with factory() as db:
             conversation = await db.get(Conversation, "conversation")
@@ -226,6 +228,15 @@ def test_event_projection_preserves_frontend_protocol_names():
             payload={"action": "assign", "target_agent_ids": ["agent"], "task": "work"},
         )
     )
+    failed = project_runtime_event(
+        EventEnvelope(
+            run_id="run",
+            context_scope_id="conversation",
+            sequence=3,
+            type="system.run_failed",
+            payload={"reason_code": "event_store_error"},
+        )
+    )
 
     assert started.type == "system.session_started"
     assert started.payload["runtime_event_id"]
@@ -233,6 +244,8 @@ def test_event_projection_preserves_frontend_protocol_names():
     assert started.payload["runtime_replayed"] is False
     assert proposal.type == "scheduler.decision"
     assert proposal.payload["decision"]["target_agent_id"] == "agent"
+    assert failed.type == "system.session_error"
+    assert failed.payload["reason_code"] == "event_store_error"
 
 
 async def test_generation_projection_skips_duplicates_and_rejects_sequence_gaps(tmp_path):

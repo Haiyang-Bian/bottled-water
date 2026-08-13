@@ -24,6 +24,9 @@ def project_runtime_event(envelope: EventEnvelope, *, replayed: bool = False) ->
     elif event_type == "system.run_cancelled":
         event_type = "system.session_cancelled"
         payload.setdefault("session_id", envelope.context_scope_id)
+    elif event_type == "system.run_failed":
+        event_type = "system.session_error"
+        payload.setdefault("session_id", envelope.context_scope_id)
     elif event_type == "scheduler.proposal":
         event_type = "scheduler.decision"
         payload = {
