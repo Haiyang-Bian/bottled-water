@@ -21,7 +21,7 @@ import {
 } from "@ant-design/icons";
 import { api } from "@/api";
 import { useConversationStore } from "@/store";
-import type { Conversation, ConversationWorkflow, WorkflowRun } from "@/types";
+import type { Conversation, ConversationWorkflow } from "@/types";
 
 interface WorkflowBoardPanelProps {
   activeConversation?: Conversation;
@@ -34,10 +34,8 @@ export function WorkflowBoardPanel({ activeConversation }: WorkflowBoardPanelPro
   const [conversationWorkflow, setConversationWorkflow] =
     useState<ConversationWorkflow>();
   const [workflowJson, setWorkflowJson] = useState("");
-  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
   const [draggingNodeId, setDraggingNodeId] = useState<string>();
   const [routingMode, setRoutingMode] = useState("auto");
-  const [workflowStatus, setWorkflowStatus] = useState("ready");
 
   const workflowNodes = conversationWorkflow?.nodes ?? [];
   const workflowEdges = conversationWorkflow?.edges ?? [];
@@ -193,11 +191,10 @@ export function WorkflowBoardPanel({ activeConversation }: WorkflowBoardPanelPro
               onClick={async () => {
                 if (!activeConversation || !conversationWorkflow)
                   return;
-                const run = await api.startWorkflowRun(
+                await api.startWorkflowRun(
                   activeConversation.id,
                   conversationWorkflow,
                 );
-                setWorkflowRuns((current) => [run, ...current]);
                 message.success("Workflow run started");
               }}
             >
@@ -248,7 +245,6 @@ export function WorkflowBoardPanel({ activeConversation }: WorkflowBoardPanelPro
               type="primary"
               icon={<BranchesOutlined />}
               onClick={() => {
-                setWorkflowStatus("running");
                 setConversationWorkflow((current) =>
                   current
                     ? {
@@ -262,7 +258,6 @@ export function WorkflowBoardPanel({ activeConversation }: WorkflowBoardPanelPro
                     : current,
                 );
                 window.setTimeout(() => {
-                  setWorkflowStatus("ready");
                   setConversationWorkflow((current) =>
                     current
                       ? {
