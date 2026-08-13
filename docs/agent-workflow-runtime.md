@@ -7,10 +7,10 @@ This document describes the current chat and workflow runtime behavior.
 Each conversation has a chat type and scheduling settings.
 
 - Single chat: run the selected agent. New conversation defaults prefer the Daily Chat Agent so ordinary chat remains simple.
-- Group chat without workflow enabled: run the configured group orchestration strategy, usually the actor runtime with a Team Leader scheduler.
+- Group chat without workflow enabled: run `AgentHubTeamLeadPolicy` through the shared Runtime Kernel.
 - Group chat with `workflow_enabled=true`: run the saved workflow canvas.
 
-The workflow flag and runtime mode are synchronized when a workflow is saved and enabled from the UI.
+The workflow flag and `scheduling_strategy` are synchronized when a workflow is saved and enabled from the UI.
 
 ## Single-Agent Chat
 
@@ -30,24 +30,22 @@ The context builder includes relevant conversation history, attachments, persist
 
 Group chat can use a planning/orchestration path or a workflow path. The runtime must not let one agent impersonate another agent. Group context lists members and current-agent constraints.
 
-In the actor runtime, the Team Leader scheduler is an event-driven runtime actor, not a hidden final answer generator. It consumes user input and agent reports, then emits scheduling events:
+`AgentHubTeamLeadPolicy` reads an isolated `PolicySnapshot` and returns a `SchedulingProposal`; it does not own state or publish control events. The Kernel validates the proposal and emits:
 
-- `scheduler.plan`: short user-visible task plan and target agent IDs.
-- `scheduler.decision`: assign/parallel/wait/complete decision and repaired targets.
+- `scheduler.decision`: frontend projection of the validated scheduling proposal.
 - `control.assign`: concrete task input for one or more agents.
 - `agent.report`: persisted agent work result and tool-event summary.
-- `scheduler.summary`: final runtime summary and optional Team Leader deliverable.
+- `system.session_completed` / `failed` / `cancelled`: projected Run terminal state.
 
 Important behavior:
 
-- Simple greetings and single-agent turns should complete without a Team Leader restatement.
+- Simple requests should select only the necessary Agent scope.
 - Mentioned agents restrict the turn to the mentioned scope unless the prompt is explicitly collaborative.
 - Complex group turns can select a suitable subset of available agents; the runtime does not have to use every participant.
 - Reviewer and deploy-style agents should normally depend on upstream implementation/content outputs.
-- The final Team Leader message is only persisted when `scheduler.summary.publish_message` is true.
-- The final answer should aggregate source outputs, logic chain, compliance checks, final products, and risks instead of concatenating raw agent transcripts.
+- Agent reports and final Run output must only reference real Adapter results.
 
-The old fallback that synthesized a Team Leader summary after any multi-agent completion has been removed. Persisted Team Leader messages now come from the scheduler summary event only.
+The old SchedulerAgent and synthesized Team Leader fallback have been removed. Run state and `runtime_runs` are the lifecycle truth; generation metadata remains an AgentHub read model.
 
 ## Workflow Canvas
 
@@ -56,7 +54,7 @@ A workflow is stored on the conversation and contains:
 - `nodes`
 - `edges`
 - `settings`
-- mode/runtime metadata
+- scheduling/workflow metadata
 
 The backend accepts array-style edges and canvas object edges. It normalizes them before persistence and preserves handles/config where needed.
 
@@ -109,6 +107,8 @@ Workflow runtime state is stored in:
 - `WorkflowRun.node_states`
 - conversation workflow/runtime metadata
 - persisted messages and tool invocations
+
+Chat Runtime state is stored separately in `runtime_runs` and `runtime_context_states`.
 
 When updating nested JSON fields, use the runtime helpers that flag SQLAlchemy JSON changes.
 

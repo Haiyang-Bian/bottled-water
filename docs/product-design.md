@@ -29,7 +29,7 @@ AgentHub 希望把复杂的 Agent 编排能力隐藏在用户熟悉的聊天协�
 | 价值主张 | 说明 |
 | --- | --- |
 | IM 原生上手 | 以左侧会话列表、中间聊天区、右侧预览区组织复杂 AI 工作，降低学习成本。 |
-| 多 Agent 自动组织 | 默认群聊走 tech_lead actor runtime，由 Team Leader 根据任务动态指派合适 Agent。 |
+| 多 Agent 自动组织 | 默认群聊使用 tech_lead 策略，由 AgentHub Team Lead Policy 提案并由 Runtime Kernel 执行。 |
 | 真实工具闭环 | 文件、沙箱、产物、部署、外部 Coding Agent 都通过真实工具调用和运行记录交付。 |
 | 可视化工作流 | 对确定流程可显式启用 Dify 风格画布，按节点和边执行 Agent / Tool / Skill / MCP。 |
 | 产物即交付 | PDF、Word、PPT、Excel、HTML/Web App 等产物支持预览、编辑、Diff、导出和部署预览。 |
@@ -96,11 +96,11 @@ AgentHub
 │  ├─ 模型、工具、Skill、MCP 权限
 │  └─ Agent 测试与编辑
 ├─ 自动组织运行时
-│  ├─ Team Leader / Scheduler Agent
-│  ├─ Actor runtime
+│  ├─ Team Leader Policy
+│  ├─ Runtime Kernel / RunHandle
 │  ├─ Blackboard
-│  ├─ Agent Context
-│  └─ ConversationSessionManager
+│  ├─ ContextScope / AgentMemory
+│  └─ ConversationRunManager
 ├─ 工作流画布
 │  ├─ start / agent / tool / skill / mcp
 │  ├─ condition / loop / review / artifact / end
@@ -166,7 +166,7 @@ AgentHub 采用 IM 工作台布局：
 核心规则：
 
 - 新建群聊默认自动组织，不默认启用 workflow。
-- `workflow_enabled=false` 时走 actor runtime，由 Team Leader 调度。
+- `workflow_enabled=false` 时由 Team Lead Policy 通过 Runtime Kernel 调度。
 - `workflow_enabled=true` 时严格按当前会话 workflow 画布执行。
 - `@Agent` 命中明确成员时只调度指定 Agent，除非用户明确要求全员协作。
 - 多 Agent 输出必须保留真实身份，不允许合并成一个无来源的泛化回复。
@@ -389,7 +389,7 @@ Codex / Claude Code 作为外部长任务 Coding Agent 接入，不是一次性�
 
 - 保存：只是保存草稿。
 - 启用：将 conversation.extra.workflow_enabled 设为 true。
-- 关闭：回到自动组织 actor runtime。
+- 关闭：回到自动组织 Runtime Kernel。
 
 ### 5.4 文件上传与上下文引用
 
@@ -435,11 +435,9 @@ Codex / Claude Code 作为外部长任务 Coding Agent 接入，不是一次性�
 | 字段 | 说明 |
 | --- | --- |
 | scheduling_strategy | `single_agent` / `tech_lead` / `workflow`。 |
-| runtime_mode | `actor` / `legacy`，当前新主链路优先 actor。 |
 | workflow_enabled | 是否显式启用画布。 |
 | workflow | 当前会话绑定的 workflow JSON。 |
-| runtime | 活跃 generation、scheduler decisions、agent runs、watchdog events。 |
-| blackboard | 群聊协作共享事实和中间成果。 |
+| runtime | generation 和前端事件投影读模型。 |
 | context | 会话摘要、状态变量、短期上下文辅助信息。 |
 
 ---
@@ -453,7 +451,7 @@ flowchart TB
   FE["React 18 + TypeScript + Vite + Ant Design"] --> API["FastAPI Routers"]
   FE --> RT["SSE / WebSocket"]
   API --> CHAT["Chat Services"]
-  CHAT --> RUNTIME["ConversationSessionManager + Agent Runtime"]
+  CHAT --> RUNTIME["ConversationRunManager + Runtime Kernel"]
   RUNTIME --> AGENT["Agent Loop / Actor Runtime"]
   AGENT --> LLM["LLM Gateway: Ark / OpenAI-compatible"]
   AGENT --> TOOLS["Tools / Skills / MCP / External Agents"]
@@ -555,7 +553,7 @@ flowchart TB
 
 - 登录/注册/演示用户。
 - 单聊和群聊。
-- 自动组织 actor runtime。
+- 自动组织 Runtime Kernel。
 - 文件上传、工作区文件。
 - 产物生成、预览、下载。
 - HTML/PDF/Office 基础交付。

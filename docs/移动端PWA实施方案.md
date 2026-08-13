@@ -13,7 +13,7 @@
 - 新建会话默认只选择一个 Daily Chat Agent，移动端不应默认选中所有专业 Agent。
 - 用户手动创建多 Agent 群聊后，复杂任务由 Team Leader 自动组织合适 Agent，并展示短任务进度、Agent 报告和按需最终交付。
 - 简单聊天或单 Agent 任务不应出现 Team Leader 结尾复述。
-- 启用 workflow 的群聊按保存的画布执行；未启用 workflow 的群聊按 actor runtime / Team Leader 调度执行。
+- 启用 workflow 的群聊按保存的画布执行；未启用 workflow 的群聊由 Team Lead Policy 通过 Runtime Kernel 调度。
 - 移动端若隐藏工作流画布和复杂配置页，仍需保留消息流、工具摘要、协作进度、产物卡片、预览/导出入口的核心反馈。
 
 ---

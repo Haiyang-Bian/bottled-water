@@ -39,27 +39,28 @@ SQLAlchemy models are grouped by domain:
 - Workspaces and projects
 - Agents and capabilities
 - Conversations and messages
+- Runtime runs and context states
 - Workflow runs
 - Tasks
 - Files, knowledge, artifacts, and deployments
 - Tool, skill, MCP, model, sandbox, remote, and external agent records
 
-Conversation metadata (`Conversation.extra`) stores workflow, scheduling settings, runtime summaries, blackboard state, and other conversation-scoped state. When mutating JSON state, use the established service helpers and flagging patterns so SQLAlchemy persists changes.
+Conversation metadata (`Conversation.extra`) stores workflow, scheduling settings, runtime read models, and other application state. Runtime Blackboard and structured AgentMemory live in `runtime_context_states`; Run terminal state lives in `runtime_runs`.
 
 ## Chat Runtime
 
 Message send paths enter through `messages.py` or `websocket.py`, then move through chat services:
 
 - `services/chat/user_messages.py`: save user messages.
-- `services/chat/scheduling.py`: resolve single-agent, tech-lead/actor, or workflow scheduling.
+- `services/chat/scheduling.py`: resolve single-agent, tech-lead, or workflow scheduling.
 - `services/runtime_service.py`: runtime entry point.
-- `services/conversation_session_manager.py`: in-process session reuse and cancellation.
+- `services/conversation_run_manager.py`: reusable Runtime adapters, active RunHandle ownership, input queueing, and cancellation.
 - `services/agents`: agent loops and function/tool calling.
 - `services/realtime`: event publication and stream coordination.
 
 Streaming events are consumed by frontend merge logic and should always finish with a terminal success, failure, or cancellation event.
 
-Actor-runtime group chat is coordinated by `backend/src/agent_runtime/strategies/scheduler_agent.py`. The scheduler builds a short task plan, dispatches suitable agents, records agent reports, and emits `scheduler.summary`. Visible Team Leader final messages are persisted only when the summary payload requests publication. The legacy path that synthesized a Team Leader summary after arbitrary multi-agent completion is no longer part of the runtime.
+Group chat is coordinated by `AgentHubTeamLeadPolicy` through the same Runtime Kernel used by single-agent and workflow runs. The policy proposes work; the Kernel validates targets, owns Actor tasks, and commits the terminal state.
 
 ## Agent Tool Loop
 

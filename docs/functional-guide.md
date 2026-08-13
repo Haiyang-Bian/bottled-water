@@ -28,7 +28,7 @@ New conversations default to one Daily Chat Agent, including group-capable creat
 Single chat runs the selected agent loop. Group chat chooses scheduling from conversation settings:
 
 - Workflow-enabled group chat runs the saved workflow canvas and persists `WorkflowRun` node state.
-- Non-workflow group chat uses the actor runtime and Team Leader scheduler.
+- Non-workflow group chat uses `AgentHubTeamLeadPolicy` on the shared Runtime Kernel.
 - Simple turns should not receive a trailing Team Leader restatement.
 - Complex collaborative turns can show a short plan/progress strip, dispatch a suitable subset of agents, and publish a Team Leader final answer only when a real multi-agent summary is useful.
 

@@ -131,8 +131,8 @@ Core frontend files:
 
 Runtime coordination files:
 
-- `backend/src/agent_runtime/strategies/scheduler_agent.py`: actor-runtime Team Leader plan/decision/summary behavior.
-- `backend/src/app/services/conversation_session_manager.py`: runtime event persistence, generation lifecycle, optional Team Leader summary message persistence.
+- `backend/src/agent_runtime/strategies/policies.py`: single-agent, workflow, and generic Team Lead scheduling policies.
+- `backend/src/app/services/conversation_run_manager.py`: runtime event persistence, Run lifecycle, input queueing, and Team Leader summary projection.
 - `backend/src/app/services/runtime/generation_records.py`: generation event and runtime summary records.
 - `frontend/src/lib/runtimeEvents.ts`: frontend runtime event normalization.
 - `frontend/src/features/chat/components/ChatPanel/RuntimeDecisionStrip.tsx`: multi-agent plan/progress/summary display.

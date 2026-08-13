@@ -38,6 +38,12 @@
 
 本目录采用折中方式：不恢复旧长稿，只保留从 Git 可验证的演化结论，并重新建立面向未来实现的规范。
 
+### 7. Runtime Kernel V1 收敛生命周期
+
+提交 `ec70e8e` 与 `32a8c58` 引入 `ContextScope + Run`、唯一终态 CAS、最小 EventEnvelope、Watchdog、取消作用域和写租约。`97029d6` 将单 Agent、Workflow 与 Team Lead 收敛到同一 `SchedulerPolicy`；`3da5366` 把 AgentHub generation、数据库和前端事件投影接到 `RunHandle`。
+
+提交 `cd54bf3` 删除旧 Session、轮询 Orchestrator、ActorOrchestrator、SchedulerAgent 和早期 Agent 入口；`99c98f8` 进一步让 Run 真正拥有 AgentActor/Mailbox，并补齐 Runtime shutdown 与流式预算关流。旧类名在本文前几节只用于描述历史，不再是当前接口。
+
 ## 历史材料查看方式
 
 需要核对原文时，通过 Git 读取，不把快照复制回当前文档树：

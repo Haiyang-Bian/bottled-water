@@ -101,9 +101,9 @@ Add or change a tool:
 Add or change multi-agent runtime behavior:
 
 1. Keep single-chat behavior isolated from group orchestration changes.
-2. Update `backend/src/agent_runtime/strategies/scheduler_agent.py` and related runtime types/events.
-3. Ensure simple turns do not publish a visible Team Leader final message.
-4. Ensure complex collaborative turns preserve real artifact/tool references in `scheduler.summary`.
+2. Update the relevant `SchedulerPolicy`, Runtime types, and event projection.
+3. Ensure simple turns only select the necessary Agent scope.
+4. Ensure collaborative reports preserve real artifact/tool references in structured output.
 5. Update `frontend/src/lib/runtimeEvents.ts`, `RuntimeDecisionStrip.tsx`, and chat tests when event shape changes.
 6. Run the targeted actor-runtime and frontend chat/runtime checks above.
 
@@ -121,7 +121,7 @@ Add or change a workflow node:
 - Alembic cannot connect to Postgres: use `postgresql+psycopg://...`; plain `postgresql://...` is normalized to psycopg by current config.
 - Frontend blank page: run `pnpm build` and check TypeScript errors first.
 - Streaming does not finish: inspect `backend/src/app/api/messages.py`, chat finalizer/cancellation services, and frontend running-conversation state.
-- Group chat has no visible progress: inspect `scheduler.plan`, `scheduler.decision`, `agent.report`, `scheduler.summary`, `frontend/src/lib/runtimeEvents.ts`, and `RuntimeDecisionStrip.tsx`.
-- Team Leader speaks on a simple turn: check `scheduler.summary.publish_message`, `conversation_session_manager._persist_scheduler_summary_message`, and the scheduler final-deliverable rules.
+- Group chat has no visible progress: inspect `scheduler.decision`, `control.assign`, `agent.report`, `frontend/src/lib/runtimeEvents.ts`, and `RuntimeDecisionStrip.tsx`.
+- Team Lead selects too many Agents: inspect `AgentHubTeamLeadPolicy`, mentions metadata, and the scheduling proposal event.
 - Workflow run looks stuck: check `backend/src/app/services/workflows`, `WorkflowRun.node_states`, and browser network polling responses.
 - Docker stack uses the wrong database: use `docker/.env` variables from `docker/env.example`; compose builds its own Postgres URL from `POSTGRES_*`.

@@ -1,55 +1,37 @@
 # Runtime 当前实现对照
 
-> 快照日期：2026-08-13。本文只描述当前仓库中可由源码验证的状态，不构成产品能力声明。目标契约见[运行时不变量](./invariants.md)。
+> 快照日期：2026-08-13。本文只描述当前分支中可由源码和测试验证的状态，不构成产品能力声明。
 
-状态只使用以下四类：
-
-- `已实现`：主干代码中存在对应机制，结论不依赖未来计划。
-- `部分实现`：已有骨架或局部闭环，但尚未满足目标不变量。
-- `未实现`：当前生产路径中没有对应机制。
-- `遗留路径`：仍存在或被测试覆盖，但不应作为目标架构继续扩展。
-
-## 对照表
+状态仅使用：`已实现`、`部分实现`、`未实现`、`遗留路径`。
 
 | 目标契约 | 当前机制 | 状态 | 已知差距 |
 | --- | --- | --- | --- |
-| Session 统一生命周期边界 | [`Session`](../../backend/src/agent_runtime/runtime/session.py) 根据配置创建旧 `Orchestrator` 或 `ActorOrchestrator` | 部分实现 | 同一入口下存在两套生命周期和调度语义，尚未收敛为一条 Actor 主链 |
-| Agent 是长期运行的 Actor | [`AgentActor`](../../backend/src/agent_runtime/runtime/agent_actor.py) 作为独立 `asyncio.Task` 运行 | 已实现 | 任务执行仍整体委托给大型 `AgentLoop`，Actor 自身的细粒度状态有限 |
-| 控制通过有界 Mailbox 投递 | [`Mailbox`](../../backend/src/agent_runtime/runtime/mailbox.py) 使用有最大容量的 `asyncio.Queue` 并支持定向订阅 | 部分实现 | 满队列会等待，但没有超时、优先级或控制事件保留策略 |
-| Agent 可在步骤间响应控制 | [`AgentStepper`](../../backend/src/agent_runtime/runtime/agent_stepper.py) 在事件、模型和工具边界检查控制消息 | 部分实现 | 属于协作式检查点，不是强抢占；阻塞 Provider 或 Tool 内部无法立即响应 |
-| Scheduler 是可替换、无副作用的 Policy | [`SchedulerAgent`](../../backend/src/agent_runtime/strategies/scheduler_agent.py) 订阅报告并调用 `TechLeadScheduler` | 部分实现 | `SchedulerAgent` 继承 Actor 但绕开普通 `AgentLoop`；同时自行归档、投递控制并维护大量产品策略，不是纯提案接口 |
-| Watchdog 对所有主路径执行硬限制 | 旧 [`Orchestrator`](../../backend/src/agent_runtime/runtime/orchestrator.py) 使用 [`Watchdog`](../../backend/src/agent_runtime/runtime/watchdog.py) 检查轮次、Token 和无进展 | 部分实现 | [`ActorOrchestrator`](../../backend/src/agent_runtime/runtime/actor_orchestrator.py) 只有会被活动重置的 idle deadline，没有完整 wall-clock、轮次、Token 和活锁限制 |
-| EventEnvelope 具有顺序与幂等身份 | 当前 [`Event`](../../backend/src/agent_runtime/core/types.py) 包含 type、payload、source、target、channel、correlation_id 和 timestamp | 部分实现 | 缺少稳定 event_id、session_id、会话 sequence、causation_id 和明确重复投递语义 |
-| 单一事件总线和故障隔离 | Runtime [`EventDispatcher`](../../backend/src/agent_runtime/runtime/event_dispatcher.py) 支持订阅、目标过滤和 Sink | 部分实现 | Sink 仍逐个等待；应用层还同时存在 [`AppEventBus`](../../backend/src/app/events/__init__.py) 和 [`services.realtime.EventBus`](../../backend/src/app/services/realtime/event_bus.py) |
-| Blackboard 是版本化共享事实层 | [`BlackboardManager`](../../backend/src/agent_runtime/context/blackboard.py) 保存历史、摘要、KV 和递增版本 | 部分实现 | 版本只递增，没有 compare-and-swap；`add_summary`、`update_kv` 的生产调用不足，主要由测试覆盖 |
-| 私有上下文隔离并可恢复 | [`AgentContext`](../../backend/src/agent_runtime/context/agent_ctx.py) 按 Agent/Conversation 管理帧；SQLAlchemy Adapter 支持保存 | 部分实现 | 保存调用仅出现在旧 Orchestrator；Actor 路径创建内存 ContextManager，但未形成加载、保存和恢复闭环 |
-| 取消传播到所有外部执行 | Actor、Stepper 和 Session 存在 cancel/control 事件 | 部分实现 | 取消依赖下一检查点；Model/Tool Adapter 没有统一取消令牌、收敛期限和孤儿 Task 证明 |
-| 外部依赖通过端口注入 | [`core/interfaces.py`](../../backend/src/agent_runtime/core/interfaces.py) 定义 Persistence、EventSink、Tool 和 Context Provider 接口 | 已实现 | 接口形状仍受现有应用适配约束，尚未形成独立版本化 Runtime API |
-| Kernel 不理解具体产品任务 | Runtime 仍包含通用 Actor、调度、上下文和工具抽象 | 部分实现 | [`AgentLoop`](../../backend/src/agent_runtime/runtime/agent_loop.py) 含强制项目交付与产物逻辑；`SchedulerAgent` 含全栈、文档和部署启发式 |
-| 只有一条 Agent 执行抽象 | [`runtime/agent.py`](../../backend/src/agent_runtime/runtime/agent.py) 保留早期自持 Agent，Actor 路径使用另一套 `AgentActor` | 遗留路径 | 早期 `Agent` 只被自身测试引用，内部仍标注 AgentLoop 真正步进化为未来工作 |
-| 只有一条多 Agent 编排主链 | 旧轮询 Orchestrator、ActorOrchestrator 和独立 Workflow Engine 并存 | 遗留路径 | 兼容需求使状态、事件与持久化行为分散，后续不应继续向旧轮询路径增加语义 |
+| `ContextScope + Run` 双层生命周期 | [`RuntimeEngine`、`RunHandle`、`RunKernel`](../../backend/src/agent_runtime/runtime/engine.py) 与 [`run_types.py`](../../backend/src/agent_runtime/core/run_types.py) | 已实现 | 公共 API 仍处于 V1，尚未独立发包 |
+| 唯一终态与稳定 reason code | Kernel 锁与 [`RunStore.try_finish`](../../backend/src/agent_runtime/core/ports.py) 共同执行终态 CAS | 已实现 | 尚无跨进程事件协调；SQL 行锁依赖数据库事务语义 |
+| Run 拥有 Actor Task 与 Mailbox | [`AgentActor`](../../backend/src/agent_runtime/runtime/agent_actor.py) 按 Run 创建，控制提案经 [`Mailbox`](../../backend/src/agent_runtime/runtime/mailbox.py) 投递 | 已实现 | Actor 控制仍是协作式；阻塞本地代码无法获得操作系统级抢占 |
+| wall/idle/决策/Token/无进展预算 | [`RunWatchdog`](../../backend/src/agent_runtime/runtime/run_watchdog.py) 使用单调时钟，Kernel 统一失败收敛 | 已实现 | 暂未引入费用预算或租户级配额 |
+| Provider 用量与流式硬上限 | [`AgentLoopExecutor`](../../backend/src/agent_runtime/runtime/agent_executor.py) 汇总 usage；[`streaming.py`](../../backend/src/model_provider/core/streaming.py) 主动关闭超限流 | 已实现 | Provider 未返回 usage 时只能估算，精度取决于 tokenizer |
+| 单 Agent、Workflow、Team Lead 共用 Policy 接口 | [`policies.py`](../../backend/src/agent_runtime/strategies/policies.py) 实现三类 `SchedulerPolicy`；产品规则位于 [`AgentHubTeamLeadPolicy`](../../backend/src/app/services/runtime/policies.py) | 已实现 | Workflow 遍历器内部仍保留可变游标，尚未做到事件回放重建 |
+| 版本化 Blackboard 与跨 Run Context CAS | [`VersionedBlackboard`](../../backend/src/agent_runtime/context/scope_store.py) 和 [`SQLContextStore`](../../backend/src/app/persistence/runtime_store.py) 检查期望版本 | 已实现 | ContextState 当前按 Conversation 建模，尚未抽象其他 Scope 类型 |
+| 结构化长期 AgentMemory | `AgentLoopExecutor` 只提交摘要、完成任务和阻塞项；[`runtime_context_states`](../../backend/src/db/models/runtime.py) 持久化结构化值 | 已实现 | facts 与 output_refs 需要更多 Adapter 生产调用；不支持中途 PrivateContext 检查点 |
+| 取消传播和迟到写隔离 | [`CancellationScope`、`RunLease`](../../backend/src/agent_runtime/runtime/cancellation.py) 与 [`adapter_isolation.py`](../../backend/src/agent_runtime/runtime/adapter_isolation.py) | 部分实现 | Model/Tool Adapter 尚未全部声明可终止边界；纯同步阻塞实现仍需子进程隔离 |
+| 最小 EventEnvelope | 每个事件有稳定 ID、Run 内序号和因果字段，并可由 `RunHandle.events()` 观察 | 已实现 | `correlation_id`/`causation_id` 尚未覆盖所有 Adapter 事件 |
+| 完整持久 Event Log 与至少一次投递 | AgentHub 仍把事件投影到 generation 读模型 | 未实现 | 没有通用事件表、重放游标、幂等消费者和失败队列 |
+| Mailbox 与 Sink 背压隔离 | Mailbox 使用有界 `asyncio.Queue`；EventSink 失败不会改变 Kernel 终态 | 部分实现 | 满 Mailbox 会等待；慢 Sink 仍可能阻塞事件生产，失败只被吞掉而未进入隔离队列 |
+| AgentHub Run 管理 | [`ConversationRunManager`](../../backend/src/app/services/conversation_run_manager.py) 每个 Conversation 最多一个活跃 Handle，排队后续输入，不缓存终止 Run | 已实现 | 队列仅在单进程内存中，进程丢失时未提交输入会丢失 |
+| `generation_id == run_id` 与前端协议投影 | [`event_projection.py`](../../backend/src/app/services/runtime/event_projection.py) 保持现有 WebSocket/SSE 名称 | 已实现 | 前端尚未原生消费 EventEnvelope |
+| Run 与 Context 数据真源 | [`runtime_runs`、`runtime_context_states`](../../backend/alembic/versions/d4e5f6a7b8c9_runtime_kernel_v1.py) 迁移并保存终态、限制、用量和版本 | 已实现 | generation 读模型仍与 Runtime 表双写，需继续校验一致性 |
+| 进程丢失处理 | 应用启动时把遗留 Run 收敛为 `failed/process_lost` | 已实现 | V1 不恢复运行中的 Actor 或工具调用 |
+| Kernel 不理解产品交付规则 | 全栈顺序、文档和部署启发式已迁入 AgentHub Policy | 部分实现 | [`AgentLoop`](../../backend/src/agent_runtime/runtime/agent_loop.py) 仍含产物生成、部署验证和应用特定提示逻辑 |
+| 单一 Runtime 主链 | 旧 `Session`、轮询 Orchestrator、ActorOrchestrator、SchedulerAgent 和早期自持 Agent 已删除 | 已实现 | 应用中仍有多套用于前端投影的事件总线，尚未统一为持久 Event Log |
 
-## 已确认的架构资产
+## 已移除入口
 
-当前代码不是空壳。以下资产可以作为后续收敛的起点：
+`Session`、`Orchestrator`、`ActorOrchestrator`、`SchedulerAgent`、旧 Watchdog 和旧 Scheduler 不再从 `agent_runtime` 导出，也没有兼容别名。请求中的 `runtime_mode` 以 HTTP 422 和 `runtime_mode_removed` 拒绝；策略只由聊天类型、`scheduling_strategy` 与 `workflow_enabled` 决定。
 
-- 纯 Python 的核心类型和外部依赖接口。
-- AgentActor、Mailbox、EventDispatcher 和协作式控制检查点。
-- Blackboard 与 Agent 私有帧的分层模型。
-- LLM Scheduler 与确定性 fallback 的组合。
-- 模拟 Model、Tool、Persistence 的 Runtime 单元和集成测试基础。
+## 下一阶段
 
-这些资产是否保留，应由目标不变量和新的失败测试决定，而不是因为已有代码量较大就默认继承。
-
-## 下一阶段优先级
-
-实现阶段应先修复系统不变量，再迁移产品能力：
-
-1. 为 Actor 主链接入完整 Watchdog，并区分 wall-clock 与 idle timeout。
-2. 定义有序、幂等、可关联的 EventEnvelope 和终态提交规则。
-3. 统一取消传播和最大收敛时间。
-4. 补齐 Actor 私有上下文与 Blackboard 的并发持久化闭环。
-5. 抽取纯 `SchedulerPolicy`，再把全栈交付、产物和部署规则移出 Kernel。
-6. 收敛事件总线与遗留 Orchestrator，避免继续双轨扩张。
-
-每一步应先添加针对不变量的确定性测试，且只运行 Runtime 对应分组。
+1. 持久化完整 Event Log，并实现至少一次投递、幂等消费与重放。
+2. 为 Mailbox 和 EventSink 增加显式背压、慢订阅者隔离与失败队列。
+3. 引入 Run 检查点和可恢复 PrivateContext；在此之前保持 `process_lost` 失败语义。
+4. 继续将 AgentLoop 中的产物、全栈和部署逻辑迁往 AgentHub Policy/Tool。
