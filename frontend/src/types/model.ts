@@ -6,6 +6,7 @@ export interface ModelProvider {
   default_model: string;
   supports_streaming: boolean;
   supports_embeddings: boolean;
+  api_key_set?: boolean;
   status: string;
   config?: Record<string, unknown>;
   models?: ModelConfig[];
@@ -20,6 +21,10 @@ export interface BuiltinProvider {
   default_model: string;
   supports_streaming: boolean;
   supports_embeddings: boolean;
+  supports_tools?: boolean;
+  supports_thinking?: boolean;
+  reasoning_efforts?: Array<"high" | "max">;
+  models?: Array<{ id: string; name: string }>;
 }
 
 export interface ModelConfig {

@@ -64,6 +64,20 @@ def redact_sensitive(value: Any) -> Any:
     return value
 
 
+def strip_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if any(part in normalized for part in SENSITIVE_KEY_PARTS):
+                continue
+            result[key] = strip_sensitive(item)
+        return result
+    if isinstance(value, list):
+        return [strip_sensitive(item) for item in value]
+    return value
+
+
 def user_to_dict(user: User) -> dict[str, Any]:
     extra = user.extra or {}
     return {
@@ -75,7 +89,7 @@ def user_to_dict(user: User) -> dict[str, Any]:
         "avatar": user.avatar_url,
         "avatar_url": user.avatar_url,
         "signature": str(extra.get("signature") or ""),
-        "role": "demo" if user.username == "demo" else user.role,
+        "role": user.role,
         "default_model_config_id": extra.get("default_model_config_id"),
     }
 
@@ -687,13 +701,13 @@ def model_provider_to_dict(provider: ModelProvider, include_secret: bool = False
         "name": provider.name,
         "provider_type": provider.provider_type,
         "base_url": provider.base_url,
-        "api_key_set": bool(provider.api_key_ref),
+        "api_key_set": bool(provider.api_key_ref and provider.api_key_ref != "mock"),
         **({"api_key_ref": provider.api_key_ref} if include_secret else {}),
         "default_model": provider.default_model,
         "status": provider.status,
         "supports_streaming": provider.supports_streaming,
         "supports_embeddings": provider.supports_embeddings,
-        "config": provider.config or {},
+        "config": strip_sensitive(provider.config or {}),
         "model_count": len(provider.models),
         "created_at": iso(provider.created_at),
         "updated_at": iso(provider.updated_at),
@@ -712,7 +726,7 @@ def model_config_to_dict(model: ModelConfig) -> dict[str, Any]:
         "max_output_tokens": model.max_output_tokens,
         "temperature_default": model.temperature_default,
         "status": model.status,
-        "config": model.config or {},
+        "config": strip_sensitive(model.config or {}),
         "created_at": iso(model.created_at),
         "updated_at": iso(model.updated_at),
     }

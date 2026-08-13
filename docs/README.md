@@ -1,6 +1,6 @@
 # AgentHub Documentation
 
-This directory contains the current documentation for AgentHub. Historical design notes and dated implementation plans have been removed so the docs describe the system as it exists now.
+This directory contains the current documentation for AgentHub. Current-state documents remain the source of truth; the Runtime incubation area references selected historical commits as design evidence without restoring outdated plans as current behavior.
 
 ## Start Here
 
@@ -12,7 +12,9 @@ This directory contains the current documentation for AgentHub. Historical desig
 - [Workflow runtime](./agent-workflow-runtime.md): single chat, group chat, workflow canvas, node execution, and persisted run state.
 - [Event protocol](./event-protocol.md): SSE/WebSocket event names and frontend merge behavior.
 - [Capability and data boundaries](./capability-data-boundaries.md): permissions, data ownership, and runtime safety boundaries.
+- [Security and model providers](./security-and-model-providers.md): RBAC, administrator bootstrap, secret handling, and DeepSeek setup.
 - [Current status](./implementation-status.md): what is complete, what is hardened enough for demos, and what remains a roadmap item.
+- [Runtime design incubation](./runtime/README.md): target architecture, invariants, current implementation gaps, and evidence-based evolution of the multi-agent runtime.
 - [AI collaboration record](./ai-collaboration-record/README.md): Feishu-ready collaboration record, Spec, Rules, Skills, artifact links, and review checklist.
 
 ## Source Of Truth
@@ -21,8 +23,6 @@ This directory contains the current documentation for AgentHub. Historical desig
 - Frontend source of truth: `frontend/src`.
 - Database schema source of truth: `backend/src/db/models` plus `backend/alembic/versions`.
 - Deployment source of truth: `docker/docker-compose.yml`, `docker/Dockerfile.backend`, `docker/Dockerfile.frontend`, and `docker/nginx.conf`.
-
-`backend/app-old` is historical reference only. Do not use it for new implementation or documentation examples.
 
 ## Current Architecture At A Glance
 
@@ -48,5 +48,5 @@ Current multi-agent delivery behavior:
 
 - Keep docs tied to current code paths.
 - Put long-lived architecture and operating guidance here.
-- Avoid adding dated closure notes, brainstorming plans, or migration journals.
+- Avoid adding raw dated closure notes, brainstorming plans, or migration journals as current behavior; summarize durable design evidence separately from implementation status.
 - If a roadmap item is not implemented, label it as roadmap instead of describing it as available behavior.

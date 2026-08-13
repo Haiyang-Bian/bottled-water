@@ -4,6 +4,6 @@ export interface User {
   avatar?: string;
   avatar_url?: string;
   signature?: string;
-  role: "demo" | "member" | "admin" | string;
+  role: "member" | "agent_provider" | "developer" | "admin" | string;
   default_model_config_id?: string;
 }

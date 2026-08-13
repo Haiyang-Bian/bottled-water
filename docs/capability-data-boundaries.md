@@ -63,7 +63,7 @@ Secrets belong in backend environment/configuration or database provider records
 - Database credentials
 - External runtime credentials
 
-Frontend code and frontend environment values must not contain real provider secrets.
+Frontend code and frontend environment values must not contain real provider secrets. Model provider keys use the encrypted `api_key_ref` column; responses expose `api_key_set`, and key rotation uses the dedicated credential endpoint.
 
 ## Conversation And Context Data
 

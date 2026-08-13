@@ -68,14 +68,14 @@ flowchart TD
 ```text
 请先阅读 CLAUDE.md、README.md、docs/backend-architecture.md、docs/functional-guide.md，
 确认当前主链路和模块边界，再进行修改。
-不要使用旧 backend/app-old，不要把新功能堆进旧 orchestrator 或 tool_registry。
+不要恢复已删除的旧后端副本，也不要把新功能堆进旧 orchestrator 或 tool_registry。
 ```
 
 在 AgentHub 中的沉淀：
 
 - `backend/src` 是后端唯一主目录。
 - `frontend/src` 是前端唯一主目录。
-- `backend/app-old` 只保留历史参考。
+- 旧后端副本已删除，唯一实现目录为 `backend/src`。
 - 旧入口只允许做兼容 shim，新业务必须进入新服务结构。
 - 文档必须与当前代码主链路一致，不能描述已经废弃的运行方式。
 

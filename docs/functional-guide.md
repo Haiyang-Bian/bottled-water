@@ -4,7 +4,7 @@ AgentHub is organized around conversations. A user starts from an IM-style workb
 
 ## Authentication And Workspaces
 
-- Users can register, log in, use demo login, update profile, update profile signature, and change password.
+- Users can register, log in, update profile, update profile signature, and change password. Registration assigns `member`; disabled accounts cannot authenticate or reuse an old JWT.
 - Workspaces isolate conversations, files, projects, knowledge entries, and audit context.
 - The workbench keeps workspace and conversation route state synchronized so direct links can reopen the same context.
 
@@ -59,7 +59,7 @@ Key code:
 
 ## Models
 
-The model layer supports provider and model configuration through the app. Ark/OpenAI-compatible fallback environment variables remain available for local bootstrap and tests.
+The model layer supports owner-scoped provider and model configuration through the app. Ark and generic OpenAI-compatible providers are available alongside DeepSeek V4 Flash/Pro. DeepSeek supports remote model refresh, streaming reasoning, tool calls, and optional `high`/`max` thinking. Provider keys are write-only in the UI and responses expose only whether a key is configured.
 
 Key code:
 

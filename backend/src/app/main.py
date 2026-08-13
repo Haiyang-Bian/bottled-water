@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -14,7 +15,8 @@ from db.session import AsyncSessionLocal
 from app.core.logging_config import configure_logging
 from app.core.response import fail, ok
 from app.services.runtime.generation_records import cancel_abandoned_generation_records
-from app.services.seed import ensure_seed_data
+from app.services.admin_bootstrap import bootstrap_admin_from_settings
+from app.services.system_seed import ensure_system_data
 from common.logger import get_logger
 
 
@@ -26,10 +28,8 @@ logger = get_logger("app.main")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     async with AsyncSessionLocal() as db:
-        try:
-            await ensure_seed_data(db)
-        except Exception:
-            await db.rollback()
+        await ensure_system_data(db)
+        await bootstrap_admin_from_settings(db, settings)
         try:
             recovered = await cancel_abandoned_generation_records(db, reason="server_restarted")
             if recovered:
@@ -66,13 +66,17 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(_request: Request, exc: Exception):
-    import traceback
-    traceback_str = traceback.format_exc()
-    print(f"UNHANDLED EXCEPTION: {exc}\n{traceback_str}", flush=True)
+async def global_exception_handler(request: Request, exc: Exception):
+    error_id = uuid4().hex
+    logger.exception(
+        "Unhandled request exception",
+        error_id=error_id,
+        path=request.url.path,
+        method=request.method,
+    )
     return JSONResponse(
         status_code=500,
-        content=fail(5000, f"Internal Server Error: {exc}", {"traceback": traceback_str}),
+        content=fail(5000, "Internal server error", {"error_id": error_id}),
     )
 
 

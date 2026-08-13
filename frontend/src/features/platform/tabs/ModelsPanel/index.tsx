@@ -57,11 +57,18 @@ export function ModelsPanel() {
             supports_streaming: true,
           }}
           onFinish={async (values) => {
+            const apiKey = String(values.api_key || "").trim();
             const provider = await api.createModelProvider({
-              ...values,
+              name: String(values.name),
+              provider_type: String(values.provider_type),
+              base_url: String(values.base_url),
+              default_model: String(values.default_model),
               supports_streaming: Boolean(values.supports_streaming),
               supports_embeddings: Boolean(values.supports_embeddings),
             });
+            if (apiKey) {
+              await api.updateModelProviderCredential(provider.id, apiKey);
+            }
             setModelProviders((current) => [provider, ...current]);
             providerForm.resetFields(["name", "api_key"]);
             message.success("模型供应商已创建");
@@ -82,7 +89,17 @@ export function ModelsPanel() {
                   value: "openai-compatible",
                 },
                 { label: "火山方舟", value: "ark" },
+                { label: "DeepSeek", value: "deepseek" },
               ]}
+              onChange={(value) => {
+                if (value === "deepseek") {
+                  providerForm.setFieldsValue({
+                    name: "DeepSeek",
+                    base_url: "https://api.deepseek.com",
+                    default_model: "deepseek-v4-flash",
+                  });
+                }
+              }}
             />
           </Form.Item>
           <Form.Item

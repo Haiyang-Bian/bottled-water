@@ -19,7 +19,6 @@ export {
   register,
   updateProfile,
   changePassword,
-  demoLogin,
   me,
   logout,
 } from "./auth";
@@ -108,6 +107,7 @@ export {
   modelProviders,
   createModelProvider,
   updateModelProvider,
+  updateModelProviderCredential,
   deleteModelProvider,
   modelConfigs,
   createModelConfig,

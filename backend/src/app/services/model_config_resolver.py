@@ -73,6 +73,7 @@ async def get_default_model_config(
             DBModelConfig.deleted_at.is_(None),
             ModelProvider.status == "active",
             ModelProvider.deleted_at.is_(None),
+            ModelProvider.owner_id.is_(None),
         )
         .order_by(DBModelConfig.created_at.asc())
     )
@@ -110,20 +111,11 @@ async def get_model_provider(
 async def resolve_api_key(provider: ModelProvider, model_config: DBModelConfig | None = None) -> str:
     """解析 API Key。
 
-    优先级：
-    1. 模型配置 config.api_key（用户为具体模型单独配置）
-    2. 供应商 api_key_ref（供应商级别的 key）
-
     支持 api_key_ref 格式：
     - "env:XXX" -> 从环境变量读取
     - "mock" -> mock 模式
     - 其他 -> 视为明文 key
     """
-    if model_config and model_config.config:
-        cfg_api_key = model_config.config.get("api_key")
-        if cfg_api_key:
-            return str(cfg_api_key)
-
     api_key_ref = provider.api_key_ref or ""
 
     if api_key_ref.startswith("env:"):
@@ -191,6 +183,26 @@ def normalize_provider_type(provider_type: str | None) -> str:
     return normalized or "ark"
 
 
+def build_model_provider_config(
+    provider: ModelProvider,
+    config: DBModelConfig,
+    api_key: str,
+) -> MPModelConfig:
+    extra = {**(provider.config or {}), **(config.config or {})}
+    for key in ("api_key", "apikey", "secret", "token", "password"):
+        extra.pop(key, None)
+    return MPModelConfig(
+        provider=normalize_provider_type(provider.provider_type),
+        model=config.model_id,
+        api_key=api_key,
+        base_url=provider.base_url or None,
+        temperature=config.temperature_default,
+        max_tokens=config.max_output_tokens,
+        top_p=extra.pop("top_p", None),
+        extra=extra,
+    )
+
+
 async def create_provider_from_db(
     db: AsyncSession, prefer_config_id: str | None = None,
 ) -> BaseModelProvider | None:
@@ -209,11 +221,4 @@ async def create_provider_from_db(
         logger.warning(f"Provider API Key 为空: {provider.name}")
         return create_provider_from_env_fallback()
 
-    return create_provider(
-        MPModelConfig(
-            provider=normalize_provider_type(provider.provider_type),
-            model=config.model_id,
-            api_key=api_key,
-            base_url=provider.base_url or None,
-        ),
-    )
+    return create_provider(build_model_provider_config(provider, config, api_key))

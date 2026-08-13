@@ -7,7 +7,6 @@ vi.mock("@/api", () => ({
   api: {
     login: vi.fn(),
     register: vi.fn(),
-    demoLogin: vi.fn(),
   },
 }));
 
@@ -24,7 +23,9 @@ describe("LoginScreen", () => {
     );
 
     expect(screen.getByText("欢迎回来")).toBeInTheDocument();
-    expect(screen.getByTestId("demo-login")).toBeInTheDocument();
+    expect(screen.queryByTestId("demo-login")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("用户名或邮箱")).toHaveValue("");
+    expect(screen.getByPlaceholderText("输入密码")).toHaveValue("");
     expect(screen.getByLabelText("AgentHub 登录")).toBeInTheDocument();
   });
 });

@@ -1,9 +1,9 @@
 import { get, post, patch } from "./client";
 import type { User } from "@/types";
 
-export async function login(name: string, password = "agenthub"): Promise<User> {
+export async function login(name: string, password: string): Promise<User> {
   const result = await post<{ access_token: string; user: User }>("/auth/login", {
-    username: name || "demo",
+    username: name,
     email: name,
     password,
   });
@@ -37,12 +37,6 @@ export async function changePassword(payload: {
   new_password: string;
 }): Promise<{ changed: boolean }> {
   return await post<{ changed: boolean }>("/auth/password", payload);
-}
-
-export async function demoLogin(): Promise<User> {
-  const result = await post<{ access_token: string; user: User }>("/auth/demo", {});
-  window.localStorage.setItem("agenthub_token", result.access_token);
-  return result.user;
 }
 
 export async function me(): Promise<User> {

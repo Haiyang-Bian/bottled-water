@@ -1,6 +1,6 @@
 # AgentHub - AI Agent 开发者交流社区
 
-![状态](https://img.shields.io/badge/状态-生产可用-brightgreen)
+![状态](https://img.shields.io/badge/状态-积极开发-yellow)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
@@ -28,13 +28,11 @@
 - `desktop-client/`：轻量 Electron 桌面端，封装 Web 应用并补充托盘、全局快捷键、快速输入、通知和独立窗口。
 - `mobile-client/`：PWA / Capacitor 移动端，用于轻量会话、成果核验、进度跟踪和安装流程。
 
-`backend/app-old` 仅作为历史参考保留，新代码请放到 `backend/src`。
-
 ## 当前能力
 
-- 用户认证、演示登录、工作区、项目、会话列表、归档、置顶和分类流转。
+- 用户注册与登录、数据库 RBAC、管理员引导、工作区、项目、会话列表、归档、置顶和分类流转。
 - 单人聊天与多智能体群聊，支持 SSE / WebSocket 流式输出。
-- 模型供应商配置，支持 Ark / OpenAI 兼容模型接入和 mock fallback。
+- 模型供应商配置，支持 Ark、OpenAI 兼容接口和 DeepSeek V4 Flash/Pro；DeepSeek 支持流式思考和工具调用续轮。
 - 智能体目录，支持模型、工具、技能、MCP 和循环策略权限配置。
 - 内置工具覆盖文件、成果、沙箱执行、浏览器预览、部署预览、数据库检查、安全审计、测试和外部编码智能体。
 - Codex 与 Claude Code 外部编码智能体接入，包含 probe、run、status、cancel、运行记录和工具调用日志。
@@ -68,20 +66,16 @@ pnpm dev
 
 ## Docker 部署
 
-在仓库根目录运行：
-
-```powershell
-docker compose -f docker/docker-compose.yml up --build
-```
-
-打开 `http://localhost`。
-
-如需自定义密码、公开地址或端口：
+复制模板、替换其中所有 `replace-with-*` 值，再在仓库根目录运行：
 
 ```powershell
 Copy-Item docker/env.example docker/.env
 docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 ```
+
+打开 `http://localhost:8080`。
+
+公开地址和端口可继续在 `docker/.env` 中调整。
 
 更多说明见 [docker/README.md](./docker/README.md)。
 
@@ -98,33 +92,35 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 
 ```env
 DATABASE_URL=sqlite:///./agenthub_dev.db
-SECRET_KEY=change-me
+SECRET_KEY=agenthub-dev-secret-change-me
 LLM_PROVIDER=auto
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-ARK_API_KEY=
-ARK_ENDPOINT_ID=
 ENABLE_FUNCTION_CALLING=true
 ```
+
+模型密钥通过“全局设置 → 模型 API”保存到加密的 Provider 凭据字段。DeepSeek 使用 `https://api.deepseek.com`，默认模型为 `deepseek-v4-flash`；思考模式默认关闭，可选 `high` 或 `max`。API Key 永不回填。
+
+创建首位管理员：
+
+```powershell
+cd backend
+uv run python -m app.cli create-admin
+```
+
+生产环境必须设置非占位 `SECRET_KEY`、`DEBUG=false` 和真实数据库密码；也可仅在首次 Docker 启动时设置 `AGENTHUB_BOOTSTRAP_ADMIN_EMAIL`、`...USERNAME`、`...PASSWORD`。
 
 Docker 环境建议基于 [docker/env.example](./docker/env.example) 创建 `docker/.env`。Compose 会根据 `POSTGRES_*` 自动拼装 PostgreSQL 的 `DATABASE_URL`，避免根目录 `.env` 误导容器使用 SQLite。
 
 ## 测试
 
-后端：
-
 ```powershell
-cd backend
-uv run ruff check .
-uv run pytest -q
+.\scripts\run-tests.ps1 -List
+.\scripts\run-tests.ps1 -Stack backend -Module auth -Type integration
+.\scripts\run-tests.ps1 -Stack backend -Module providers -Type unit
+.\scripts\run-tests.ps1 -Stack frontend -Module models -Type component
 ```
 
-前端：
-
-```powershell
-cd frontend
-pnpm build
-pnpm exec vitest run --config tests/vitest.config.ts
-```
+不带选择器会拒绝运行；全量测试必须显式使用 `-All`。`live` Provider 测试仅在显式提供真实 API Key 时调用外部服务。
 
 ## 文档索引
 
@@ -136,8 +132,9 @@ pnpm exec vitest run --config tests/vitest.config.ts
 - [事件协议](./docs/event-protocol.md)
 - [文件地图](./docs/file-map.md)
 - [能力与数据边界](./docs/capability-data-boundaries.md)
+- [安全与模型供应商](./docs/security-and-model-providers.md)
 - [当前实现状态](./docs/implementation-status.md)
 
 ## 说明
 
-- `backend/app-old` 仅作历史参考，不再承载新实现。
+- 本仓库仍在积极开发；本地/Docker 可运行不等同于已完成生产级部署验证。

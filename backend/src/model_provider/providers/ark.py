@@ -98,6 +98,8 @@ class ArkProvider(BaseModelProvider):
             tool_calls=tool_calls,
             usage=usage,
             model=response.model if hasattr(response, "model") else None,
+            reasoning_content=str(getattr(message, "reasoning_content", "") or ""),
+            finish_reason=getattr(choice, "finish_reason", None),
         )
 
     async def chat_stream(
@@ -195,6 +197,8 @@ class ArkProvider(BaseModelProvider):
                 payload_message["name"] = message.name
             if message.tool_calls:
                 payload_message["tool_calls"] = message.tool_calls
+            if message.reasoning_content:
+                payload_message["reasoning_content"] = message.reasoning_content
             if message.role == "tool" and message.tool_call_id:
                 payload_message["tool_call_id"] = message.tool_call_id
             payload_messages.append(payload_message)

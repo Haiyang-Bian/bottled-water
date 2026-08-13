@@ -25,7 +25,7 @@ async def get_current_user(
     if not payload or not payload.get("sub"):
         raise UnauthorizedError("Token 无效或已过期")
     user = await db.get(User, payload["sub"])
-    if not user or user.deleted_at is not None:
+    if not user or user.deleted_at is not None or user.status != "active":
         raise UnauthorizedError("用户不存在或已停用")
     return user
 

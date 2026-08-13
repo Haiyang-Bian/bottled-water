@@ -28,7 +28,7 @@ LLM_PROVIDER=auto
 ENABLE_FUNCTION_CALLING=true
 ```
 
-For real model calls, configure the provider in the app UI or set the fallback Ark values:
+For real model calls, configure a user-owned provider in the app UI. Ark environment variables remain a legacy fallback:
 
 ```env
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
@@ -36,6 +36,8 @@ ARK_API_KEY=...
 ARK_ENDPOINT_ID=...
 ARK_MODEL=doubao-seed-2-0-lite
 ```
+
+DeepSeek uses the OpenAI-compatible endpoint `https://api.deepseek.com`. Add it from “全局设置 → 模型 API”; the UI writes the key through the credential endpoint and never reads it back.
 
 ## Frontend Setup
 
@@ -68,50 +70,14 @@ The stack starts nginx, backend, PostgreSQL, and Redis. The backend container ru
 
 ## Tests And Checks
 
-Backend:
-
 ```powershell
-cd backend
-uv run ruff check .
-uv run pytest -q
+.\scripts\run-tests.ps1 -List
+.\scripts\run-tests.ps1 -Stack backend -Module security -Type integration
+.\scripts\run-tests.ps1 -Stack backend -Module providers -Type unit
+.\scripts\run-tests.ps1 -Stack frontend -Module workflow -Type component
 ```
 
-Targeted backend checks commonly used for recent workflow and external-agent changes:
-
-```powershell
-cd backend
-uv run pytest tests/test_conversation.py tests/test_context_system.py tests/test_external_agents.py -q
-```
-
-Targeted backend checks commonly used for actor runtime and Team Leader scheduling changes:
-
-```powershell
-cd backend
-uv run pytest tests/test_agent_runtime/test_scheduler_agent.py tests/test_agent_runtime/test_tech_lead_scheduler.py tests/test_agent_runtime/test_orchestrator.py::TestOrchestratorRun tests/test_conversation_session_manager.py -q
-```
-
-Frontend:
-
-```powershell
-cd frontend
-pnpm build
-pnpm exec vitest run --config tests/vitest.config.ts
-```
-
-Targeted frontend workflow checks:
-
-```powershell
-cd frontend
-pnpm exec vitest run tests/workflow-board-panel.test.tsx tests/workflow-studio.test.tsx tests/workflow-utils.test.ts --config tests/vitest.config.ts
-```
-
-Targeted frontend chat/runtime checks:
-
-```powershell
-cd frontend
-pnpm exec vitest run tests/runtime-decision-strip.test.tsx tests/create-conversation-modal.test.tsx --config vitest.config.ts
-pnpm exec tsc --noEmit -p tsconfig.json
-```
+The runner requires a module and type selector. A complete stack run requires explicit `-All`; live tests require their provider credentials. Run Ruff or ESLint only for touched paths while iterating, and use `pnpm build` as the frontend integration gate.
 
 ## Common Development Tasks
 

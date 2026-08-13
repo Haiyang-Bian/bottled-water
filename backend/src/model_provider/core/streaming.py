@@ -41,15 +41,12 @@ async def collect_chat_stream(
             existing = tool_calls.setdefault(index, {})
             _merge_tool_call(existing, chunk.tool_call)
 
-    content = "".join(content_parts)
-    if not content and reasoning_parts:
-        content = "".join(reasoning_parts)
-
     return ChatResponse(
-        content=content,
+        content="".join(content_parts),
         tool_calls=[tool_calls[i] for i in sorted(tool_calls)] if tool_calls else None,
         usage=None,
         model=getattr(provider, "model", None),
+        reasoning_content="".join(reasoning_parts),
     )
 
 

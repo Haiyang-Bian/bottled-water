@@ -542,7 +542,7 @@ flowchart TB
 
 ### 9.3 可维护性
 
-- 新业务进入 `backend/src`，不使用 `backend/app-old`。
+- 新业务只进入 `backend/src`；已删除的旧后端副本不得恢复。
 - Tool / Skill / MCP / External Agent 保持领域分层，不堆入单个大文件。
 - 旧入口只做兼容 shim，新业务走新结构。
 - 文档必须和代码主链路保持一致。

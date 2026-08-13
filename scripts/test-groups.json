@@ -1,0 +1,86 @@
+{
+  "backend": {
+    "auth:integration": [
+      "tests/test_auth.py",
+      "tests/test_auth_settings.py"
+    ],
+    "security:unit": [
+      "tests/test_security_hardening.py"
+    ],
+    "security:integration": [
+      "tests/test_security_hardening.py",
+      "tests/test_workspace_security_deploy_task.py::test_workspace_project_permissions_and_audit",
+      "tests/test_workspace_security_deploy_task.py::test_member_cannot_update_user_roles"
+    ],
+    "providers:unit": [
+      "tests/model_provider/test_ark_provider_streaming_http.py",
+      "tests/model_provider/test_deepseek_provider.py",
+      "tests/test_model_provider_streaming.py"
+    ],
+    "providers:integration": [
+      "tests/test_deepseek_api.py"
+    ],
+    "agents:unit": [
+      "tests/test_agent_runtime/test_core_types.py",
+      "tests/test_agent_runtime/test_agent_stepper.py",
+      "tests/test_agent_runtime/test_agent_loop.py"
+    ],
+    "agents:integration": [
+      "tests/test_agent_conversation_capabilities.py",
+      "tests/test_function_calling.py",
+      "tests/test_orchestrator.py",
+      "tests/test_orchestrator_output.py"
+    ],
+    "runtime:unit": [
+      "tests/test_agent_runtime/test_eventbus.py",
+      "tests/test_agent_runtime/test_tools.py",
+      "tests/test_output_filter.py"
+    ],
+    "runtime:integration": [
+      "tests/test_runtime_scheduling.py",
+      "tests/test_chat_stability.py",
+      "tests/test_websocket.py"
+    ],
+    "providers:live": [
+      "tests/model_provider/test_ark_provider.py",
+      "tests/model_provider/test_deepseek_live.py"
+    ]
+  },
+  "frontend": {
+    "auth:component": [
+      "tests/login-screen.test.tsx"
+    ],
+    "security:component": [
+      "tests/security-ops-panel.test.tsx"
+    ],
+    "models:component": [
+      "tests/model-settings-deepseek.test.tsx"
+    ],
+    "chat:unit": [
+      "tests/message-cleaning.test.ts",
+      "tests/message-filter.test.ts",
+      "tests/message-store-isolation.test.ts",
+      "tests/message-stream.test.ts",
+      "tests/preview-document.test.ts",
+      "tests/running-conversations.test.ts"
+    ],
+    "chat:component": [
+      "tests/chat-send-queue.test.tsx",
+      "tests/message-thinking.test.tsx",
+      "tests/streaming-internal-filter.test.tsx"
+    ],
+    "workflow:unit": [
+      "tests/workflow-utils.test.ts"
+    ],
+    "workflow:component": [
+      "tests/workflow-board-panel.test.tsx",
+      "tests/workflow-studio.test.tsx"
+    ],
+    "models:live": []
+  },
+  "e2e": {
+    "runtime:live": [
+      "agenthub-demo.spec.ts"
+    ]
+  }
+}

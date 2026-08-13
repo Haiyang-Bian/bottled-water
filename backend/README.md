@@ -42,16 +42,14 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 ## Tests
 
-```powershell
-uv run ruff check .
-uv run pytest -q
-```
-
-Targeted checks:
+Run from the repository root with an explicit module and type:
 
 ```powershell
-uv run pytest tests/test_conversation.py tests/test_context_system.py tests/test_external_agents.py -q
+.\scripts\run-tests.ps1 -Stack backend -Module auth -Type integration
+.\scripts\run-tests.ps1 -Stack backend -Module providers -Type unit
 ```
+
+Use `-List` to inspect groups and `-All` only for an intentional full run. Run `uv run ruff check <paths>` inside `backend` for changed Python files.
 
 ## Key Domains
 
@@ -69,6 +67,5 @@ uv run pytest tests/test_conversation.py tests/test_context_system.py tests/test
 
 ## Notes
 
-- `backend/app-old` is historical reference only.
 - Database URLs using `postgresql://` are normalized to `postgresql+psycopg://`.
 - When changing nested JSON columns such as `Conversation.extra` or `WorkflowRun.node_states`, use existing runtime helpers or flag changes explicitly.

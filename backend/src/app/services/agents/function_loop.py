@@ -419,6 +419,7 @@ async def run_agent_function_call_loop(
 
     for round_num in range(max_tool_rounds + 1):
         current_text = ""
+        current_reasoning = ""
         current_tool_calls: list[dict[str, Any]] | None = None
         buffer_text_delta = bool(tools) and round_num == 0
         try:
@@ -451,6 +452,7 @@ async def run_agent_function_call_loop(
                                 emit_message=emit_message,
                             )
                     if event.reasoning:
+                        current_reasoning += event.reasoning
                         reasoning_text += event.reasoning
                         visible_reasoning = reasoning_filter.push(event.reasoning)
                         await _publish_text_delta(
@@ -687,7 +689,14 @@ async def run_agent_function_call_loop(
                 message=f"{agent.name} 已完成 {tool_name}",
             )
 
-        messages.append({"role": "assistant", "content": current_text or "", "tool_calls": normalized_tool_calls})
+        assistant_message = {
+            "role": "assistant",
+            "content": current_text or "",
+            "tool_calls": normalized_tool_calls,
+        }
+        if current_reasoning:
+            assistant_message["reasoning_content"] = current_reasoning
+        messages.append(assistant_message)
         for item in round_tool_results:
             messages.append(
                 context_builder.tool_result_message(

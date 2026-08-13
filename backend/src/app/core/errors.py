@@ -28,3 +28,8 @@ class ValidationAppError(AppError):
     def __init__(self, message: str = "参数校验失败"):
         super().__init__(1002, message, 400)
 
+
+class ConflictError(AppError):
+    def __init__(self, message: str = "资源已存在"):
+        super().__init__(1005, message, 409)
+

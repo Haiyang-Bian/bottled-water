@@ -52,7 +52,7 @@ Core backend files:
 
 Routers:
 
-- `auth.py`: login, registration, profile, demo login.
+- `auth.py`: login, registration, profile, password changes, and active-user checks.
 - `workspaces.py`: workspaces, projects, templates, shortcuts.
 - `conversations.py`: conversations, members, workflow canvas, workflow runs.
 - `messages.py`: message send/list/retry/reply/SSE/cancel.

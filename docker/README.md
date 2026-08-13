@@ -16,7 +16,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 Open the app at:
 
 ```text
-http://localhost
+http://localhost:8080
 ```
 
 The compose stack starts:
@@ -41,7 +41,7 @@ Use `down -v` only when you want to remove the PostgreSQL and Redis volumes as w
 
 For production, override at least these values before deploying publicly:
 
-- `AGENTHUB_SECRET_KEY`
+- `SECRET_KEY`
 - `POSTGRES_PASSWORD`
 - `PUBLIC_BASE_URL`
 - model provider keys configured through the app or environment

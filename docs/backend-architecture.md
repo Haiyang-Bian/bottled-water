@@ -118,4 +118,4 @@ Deployment preview is a local/Docker-stack preview record system with health che
 - Frontend never receives raw provider secrets.
 - Sandbox and external agents use cwd and command/runtime constraints.
 - Audit-worthy actions should be routed through backend services and recorded.
-- `backend/app-old` must not be used as a new code path.
+- The deleted legacy backend copy must not be restored; `backend/src` is the only backend source tree.

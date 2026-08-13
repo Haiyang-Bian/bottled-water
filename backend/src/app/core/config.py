@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
@@ -87,9 +87,24 @@ class Settings(BaseSettings):
     ark_timeout_seconds: float = 60
     ark_stream_timeout_seconds: float = 120
 
-    demo_email: str = "demo@agenthub.local"
-    demo_username: str = "demo"
-    demo_password: str = "agenthub"
+    bootstrap_admin_email: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENTHUB_BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_EMAIL"
+        ),
+    )
+    bootstrap_admin_username: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENTHUB_BOOTSTRAP_ADMIN_USERNAME", "BOOTSTRAP_ADMIN_USERNAME"
+        ),
+    )
+    bootstrap_admin_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD"
+        ),
+    )
 
     artifact_base_url: str = "http://localhost:8000"
     storage_dir: str = str(ROOT_DIR / "var" / "storage")
@@ -113,6 +128,34 @@ class Settings(BaseSettings):
         if self.llm_provider == "ark":
             return False
         return not bool(self.ark_api_key)
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.environment != "production":
+            return self
+        if self.debug:
+            raise ValueError("DEBUG must be false in production")
+        placeholders = {
+            "agenthub-dev-secret-change-me",
+            "change-me-in-production",
+            "change-me-before-public-deploy",
+            "replace-with-at-least-32-random-characters",
+        }
+        normalized_secret = self.secret_key.strip().lower()
+        if (
+            normalized_secret in placeholders
+            or normalized_secret.startswith(("change-me", "replace-with"))
+            or len(self.secret_key) < 32
+        ):
+            raise ValueError("SECRET_KEY must be a non-placeholder value of at least 32 characters")
+        bootstrap_values = (
+            self.bootstrap_admin_email,
+            self.bootstrap_admin_username,
+            self.bootstrap_admin_password,
+        )
+        if any(bootstrap_values) and not all(bootstrap_values):
+            raise ValueError("All AGENTHUB_BOOTSTRAP_ADMIN_* values must be provided together")
+        return self
 
 
 @lru_cache
