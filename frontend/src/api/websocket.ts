@@ -7,6 +7,7 @@ export type MessageListener = (
 ) => void;
 
 export type CloseListener = (event: CloseEvent) => void;
+export type OpenListener = () => void;
 
 /**
  * 管理单个会话的 WebSocket 连接。
@@ -23,6 +24,8 @@ class ConversationWS {
   private listeners = new Set<MessageListener>();
 
   private closeListeners = new Set<CloseListener>();
+
+  private openListeners = new Set<OpenListener>();
 
   private pingTimer: number | null = null;
 
@@ -63,6 +66,7 @@ class ConversationWS {
       this.ws.onopen = () => {
         this.reconnectDelay = 1000;
         this.startPing();
+        this.openListeners.forEach((fn) => fn());
         resolve();
       };
 
@@ -120,6 +124,13 @@ class ConversationWS {
     this.closeListeners.add(listener);
     return () => {
       this.closeListeners.delete(listener);
+    };
+  }
+
+  onOpen(listener: OpenListener): () => void {
+    this.openListeners.add(listener);
+    return () => {
+      this.openListeners.delete(listener);
     };
   }
 

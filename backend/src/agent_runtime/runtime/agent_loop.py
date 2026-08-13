@@ -19,6 +19,11 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 from model_provider.core.streaming import OutputTokenLimitExceeded, collect_chat_stream
 
 from common.logger import get_logger
+from common.artifact_heuristics import (
+    HTML_ARTIFACT_TOOLS,
+    artifact_arguments,
+    detect_artifact_tool,
+)
 from ..core.types import AgentConfig, AgentReport, AgentState, AgentWill, ToolCall, ToolResult
 from ..core.interfaces import (
     AgentContextBuildRequest,
@@ -693,6 +698,26 @@ class AgentLoop:
                     stream_context=self._stream_context_payload(context_metadata),
                 )
         if (
+            status_report.state == AgentState.UNKNOWN
+            and work_product.strip()
+            and not tool_results
+        ):
+            # A direct model answer is a completed single assignment even when
+            # the model omits the internal scheduling report. Runtime control
+            # must not depend on a user-facing chat model following hidden
+            # orchestration syntax perfectly.
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.COMPLETED,
+                will=AgentWill.COMPLETE,
+                target_task=status_report.target_task,
+                blockers=status_report.blockers,
+                priority=status_report.priority,
+                confidence=max(status_report.confidence, 0.8),
+                rationale="Direct response produced without tool execution.",
+                expected_duration=status_report.expected_duration,
+            )
+        if (
             self._artifact_tool_succeeded(tool_results)
             and status_report.state == AgentState.UNKNOWN
             and work_product.strip()
@@ -1233,10 +1258,6 @@ class AgentLoop:
             return None
         if self._looks_like_project_code_delivery(task):
             return None
-        try:
-            from app.services.llm.tool_calls import artifact_arguments, detect_artifact_tool
-        except Exception:
-            return None
         available = {
             str(tool.get("function", {}).get("name") or "")
             for tool in tools
@@ -1487,11 +1508,6 @@ class AgentLoop:
 
     @staticmethod
     def _recover_tool_call_arguments(tool_name: str, task: str) -> dict[str, Any] | None:
-        try:
-            from app.services.llm.html_artifacts import HTML_ARTIFACT_TOOLS
-            from app.services.llm.tool_calls import artifact_arguments
-        except Exception:
-            return None
         if tool_name not in HTML_ARTIFACT_TOOLS:
             return None
         return artifact_arguments(tool_name, task)

@@ -1,4 +1,5 @@
 import { logger } from "@/utils/logger";
+import { logPreview, sanitizeLogValue } from "./logRedaction";
 
 export const API_BASE = "/api/v1";
 
@@ -49,7 +50,9 @@ export const errorInterceptors: ErrorInterceptor[] = [];
 
 /** 默认注册日志拦截器，自动记录所有 API 请求和响应。 */
 requestInterceptors.push((path, init) => {
-  logger.debug("api", `${init.method ?? "GET"} ${path}`, { body: init.body });
+  logger.debug("api", `${init.method ?? "GET"} ${path}`, {
+    body: sanitizeLogValue(init.body),
+  });
 });
 
 responseInterceptors.push((path, _response, _data) => {
@@ -120,10 +123,7 @@ export async function request<T>(
 
     const data = unwrap<T>(await response.json());
     responseInterceptors.forEach((fn) => fn(path, response, data));
-    const dataPreview =
-      typeof data === "object" && data !== null
-        ? JSON.stringify(data).slice(0, 500)
-        : String(data).slice(0, 500);
+    const dataPreview = logPreview(data);
     logger.debug("api", `${response.status} ${path} (${duration}ms)`, {
       response: dataPreview,
     });

@@ -8,10 +8,47 @@ type PendingAck = {
   timeout: number;
 };
 
-const wsStreamSubscriptions = new Map<string, { message: () => void; close: () => void }>();
+type WsStreamSubscription = {
+  message: () => void;
+  open: () => void;
+};
+
+type BufferedRuntimeEvent = {
+  event: string;
+  data: Record<string, unknown>;
+};
+
+type RuntimeCursorState = {
+  runId: string;
+  lastSequence: number;
+  pending: Map<number, BufferedRuntimeEvent>;
+  pendingEventIds: Set<string>;
+};
+
+type RuntimeEventLogItem = {
+  event_id: string;
+  run_id: string;
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+  projected_type?: string;
+  projected_payload?: Record<string, unknown>;
+};
+
+type RuntimeEventPage = {
+  items: RuntimeEventLogItem[];
+  next_sequence: number;
+  last_sequence: number;
+  terminal: boolean;
+  history_complete: boolean;
+};
+
+const wsStreamSubscriptions = new Map<string, WsStreamSubscription>();
 const wsStreamHandlers = new Map<string, StreamAssistantHandlers>();
 const wsPendingAcks = new Map<string, Map<string, PendingAck>>();
 const wsActiveStreams = new Set<string>();
+const wsRuntimeCursors = new Map<string, RuntimeCursorState>();
+const wsReplayTasks = new Map<string, Promise<void>>();
 
 export async function messages(conversationId: string): Promise<ChatMessage[]> {
   const result = await get<{ items: ChatMessage[] } | ChatMessage[]>(
@@ -569,6 +606,179 @@ function normalizeChatMessage(message: ChatMessage): ChatMessage {
   };
 }
 
+function runtimeCursorStorageKey(conversationId: string): string {
+  return `agenthub:runtime-cursor:${conversationId}`;
+}
+
+function readRuntimeCursor(conversationId: string): RuntimeCursorState | undefined {
+  try {
+    const raw = window.sessionStorage.getItem(runtimeCursorStorageKey(conversationId));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { run_id?: unknown; last_sequence?: unknown };
+    const runId = stringValue(parsed.run_id);
+    const lastSequence = Number(parsed.last_sequence);
+    if (!runId || !Number.isSafeInteger(lastSequence) || lastSequence < 0) {
+      return undefined;
+    }
+    return {
+      runId,
+      lastSequence,
+      pending: new Map(),
+      pendingEventIds: new Set(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function persistRuntimeCursor(conversationId: string, state: RuntimeCursorState): void {
+  try {
+    window.sessionStorage.setItem(
+      runtimeCursorStorageKey(conversationId),
+      JSON.stringify({ run_id: state.runId, last_sequence: state.lastSequence }),
+    );
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
+}
+
+function runtimeMetadata(data: unknown): {
+  runId: string;
+  eventId: string;
+  sequence: number;
+} | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as Record<string, unknown>;
+  const runId = stringValue(payload.runtime_run_id ?? payload.generation_id);
+  const eventId = stringValue(payload.runtime_event_id);
+  const sequence = Number(payload.runtime_sequence);
+  if (!runId || !eventId || !Number.isSafeInteger(sequence) || sequence < 1) {
+    return null;
+  }
+  return { runId, eventId, sequence };
+}
+
+function finishWebSocketEvent(conversationId: string, event: string): void {
+  if (!isTerminalWsEvent(event)) return;
+  wsActiveStreams.delete(conversationId);
+  resolveConversationPendingAcks(conversationId, "completed");
+}
+
+function dispatchOrderedRuntimeEvent(
+  conversationId: string,
+  event: string,
+  data: unknown,
+  handlers: StreamAssistantHandlers,
+): void {
+  const metadata = runtimeMetadata(data);
+  if (!metadata) {
+    dispatchStreamEvent(event, data, handlers);
+    finishWebSocketEvent(conversationId, event);
+    return;
+  }
+
+  let state = wsRuntimeCursors.get(conversationId);
+  if (!state || state.runId !== metadata.runId) {
+    const stored = readRuntimeCursor(conversationId);
+    state =
+      stored?.runId === metadata.runId
+        ? stored
+        : {
+            runId: metadata.runId,
+            lastSequence: 0,
+            pending: new Map(),
+            pendingEventIds: new Set(),
+          };
+    wsRuntimeCursors.set(conversationId, state);
+  }
+
+  if (
+    metadata.sequence <= state.lastSequence ||
+    state.pending.has(metadata.sequence) ||
+    state.pendingEventIds.has(metadata.eventId)
+  ) {
+    return;
+  }
+
+  const payload = data as Record<string, unknown>;
+  state.pending.set(metadata.sequence, { event, data: payload });
+  state.pendingEventIds.add(metadata.eventId);
+
+  let next = state.pending.get(state.lastSequence + 1);
+  while (next) {
+    const nextSequence = state.lastSequence + 1;
+    state.pending.delete(nextSequence);
+    const nextEventId = stringValue(next.data.runtime_event_id);
+    if (nextEventId) state.pendingEventIds.delete(nextEventId);
+    dispatchStreamEvent(next.event, next.data, handlers);
+    state.lastSequence = nextSequence;
+    persistRuntimeCursor(conversationId, state);
+    finishWebSocketEvent(conversationId, next.event);
+    next = state.pending.get(state.lastSequence + 1);
+  }
+}
+
+async function replayRuntimeEvents(
+  conversationId: string,
+  handlers: StreamAssistantHandlers,
+): Promise<void> {
+  const existing = wsReplayTasks.get(conversationId);
+  if (existing) return existing;
+
+  const task = (async () => {
+    let state = wsRuntimeCursors.get(conversationId) ?? readRuntimeCursor(conversationId);
+    if (!state || !wsActiveStreams.has(conversationId)) return;
+    wsRuntimeCursors.set(conversationId, state);
+    const runId = state.runId;
+
+    while (wsActiveStreams.has(conversationId)) {
+      const current = wsRuntimeCursors.get(conversationId);
+      if (!current || current.runId !== runId) return;
+      const after = current.lastSequence;
+      const page = await get<RuntimeEventPage>(
+        `/conversations/${encodeURIComponent(conversationId)}/runtime/runs/${encodeURIComponent(runId)}/events?after_sequence=${after}&limit=200`,
+      );
+      if (wsRuntimeCursors.get(conversationId)?.runId !== runId) return;
+
+      for (const item of page.items) {
+        if (wsRuntimeCursors.get(conversationId)?.runId !== runId) return;
+        const projectedPayload = item.projected_payload ?? {
+          ...item.payload,
+          runtime_event_id: item.event_id,
+          runtime_sequence: item.sequence,
+          runtime_run_id: item.run_id,
+          runtime_replayed: true,
+        };
+        dispatchOrderedRuntimeEvent(
+          conversationId,
+          item.projected_type ?? item.type,
+          projectedPayload,
+          handlers,
+        );
+      }
+
+      state = wsRuntimeCursors.get(conversationId)!;
+      if (
+        !wsActiveStreams.has(conversationId) ||
+        state.lastSequence >= page.last_sequence ||
+        page.items.length === 0 ||
+        page.next_sequence <= after
+      ) {
+        return;
+      }
+    }
+  })();
+
+  wsReplayTasks.set(conversationId, task);
+  try {
+    await task;
+  } finally {
+    if (wsReplayTasks.get(conversationId) === task) {
+      wsReplayTasks.delete(conversationId);
+    }
+  }
+}
+
 function ensureConversationStreamSubscription(
   conversationId: string,
   handlers: StreamAssistantHandlers,
@@ -584,31 +794,15 @@ function ensureConversationStreamSubscription(
       return;
     }
 
-    dispatchStreamEvent(event, data, activeHandlers);
-
-    if (isTerminalWsEvent(event)) {
-      wsActiveStreams.delete(conversationId);
-      resolveConversationPendingAcks(conversationId, "completed");
-    }
+    dispatchOrderedRuntimeEvent(conversationId, event, data, activeHandlers);
   });
-  const unsubscribeClose = ws.onClose(() => {
-    if (!wsActiveStreams.has(conversationId)) {
-      return;
-    }
+  const unsubscribeOpen = ws.onOpen(() => {
     const activeHandlers = wsStreamHandlers.get(conversationId) ?? handlers;
-    wsActiveStreams.delete(conversationId);
-    const payload = {
-      conversation_id: conversationId,
-      status: "failed",
-      error: "websocket_disconnected",
-    };
-    activeHandlers.onRuntimeEvent?.("generation:failed", payload);
-    activeHandlers.onDone?.(payload);
-    resolveConversationPendingAcks(conversationId, "disconnected");
+    void replayRuntimeEvents(conversationId, activeHandlers).catch(() => undefined);
   });
   wsStreamSubscriptions.set(conversationId, {
     message: unsubscribeMessage,
-    close: unsubscribeClose,
+    open: unsubscribeOpen,
   });
 }
 
@@ -654,16 +848,6 @@ function resolveConversationPendingAcks(
   wsPendingAcks.delete(conversationId);
 }
 
-function clearConversationWsSubscription(conversationId: string): void {
-  const subscription = wsStreamSubscriptions.get(conversationId);
-  subscription?.message();
-  subscription?.close();
-  wsStreamSubscriptions.delete(conversationId);
-  wsStreamHandlers.delete(conversationId);
-  wsActiveStreams.delete(conversationId);
-  resolveConversationPendingAcks(conversationId, "completed");
-}
-
 function isTerminalWsEvent(event: string): boolean {
   return [
     "system.session_completed",
@@ -673,6 +857,7 @@ function isTerminalWsEvent(event: string): boolean {
     "generation:failed",
     "cancelled",
     "failed",
+    "system.session_cancelled",
     "system.session_error",
   ].includes(event);
 }

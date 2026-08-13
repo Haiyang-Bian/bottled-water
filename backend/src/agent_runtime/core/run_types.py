@@ -118,6 +118,17 @@ class EventEnvelope:
 
 
 @dataclass(frozen=True)
+class EventPage:
+    """One ordered page from a Run's durable event journal."""
+
+    items: tuple[EventEnvelope, ...]
+    next_sequence: int
+    last_sequence: int
+    terminal: bool
+    history_complete: bool = True
+
+
+@dataclass(frozen=True)
 class SchedulingProposal:
     action: str
     target_agent_ids: tuple[str, ...] = ()

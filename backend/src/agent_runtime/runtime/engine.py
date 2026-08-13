@@ -10,7 +10,7 @@ from typing import Any
 from model_provider.core.streaming import OutputTokenLimitExceeded
 
 from ..context.scope_store import InMemoryContextStore, VersionedBlackboard
-from ..core.ports import AgentExecutor, ContextConflictError, ContextStore, RunEventSink, RunStore
+from ..core.ports import AgentExecutor, ContextConflictError, ContextStore, RunEventSink, RunJournal
 from ..core.run_types import (
     AgentExecutionRequest,
     AgentExecutionResult,
@@ -30,11 +30,8 @@ from ..core.run_types import (
 from .cancellation import CancellationScope, RunLease
 from .adapter_isolation import AdapterNotCancellableError, AdapterTimeoutError
 from .agent_actor import AgentActor
-from .run_store import InMemoryRunStore
+from .run_journal import EventJournalError, EventSequenceConflictError, InMemoryRunJournal
 from .run_watchdog import RunWatchdog
-
-
-_EVENTS_CLOSED = object()
 
 
 class RuntimeEngine:
@@ -45,13 +42,13 @@ class RuntimeEngine:
         *,
         agent_executor: AgentExecutor,
         context_store: ContextStore | None = None,
-        run_store: RunStore | None = None,
+        run_journal: RunJournal | None = None,
         event_sink: RunEventSink | None = None,
         limits: RuntimeLimits | None = None,
     ) -> None:
         self.agent_executor = agent_executor
         self.context_store = context_store or InMemoryContextStore()
-        self.run_store = run_store or InMemoryRunStore()
+        self.run_journal = run_journal or InMemoryRunJournal()
         self.event_sink = event_sink
         self.limits = limits or RuntimeLimits()
         self._active: dict[str, RunKernel] = {}
@@ -70,7 +67,7 @@ class RuntimeEngine:
             request=request,
             agent_executor=self.agent_executor,
             context_store=self.context_store,
-            run_store=self.run_store,
+            run_journal=self.run_journal,
             event_sink=self.event_sink,
             limits=self.limits,
             on_terminal=self._active.pop,
@@ -100,8 +97,8 @@ class RunHandle:
     def run_id(self) -> str:
         return self._kernel.request.run_id
 
-    def events(self) -> AsyncIterator[EventEnvelope]:
-        return self._kernel.events()
+    def events(self, *, after_sequence: int = 0) -> AsyncIterator[EventEnvelope]:
+        return self._kernel.events(after_sequence=after_sequence)
 
     async def result(self) -> RunResult:
         return await asyncio.shield(self._kernel.result_future)
@@ -122,7 +119,7 @@ class RunKernel:
         request: RunRequest,
         agent_executor: AgentExecutor,
         context_store: ContextStore,
-        run_store: RunStore,
+        run_journal: RunJournal,
         event_sink: RunEventSink | None,
         limits: RuntimeLimits,
         on_terminal=None,
@@ -130,7 +127,7 @@ class RunKernel:
         self.request = request
         self.agent_executor = agent_executor
         self.context_store = context_store
-        self.run_store = run_store
+        self.run_journal = run_journal
         self.event_sink = event_sink
         self.limits = limits
         self.state = RunState.CREATED
@@ -143,7 +140,11 @@ class RunKernel:
         self.usage = Usage()
         self.cancellation = CancellationScope()
         self.lease = RunLease(request.run_id)
-        self._events: asyncio.Queue[EventEnvelope | object] = asyncio.Queue()
+        self._event_condition = asyncio.Condition()
+        self._journal_ready = asyncio.Event()
+        self._journal_created = False
+        self._journal_failed = False
+        self._live_events: dict[int, EventEnvelope] = {}
         self._finish_lock = asyncio.Lock()
         self._sequence_lock = asyncio.Lock()
         self._managed_tasks: set[asyncio.Task] = set()
@@ -178,13 +179,30 @@ class RunKernel:
             self._run(), name=f"runtime-run:{self.request.run_id}"
         )
 
-    async def events(self) -> AsyncIterator[EventEnvelope]:
+    async def events(self, *, after_sequence: int = 0) -> AsyncIterator[EventEnvelope]:
+        if after_sequence < 0:
+            raise ValueError("after_sequence must be non-negative")
+        await self._journal_ready.wait()
+        if not self._journal_created:
+            return
+        cursor = after_sequence
         while True:
-            item = await self._events.get()
-            if item is _EVENTS_CLOSED:
+            async with self._event_condition:
+                page = await self.run_journal.read_events(
+                    self.request.run_id,
+                    after_sequence=cursor,
+                    limit=200,
+                )
+                if not page.items and not page.terminal and not self._journal_failed:
+                    await self._event_condition.wait()
+                    continue
+            for event in page.items:
+                cursor = event.sequence
+                yield self._live_events.get(event.sequence, event)
+            if page.terminal and cursor >= page.last_sequence:
                 break
-            assert isinstance(item, EventEnvelope)
-            yield item
+            if self._journal_failed and cursor >= page.last_sequence:
+                break
 
     def snapshot(self) -> RunSnapshot:
         return RunSnapshot(
@@ -212,19 +230,27 @@ class RunKernel:
         first_request = self.cancellation.cancel(reason or "user_cancelled")
         if first_request:
             self.state = RunState.CANCELLING
-            await self._emit(
-                "control.cancel",
-                {"reason": self.cancellation.reason},
-                source="caller",
-                require_lease=False,
-            )
+            try:
+                await self._emit(
+                    "control.cancel",
+                    {"reason": self.cancellation.reason},
+                    source="caller",
+                    require_lease=False,
+                )
+            except EventSequenceConflictError:
+                await self._finish(RunState.FAILED, "event_sequence_conflict")
+                return await self.result_future
+            except EventJournalError:
+                await self._finish(RunState.FAILED, "event_store_error")
+                return await self.result_future
             await asyncio.gather(
                 *(actor.request_cancel(self.cancellation.reason or "user_cancelled") for actor in self._actors.values()),
                 return_exceptions=True,
             )
-            self._cancel_work()
-            if self._main_task and self._main_task is not asyncio.current_task():
-                self._main_task.cancel()
+            async with self._sequence_lock:
+                self._cancel_work()
+                if self._main_task and self._main_task is not asyncio.current_task():
+                    self._main_task.cancel()
         try:
             return await asyncio.wait_for(
                 asyncio.shield(self.result_future),
@@ -252,7 +278,12 @@ class RunKernel:
             self._context = await self.context_store.load(self.request.context_scope_id)
             self._blackboard = VersionedBlackboard(self._context.blackboard)
             self._memories = dict(self._context.agent_memories)
-            await self.run_store.create(self.request, self.snapshot())
+            try:
+                await self.run_journal.create_run(self.request, self.snapshot())
+            except Exception as exc:
+                raise EventJournalError("Failed to create runtime journal") from exc
+            self._journal_created = True
+            self._journal_ready.set()
             self.state = RunState.RUNNING
             self._start_actors()
             self._watchdog_task = asyncio.create_task(
@@ -338,6 +369,10 @@ class RunKernel:
             await self._abort("adapter_not_cancellable")
         except OutputTokenLimitExceeded:
             await self._abort("token_budget_exhausted")
+        except EventSequenceConflictError:
+            await self._abort("event_sequence_conflict")
+        except EventJournalError:
+            await self._abort("event_store_error")
         except Exception:
             await self._abort("internal_error")
 
@@ -502,18 +537,23 @@ class RunKernel:
             raise
 
     async def _emit_rejected(self, event_type: str, source: str) -> None:
-        if self.event_sink is None:
-            return
         async with self._sequence_lock:
-            self.sequence += 1
             event = EventEnvelope(
                 run_id=self.request.run_id,
                 context_scope_id=self.request.context_scope_id,
-                sequence=self.sequence,
+                sequence=self.sequence + 1,
                 type="system.late_event_rejected",
                 payload={"rejected_type": event_type},
                 source=source,
             )
+            try:
+                await self.run_journal.append_event(event)
+            except Exception:
+                return
+            self.sequence = event.sequence
+            self._live_events[event.sequence] = event
+            await self._notify_event_readers()
+        if self.event_sink is not None:
             try:
                 await self.event_sink.emit(event)
             except Exception:
@@ -583,11 +623,10 @@ class RunKernel:
         if require_lease:
             self.lease.require_valid()
         async with self._sequence_lock:
-            self.sequence += 1
             event = EventEnvelope(
                 run_id=self.request.run_id,
                 context_scope_id=self.request.context_scope_id,
-                sequence=self.sequence,
+                sequence=self.sequence + 1,
                 type=event_type,
                 payload=deepcopy(payload),
                 source=source,
@@ -595,13 +634,16 @@ class RunKernel:
                 correlation_id=correlation_id,
                 causation_id=causation_id,
             )
-            await self._events.put(event)
-            if self.event_sink is not None:
-                try:
-                    await self.event_sink.emit(event)
-                except Exception:
-                    pass
-            return event
+            await self._append_event(event)
+            self.sequence = event.sequence
+            self._live_events[event.sequence] = event
+            await self._notify_event_readers()
+        if self.event_sink is not None:
+            try:
+                await self.event_sink.emit(event)
+            except Exception:
+                pass
+        return event
 
     async def _finish(self, state: RunState, reason_code: str, output: str = "") -> bool:
         async with self._finish_lock:
@@ -623,32 +665,94 @@ class RunKernel:
                 context_version=self._context.version if self._context is not None else 0,
                 output=output,
             )
-            persisted = await self.run_store.try_finish(result)
-            if not persisted:
-                return False
-            self.state = state
-            self.reason_code = reason_code
-            self._watchdog.stop()
-            if self._watchdog_task and self._watchdog_task is not asyncio.current_task():
-                self._watchdog_task.cancel()
             terminal_type = {
                 RunState.COMPLETED: "system.run_completed",
                 RunState.FAILED: "system.run_failed",
                 RunState.CANCELLED: "system.run_cancelled",
             }[state]
-            await self._emit(
-                terminal_type,
-                {
-                    "state": state.value,
-                    "reason_code": reason_code,
-                    "usage": result.usage.to_dict(),
-                },
-                require_lease=False,
-            )
+            async with self._sequence_lock:
+                terminal_event = EventEnvelope(
+                    run_id=self.request.run_id,
+                    context_scope_id=self.request.context_scope_id,
+                    sequence=self.sequence + 1,
+                    type=terminal_type,
+                    payload={
+                        "state": state.value,
+                        "reason_code": reason_code,
+                        "usage": result.usage.to_dict(),
+                        "output": output,
+                    },
+                )
+                try:
+                    persisted = await self.run_journal.try_finish(result, terminal_event)
+                except EventSequenceConflictError:
+                    await self._finish_locally_after_journal_failure(
+                        result, reason_code="event_sequence_conflict"
+                    )
+                    return True
+                except Exception:
+                    await self._finish_locally_after_journal_failure(
+                        result, reason_code="event_store_error"
+                    )
+                    return True
+                if not persisted:
+                    return False
+                self.sequence = terminal_event.sequence
+                self._live_events[terminal_event.sequence] = terminal_event
+                await self._notify_event_readers()
+            self.state = state
+            self.reason_code = reason_code
+            self._watchdog.stop()
+            if self._watchdog_task and self._watchdog_task is not asyncio.current_task():
+                self._watchdog_task.cancel()
+            if self.event_sink is not None:
+                try:
+                    await self.event_sink.emit(terminal_event)
+                except Exception:
+                    pass
             self.lease.revoke()
             if not self.result_future.done():
                 self.result_future.set_result(result)
-            await self._events.put(_EVENTS_CLOSED)
             if self._on_terminal is not None:
                 self._on_terminal(self.request.run_id, None)
             return True
+
+    async def _append_event(self, event: EventEnvelope) -> None:
+        try:
+            await self.run_journal.append_event(event)
+        except EventSequenceConflictError:
+            raise
+        except Exception as exc:
+            raise EventJournalError("Failed to persist runtime event") from exc
+
+    async def _notify_event_readers(self) -> None:
+        async with self._event_condition:
+            self._event_condition.notify_all()
+
+    async def _finish_locally_after_journal_failure(
+        self, attempted: RunResult, *, reason_code: str
+    ) -> None:
+        self.finished_at = utc_now()
+        self._journal_failed = True
+        self.state = RunState.FAILED
+        self.reason_code = reason_code
+        self._watchdog.stop()
+        if self._watchdog_task and self._watchdog_task is not asyncio.current_task():
+            self._watchdog_task.cancel()
+        self.lease.revoke()
+        failed = RunResult(
+            run_id=attempted.run_id,
+            context_scope_id=attempted.context_scope_id,
+            state=RunState.FAILED,
+            reason_code=reason_code,
+            started_at=attempted.started_at,
+            finished_at=self.finished_at,
+            usage=attempted.usage,
+            context_version=attempted.context_version,
+        )
+        if not self.result_future.done():
+            self.result_future.set_result(failed)
+        self._journal_ready.set()
+        await self._notify_event_readers()
+        if self._on_terminal is not None:
+            self._on_terminal(self.request.run_id, None)

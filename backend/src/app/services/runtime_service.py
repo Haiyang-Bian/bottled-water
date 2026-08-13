@@ -33,7 +33,8 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 
 from db.models import Agent, Artifact, Conversation, Message, User
 from db.session import AsyncSessionLocal
-from app.persistence.runtime_store import SQLContextStore, SQLRunStore
+from app.persistence.runtime_journal import SQLRunJournal
+from app.persistence.runtime_store import SQLContextStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
 from app.services.agents.capability_permissions import (
@@ -43,7 +44,7 @@ from app.services.agents.capability_permissions import (
 from app.services.chat.scheduling import resolve_scheduling_strategy
 from app.services.runtime.policies import AgentHubTeamLeadPolicy
 from app.services.runtime.event_projection import project_runtime_event
-from app.services.model_config_resolver import normalize_provider_type
+from app.services.model_config_resolver import build_model_provider_config
 from app.services.serialization import artifact_to_dict
 from common.logger import get_logger
 
@@ -194,7 +195,6 @@ class OrchestratorService:
         """根据 ModelConfig 创建模型提供者"""
         from db.models import ModelConfig as DBModelConfig
         from app.services.model_config_resolver import create_provider_from_env_fallback, resolve_api_key
-        from model_provider.core.config import ModelConfig as MPModelConfig
 
         config = await db.scalar(
             select(DBModelConfig)
@@ -216,12 +216,7 @@ class OrchestratorService:
             logger.warning(f"No API key for provider: {provider.name}")
             return create_provider_from_env_fallback()
 
-        return create_provider(MPModelConfig(
-            provider=normalize_provider_type(provider.provider_type),
-            model=config.model_id,
-            api_key=api_key,
-            base_url=provider.base_url or None,
-        ))
+        return create_provider(build_model_provider_config(provider, config, api_key))
 
     @staticmethod
     async def create_engine(
@@ -320,7 +315,7 @@ class OrchestratorService:
                 use_streaming=True,
             ),
             context_store=SQLContextStore(session_factory),
-            run_store=SQLRunStore(session_factory),
+            run_journal=SQLRunJournal(session_factory),
         )
         return RuntimeBinding(
             engine=engine,

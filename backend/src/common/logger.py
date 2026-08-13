@@ -183,11 +183,9 @@ def get_logger(name: str) -> "_KwargsLogger":
         name: 日志器名称，建议格式 "模块名.组件名"
               如 "model_provider.ark"、"agent_runtime.run_kernel"
     """
-    # 自动配置（如果没有手动配置过）
-    if not _is_configured:
-        # 默认只输出到控制台
-        configure()
-
+    # Library modules must not mutate the process-wide root logger merely by
+    # importing or requesting a logger. The application entrypoint owns logging
+    # configuration; standalone callers may invoke ``configure`` explicitly.
     return _KwargsLogger(logging.getLogger(name))
 
 

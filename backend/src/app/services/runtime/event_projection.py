@@ -6,10 +6,14 @@ from agent_runtime.core.run_types import EventEnvelope
 from agent_runtime.core.types import Event
 
 
-def project_runtime_event(envelope: EventEnvelope) -> Event:
+def project_runtime_event(envelope: EventEnvelope, *, replayed: bool = False) -> Event:
     payload = dict(envelope.payload)
     payload.setdefault("generation_id", envelope.run_id)
     payload.setdefault("conversation_id", envelope.context_scope_id)
+    payload["runtime_event_id"] = envelope.event_id
+    payload["runtime_sequence"] = envelope.sequence
+    payload["runtime_run_id"] = envelope.run_id
+    payload["runtime_replayed"] = replayed
     event_type = envelope.type
     if event_type == "system.run_started":
         event_type = "system.session_started"
@@ -19,6 +23,9 @@ def project_runtime_event(envelope: EventEnvelope) -> Event:
         payload.setdefault("session_id", envelope.context_scope_id)
     elif event_type == "system.run_cancelled":
         event_type = "system.session_cancelled"
+        payload.setdefault("session_id", envelope.context_scope_id)
+    elif event_type == "system.run_failed":
+        event_type = "system.session_error"
         payload.setdefault("session_id", envelope.context_scope_id)
     elif event_type == "scheduler.proposal":
         event_type = "scheduler.decision"

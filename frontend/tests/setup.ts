@@ -29,6 +29,7 @@ class MemoryStorage implements Storage {
 }
 
 const localStorageMock = new MemoryStorage();
+const sessionStorageMock = new MemoryStorage();
 Object.defineProperty(window, "localStorage", {
   configurable: true,
   value: localStorageMock
@@ -37,9 +38,18 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: localStorageMock
 });
+Object.defineProperty(window, "sessionStorage", {
+  configurable: true,
+  value: sessionStorageMock
+});
+Object.defineProperty(globalThis, "sessionStorage", {
+  configurable: true,
+  value: sessionStorageMock
+});
 
 beforeEach(() => {
   localStorageMock.clear();
+  sessionStorageMock.clear();
 });
 
 Object.defineProperty(window, "matchMedia", {

@@ -18,7 +18,15 @@ from agent_runtime import RunHandle, RunRequest, RunState
 from agent_runtime.core.protocol import SCHEDULER_SUMMARY
 from agent_runtime.core.types import Event as RuntimeEvent
 from app.events import WebSocketSink
-from db.models import Conversation, ConversationParticipant, Message, utcnow
+from app.persistence.runtime_journal import SQLRunJournal
+from db.models import (
+    Conversation,
+    ConversationParticipant,
+    Message,
+    RuntimeEventConsumer,
+    RuntimeRun,
+    utcnow,
+)
 from db.session import AsyncSessionLocal
 from app.services.runtime.generation_records import (
     fail_abandoned_generation_record,
@@ -26,7 +34,7 @@ from app.services.runtime.generation_records import (
     create_generation_record,
     finish_generation_record,
     record_generation_event,
-    recover_abandoned_generation_record,
+    reconcile_terminal_run_records,
 )
 from app.services.serialization import conversation_to_dict, message_to_dict
 from app.services.chat.scheduling import resolve_scheduling_strategy, workflow_enabled
@@ -49,6 +57,10 @@ class RunAlreadyActiveError(Exception):
     pass
 
 
+class RuntimeProjectionGapError(RuntimeError):
+    """Raised when a read-model consumer observes a non-contiguous sequence."""
+
+
 class ConversationRunManager:
     """Conversation-level manager with at most one active RunHandle."""
 
@@ -66,7 +78,6 @@ class ConversationRunManager:
         self._active_user_message_ids: dict[str, str] = {}
         self._queued_inputs: dict[str, list[dict[str, Any]]] = {}
         self._pending_preview_message_ids: dict[str, list[str]] = {}
-        self._latest_thinking: dict[tuple[str, str, str], str] = {}
         self._generation_thinking_enabled: dict[str, bool] = {}
         self._session_factory = session_factory or AsyncSessionLocal
 
@@ -155,27 +166,30 @@ class ConversationRunManager:
         async with self._get_lock(conversation_id):
             if self.is_generation_running(conversation_id):
                 return False
-            async with self._session_factory() as db:
-                recovered = await recover_abandoned_generation_record(
-                    db,
-                    conversation_id,
-                    reason=reason,
-                )
-            if not recovered:
-                return False
-            generation_id = recovered.generation_id
             recovered_message: Message | None = None
-            if recovered.status in {"cancelled", "failed"}:
-                recovered_message = await self._persist_recovered_generation_notice(
-                    db,
-                    conversation_id,
-                    generation_id,
-                    status=recovered.status,
-                    error=recovered.error,
+            async with self._session_factory() as db:
+                conversation = await db.get(Conversation, conversation_id)
+                if conversation is None:
+                    return False
+                generation_id = await self._recover_abandoned_generation_if_needed(
+                    db, conversation, reason=reason
                 )
+                if not generation_id:
+                    return False
+                await db.refresh(conversation)
+                generation = _runtime_generation(conversation, generation_id) or {}
+                status = str(generation.get("status") or "failed")
+                error = str(generation.get("error") or reason)
+                if status in {"cancelled", "failed"}:
+                    recovered_message = await self._persist_recovered_generation_notice(
+                        db,
+                        conversation_id,
+                        generation_id,
+                        status=status,
+                        error=error,
+                    )
             self._generation_ids.pop(conversation_id, None)
             self._pending_preview_message_ids.pop(generation_id, None)
-            self._clear_generation_thinking(generation_id)
             self._generation_thinking_enabled.pop(generation_id, None)
             self._active_user_message_ids.pop(conversation_id, None)
             self._queued_inputs.pop(conversation_id, None)
@@ -187,15 +201,15 @@ class ConversationRunManager:
                     payload=message_to_dict(recovered_message),
                 )
             )
-        event_type = "generation_finished" if recovered.status == "completed" else f"generation:{recovered.status}"
+        event_type = "generation_finished" if status == "completed" else f"generation:{status}"
         await WebSocketSink(conversation_id).emit(
             RuntimeEvent(
                 type=event_type,
                 payload={
                     "conversation_id": conversation_id,
                     "generation_id": generation_id,
-                    "status": recovered.status,
-                    "error": recovered.error,
+                    "status": status,
+                    "error": error,
                 },
             )
         )
@@ -367,12 +381,29 @@ class ConversationRunManager:
 
         async for envelope in handle.events():
             event = project_runtime_event(envelope)
-            await WebSocketSink(conversation_id).emit(event)
-            await self._record_generation_event(
-                conversation_id,
-                generation_id,
-                event,
-            )
+            delay = 0.05
+            while True:
+                try:
+                    applied = await self._record_generation_event(
+                        conversation_id,
+                        generation_id,
+                        event,
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Runtime projection retry",
+                        conversation_id=conversation_id,
+                        generation_id=generation_id,
+                        sequence=envelope.sequence,
+                        error=str(exc),
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 1.0)
+            if applied:
+                await WebSocketSink(conversation_id).emit(event)
         result = await handle.result()
         if result.state is RunState.CANCELLED:
             raise asyncio.CancelledError(result.reason_code)
@@ -453,9 +484,17 @@ class ConversationRunManager:
 
         task = self._running_tasks.get(conversation_id)
         if task and not task.done():
+            self._queued_inputs.pop(conversation_id, None)
+            self._active_user_message_ids.pop(conversation_id, None)
             handle = self._active_handles.get(conversation_id)
             if handle:
                 await handle.cancel("user_cancelled")
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
             logger.info("Generation cancellation requested", conversation_id=conversation_id)
 
             # Broadcast cancellation so all connected clients stop rendering the stream.
@@ -465,32 +504,24 @@ class ConversationRunManager:
             )
             ws_sink = WebSocketSink(conversation_id)
             await ws_sink.emit(cancel_event)
-            generation_id = self._generation_ids.pop(conversation_id, None)
-            if generation_id:
-                self._pending_preview_message_ids.pop(generation_id, None)
-                self._clear_generation_thinking(generation_id)
-                self._generation_thinking_enabled.pop(generation_id, None)
-                await self._record_generation_event(conversation_id, generation_id, cancel_event)
-                await self._finish_generation(
-                    conversation_id,
-                    generation_id,
-                    status="cancelled",
-                    error="user_cancelled",
-                )
-            self._queued_inputs.pop(conversation_id, None)
-            self._active_user_message_ids.pop(conversation_id, None)
-
             return True
-        async with self._session_factory() as db:
-            generation_id = await cancel_abandoned_generation_record(
-                db, conversation_id, reason="user_cancelled"
-            )
         binding = self._bindings.get(conversation_id)
         cancel_abandoned = (
-            getattr(binding.engine.run_store, "cancel_abandoned", None) if binding else None
+            getattr(binding.engine.run_journal, "cancel_abandoned", None) if binding else None
         )
-        if cancel_abandoned:
-            await cancel_abandoned(conversation_id)
+        if cancel_abandoned is None:
+            cancel_abandoned = SQLRunJournal(self._session_factory).cancel_abandoned
+        cancelled_ids = await cancel_abandoned(conversation_id)
+        async with self._session_factory() as db:
+            if cancelled_ids:
+                reconciled = await reconcile_terminal_run_records(db, cancelled_ids)
+                generation_id = (
+                    reconciled[-1].generation_id if reconciled else cancelled_ids[-1]
+                )
+            else:
+                generation_id = await cancel_abandoned_generation_record(
+                    db, conversation_id, reason="user_cancelled"
+                )
         return generation_id is not None
 
     async def _recover_abandoned_generation_if_needed(
@@ -499,21 +530,42 @@ class ConversationRunManager:
         conversation: Conversation,
         *,
         reason: str,
-    ) -> bool:
+    ) -> str | None:
         conversation_id = str(conversation.id)
         if self.is_generation_running(conversation_id):
-            return False
-        generation_id = await fail_abandoned_generation_record(
-            db,
-            conversation_id,
-            reason=reason,
-        )
+            return None
+        journal = SQLRunJournal(self._session_factory)
+        await self._catch_up_conversation_projections(conversation_id, journal)
+        recovered_ids = await journal.recover_process_lost(conversation_id)
+        active_run_id = str(conversation.active_run_id or "")
+        if not recovered_ids and active_run_id:
+            try:
+                page = await journal.read_events(active_run_id, limit=1)
+            except KeyError:
+                page = None
+            if page is not None and page.terminal:
+                recovered_ids = [active_run_id]
+        if recovered_ids:
+            for run_id in recovered_ids:
+                await self._catch_up_generation_projection(
+                    conversation_id,
+                    run_id,
+                    journal,
+                )
+            await db.refresh(conversation)
+            recovered = await reconcile_terminal_run_records(db, recovered_ids)
+            generation_id = recovered[-1].generation_id if recovered else recovered_ids[-1]
+        else:
+            generation_id = await fail_abandoned_generation_record(
+                db,
+                conversation_id,
+                reason=reason,
+            )
         if not generation_id:
-            return False
+            return None
         await db.refresh(conversation)
         self._generation_ids.pop(conversation_id, None)
         self._pending_preview_message_ids.pop(generation_id, None)
-        self._clear_generation_thinking(generation_id)
         self._generation_thinking_enabled.pop(generation_id, None)
         self._active_user_message_ids.pop(conversation_id, None)
         self._queued_inputs.pop(conversation_id, None)
@@ -523,7 +575,7 @@ class ConversationRunManager:
             generation_id=generation_id,
             reason=reason,
         )
-        return True
+        return generation_id
 
     def _on_generation_done(self, conversation_id: str, generation_id: str, task: asyncio.Task) -> None:
         """Handle generation task completion."""
@@ -578,7 +630,6 @@ class ConversationRunManager:
         generation_id = self._generation_ids.pop(conversation_id, None)
         if generation_id:
             self._pending_preview_message_ids.pop(generation_id, None)
-            self._clear_generation_thinking(generation_id)
             self._generation_thinking_enabled.pop(generation_id, None)
         self._queued_inputs.pop(conversation_id, None)
         self._active_user_message_ids.pop(conversation_id, None)
@@ -694,24 +745,67 @@ class ConversationRunManager:
         conversation_id: str,
         generation_id: str,
         event: RuntimeEvent,
-    ) -> None:
+    ) -> bool:
         self._collect_preview_message_id(generation_id, event)
-        self._collect_thinking(conversation_id, generation_id, event)
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        event_id = str(payload.get("runtime_event_id") or "")
+        sequence = int(payload.get("runtime_sequence") or 0)
+        consumer_name = "agenthub_generation_projection"
+        message = None
         async with self._session_factory() as db:
-            await record_generation_event(db, conversation_id, generation_id, event)
-            message = await self._persist_agent_report_message(
-                db,
-                conversation_id,
-                generation_id,
-                event,
-            )
-            if message is None:
-                message = await self._persist_scheduler_summary_message(
+            async with db.begin():
+                consumer = None
+                if sequence:
+                    consumer = await db.scalar(
+                        select(RuntimeEventConsumer)
+                        .where(
+                            RuntimeEventConsumer.consumer_name == consumer_name,
+                            RuntimeEventConsumer.run_id == generation_id,
+                        )
+                        .with_for_update()
+                    )
+                    last_sequence = consumer.last_sequence if consumer is not None else 0
+                    if sequence <= last_sequence:
+                        return False
+                    if sequence != last_sequence + 1:
+                        raise RuntimeProjectionGapError(
+                            f"Run {generation_id} expected projection sequence "
+                            f"{last_sequence + 1}, got {sequence}"
+                        )
+                await record_generation_event(db, conversation_id, generation_id, event)
+                terminal_status = _terminal_generation_status(event)
+                if terminal_status is not None:
+                    status, error = terminal_status
+                    await finish_generation_record(
+                        db,
+                        conversation_id,
+                        generation_id,
+                        status=status,
+                        error=error,
+                        commit=False,
+                    )
+                message = await self._persist_agent_report_message(
                     db,
                     conversation_id,
                     generation_id,
                     event,
                 )
+                if message is None:
+                    message = await self._persist_scheduler_summary_message(
+                        db,
+                        conversation_id,
+                        generation_id,
+                        event,
+                    )
+                if sequence:
+                    if consumer is None:
+                        consumer = RuntimeEventConsumer(
+                            consumer_name=consumer_name,
+                            run_id=generation_id,
+                        )
+                        db.add(consumer)
+                    consumer.last_sequence = sequence
+                    consumer.last_event_id = event_id or None
         if message:
             sink = WebSocketSink(conversation_id)
             event_type = (
@@ -723,18 +817,68 @@ class ConversationRunManager:
             await self._publish_pending_preview_messages(sink, conversation_id, generation_id)
         if _should_publish_conversation_snapshot(event.type):
             await self._publish_conversation_snapshot(conversation_id)
-        if event.type == "control.watchdog_triggered":
-            reason = str((event.payload or {}).get("reason") or "watchdog_triggered")
-            if self._generation_ids.get(conversation_id) == generation_id:
-                self._generation_ids.pop(conversation_id, None)
-                self._pending_preview_message_ids.pop(generation_id, None)
-                self._clear_generation_thinking(generation_id)
-                self._generation_thinking_enabled.pop(generation_id, None)
-                await self._finish_generation(
+        return True
+
+    async def _catch_up_generation_projection(
+        self,
+        conversation_id: str,
+        generation_id: str,
+        journal: SQLRunJournal | None = None,
+    ) -> int:
+        """Replay durable events after the consumer's committed sequence."""
+
+        async with self._session_factory() as db:
+            consumer = await db.get(
+                RuntimeEventConsumer,
+                {
+                    "consumer_name": "agenthub_generation_projection",
+                    "run_id": generation_id,
+                },
+            )
+            cursor = consumer.last_sequence if consumer is not None else 0
+        store = journal or SQLRunJournal(self._session_factory)
+        while True:
+            page = await store.read_events(
+                generation_id,
+                after_sequence=cursor,
+                limit=200,
+            )
+            for envelope in page.items:
+                await self._record_generation_event(
                     conversation_id,
                     generation_id,
-                    status="failed",
-                    error=reason,
+                    project_runtime_event(envelope, replayed=True),
+                )
+                cursor = envelope.sequence
+            if cursor >= page.last_sequence:
+                return cursor
+
+    async def _catch_up_conversation_projections(
+        self,
+        conversation_id: str,
+        journal: SQLRunJournal | None = None,
+    ) -> None:
+        """Repair durable generation projections before recovery decisions."""
+
+        async with self._session_factory() as db:
+            run_ids = tuple(
+                (
+                    await db.scalars(
+                        select(RuntimeRun.id)
+                        .where(RuntimeRun.context_scope_id == conversation_id)
+                        .order_by(RuntimeRun.started_at.desc(), RuntimeRun.id.desc())
+                        .limit(20)
+                    )
+                ).all()
+            )
+        store = journal or SQLRunJournal(self._session_factory)
+        for run_id in reversed(run_ids):
+            page = await store.read_events(run_id, after_sequence=0, limit=1)
+            if page.history_complete and page.last_sequence:
+                await self._catch_up_generation_projection(
+                    conversation_id,
+                    run_id,
+                    store,
                 )
 
     def _collect_preview_message_id(self, generation_id: str, event: RuntimeEvent) -> None:
@@ -753,36 +897,6 @@ class ConversationRunManager:
         pending = self._pending_preview_message_ids.setdefault(generation_id, [])
         if preview_id not in pending:
             pending.append(preview_id)
-
-    def _collect_thinking(
-        self,
-        conversation_id: str,
-        generation_id: str,
-        event: RuntimeEvent,
-    ) -> None:
-        if event.type != "agent.thinking":
-            return
-        payload = event.payload or {}
-        agent_id = str(payload.get("agent_id") or "")
-        thinking = str(payload.get("thinking") or "").strip()
-        if not generation_id or not agent_id or not thinking:
-            return
-        key = (conversation_id, generation_id, agent_id)
-        existing = str(self._latest_thinking.get(key) or "").strip()
-        if not existing:
-            self._latest_thinking[key] = thinking
-            return
-        if thinking == existing or existing.endswith(thinking):
-            return
-        if thinking.startswith(existing):
-            self._latest_thinking[key] = thinking
-            return
-        self._latest_thinking[key] = f"{existing}{thinking}"
-
-    def _clear_generation_thinking(self, generation_id: str) -> None:
-        stale_keys = [key for key in self._latest_thinking if key[1] == generation_id]
-        for key in stale_keys:
-            self._latest_thinking.pop(key, None)
 
     async def _publish_pending_preview_messages(
         self,
@@ -836,13 +950,12 @@ class ConversationRunManager:
         error: str | None,
         next_input: dict[str, Any] | None,
     ) -> None:
-        await self._finish_generation(
+        await self._publish_generation_terminal(
             conversation_id,
             generation_id,
             status=status,
             error=error,
         )
-        self._clear_generation_thinking(generation_id)
         if not next_input:
             return
 
@@ -989,11 +1102,12 @@ class ConversationRunManager:
             else {}
         )
         runtime_report = report or status_report
-        thinking = self._latest_thinking.get((conversation_id, generation_id, agent_id), "").strip()
         existing_content = existing.content if existing and isinstance(existing.content, dict) else {}
+        existing_content = {
+            key: value for key, value in existing_content.items() if key != "thinking"
+        }
         content = {
             "text": work_product,
-            "thinking": thinking or str(existing_content.get("thinking") or ""),
             "thinking_enabled": thinking_enabled,
             "runtime_report": runtime_report or existing_content.get("runtime_report") or {},
         }
@@ -1022,7 +1136,7 @@ class ConversationRunManager:
                 conversation.last_message_preview = work_product[:300]
                 conversation.last_message_sender = existing.sender_name or agent_name
                 conversation.last_message_at = utcnow()
-            await db.commit()
+            await db.flush()
             await db.refresh(existing)
             return existing if event.type == "system.agent_completed" else None
 
@@ -1048,7 +1162,7 @@ class ConversationRunManager:
             conversation.last_message_at = utcnow()
             conversation.message_count += 1
         db.add(message)
-        await db.commit()
+        await db.flush()
         await db.refresh(message)
         return message
 
@@ -1109,7 +1223,7 @@ class ConversationRunManager:
                 conversation.last_message_preview = final_answer[:300]
                 conversation.last_message_sender = existing.sender_name or "Team Leader"
                 conversation.last_message_at = utcnow()
-            await db.commit()
+            await db.flush()
             await db.refresh(existing)
             setattr(existing, "_runtime_emit_updated", True)
             return existing
@@ -1134,11 +1248,11 @@ class ConversationRunManager:
             conversation.last_message_at = utcnow()
             conversation.message_count += 1
         db.add(message)
-        await db.commit()
+        await db.flush()
         await db.refresh(message)
         return message
 
-    async def _finish_generation(
+    async def _publish_generation_terminal(
         self,
         conversation_id: str,
         generation_id: str,
@@ -1146,15 +1260,6 @@ class ConversationRunManager:
         status: str,
         error: str | None = None,
     ) -> None:
-        async with self._session_factory() as db:
-            await finish_generation_record(
-                db,
-                conversation_id,
-                generation_id,
-                status=status,
-                error=error,
-            )
-        await self._publish_conversation_snapshot(conversation_id)
         event_type = {
             "cancelled": "generation:cancelled",
             "failed": "generation:failed",
@@ -1184,6 +1289,17 @@ def _should_publish_conversation_snapshot(event_type: str) -> bool:
         "agent.tool_result",
         "blackboard.updated",
     }
+
+
+def _terminal_generation_status(event: RuntimeEvent) -> tuple[str, str | None] | None:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    if event.type == "system.session_completed":
+        return "completed", None
+    if event.type == "system.session_cancelled":
+        return "cancelled", str(payload.get("reason_code") or "user_cancelled")
+    if event.type == "system.session_error":
+        return "failed", str(payload.get("reason_code") or payload.get("error") or "internal_error")
+    return None
 
 
 def _mention_target_agent_ids(agent_mentions: list[dict[str, Any]] | None) -> list[str]:
