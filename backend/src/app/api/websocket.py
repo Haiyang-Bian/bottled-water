@@ -15,7 +15,7 @@ from app.core.security import decode_access_token
 from app.events import WebSocketSink
 from app.services.chat.message_prompt import agent_mentions_for_message, runtime_prompt_for_message
 from app.services.chat.user_messages import message_text, save_user_message
-from app.services.conversation_session_manager import ConversationSessionManager
+from app.services.conversation_session_manager import ConversationRunManager
 from common.logger import get_logger
 from db.models import Conversation, Message, User
 from db.session import AsyncSessionLocal
@@ -92,9 +92,9 @@ async def conversation_websocket(
 
     sink = WebSocketSink(conversation_id)
     sink.register(websocket)
-    session_manager = ConversationSessionManager.get_instance()
+    session_manager = ConversationRunManager.get_instance()
     try:
-        await session_manager.recover_conversation(conversation_id, reason="server_restarted")
+        await session_manager.recover_conversation(conversation_id, reason="process_lost")
     except Exception as exc:
         logger.warning(
             "WebSocket recovery check failed",
@@ -157,7 +157,7 @@ async def _handle_chat_send(
     data: dict,
     request_id: str | None,
     sink: WebSocketSink,
-    session_manager: ConversationSessionManager,
+    session_manager: ConversationRunManager,
 ) -> None:
     """Handle chat.send."""
     async with AsyncSessionLocal() as db:
@@ -165,7 +165,7 @@ async def _handle_chat_send(
             conversation = await _get_conversation_ws(db, user, conversation_id)
             message = await _save_user_message(db, user, conversation, data)
 
-            await session_manager.get_or_create_session(
+            await session_manager.get_or_create_engine(
                 db,
                 conversation,
                 model_config_id=data.get("model_config_id"),
@@ -231,7 +231,7 @@ async def _handle_chat_send(
 
 
 async def _send_user_input_async(
-    session_manager: ConversationSessionManager,
+    session_manager: ConversationRunManager,
     conversation_id: str,
     content: str,
     runtime_content: str | None = None,
@@ -269,7 +269,7 @@ async def _handle_chat_cancel(
     websocket: WebSocket,
     conversation_id: str,
     request_id: str | None,
-    session_manager: ConversationSessionManager,
+    session_manager: ConversationRunManager,
 ) -> None:
     """Handle chat.cancel."""
     try:

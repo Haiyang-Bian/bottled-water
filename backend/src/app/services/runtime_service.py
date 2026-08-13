@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,10 +15,14 @@ from sqlalchemy.orm import selectinload
 
 from agent_runtime import (
     AgentConfig,
+    AgentLoopExecutor,
     AgentContextBuildRequest,
     AgentContextBuildResult,
     Session as AgentSession,
     ToolCall,
+    RuntimeEngine,
+    SingleAgentPolicy,
+    WorkflowPolicy,
 )
 from agent_runtime.core.interfaces import ToolExecutor
 from agent_runtime.core.types import Event as RuntimeEvent
@@ -28,6 +33,7 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 from db.models import Agent, Artifact, Conversation, Message, User
 from db.session import AsyncSessionLocal
 from app.persistence.sqlalchemy_backend import SQLAlchemyBackend
+from app.persistence.runtime_store import SQLContextStore, SQLRunStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
 from app.services.agents.capability_permissions import (
@@ -35,11 +41,23 @@ from app.services.agents.capability_permissions import (
     configured_tool_names,
 )
 from app.services.chat.scheduling import resolve_scheduling_strategy
+from app.services.runtime.policies import AgentHubTeamLeadPolicy
 from app.services.model_config_resolver import normalize_provider_type
 from app.services.serialization import artifact_to_dict
 from common.logger import get_logger
 
 logger = get_logger("app.services.runtime_service")
+
+
+@dataclass(frozen=True)
+class RuntimeBinding:
+    engine: RuntimeEngine
+    agents: tuple[AgentConfig, ...]
+    policy_factory: Callable[[], Any]
+    scheduling_strategy: str
+
+    def create_policy(self):
+        return self.policy_factory()
 
 
 class _MockModelProvider(BaseModelProvider):
@@ -355,6 +373,112 @@ class OrchestratorService:
             tool_executor=tool_executor,
             context_provider=context_provider,
             session_id=str(conversation.id),
+        )
+
+    @staticmethod
+    async def create_engine(
+        db: AsyncSession,
+        conversation: Conversation,
+        agents: list[Agent],
+        model_config_id: str | None = None,
+        scheduling_strategy: str | None = None,
+        session_factory=AsyncSessionLocal,
+    ) -> RuntimeBinding:
+        """Create reusable adapters plus a fresh-policy factory for one conversation."""
+
+        user = await db.get(User, conversation.creator_id)
+        primary_agent = agents[0] if agents else None
+        agent_model_config_id = (
+            (primary_agent.config or {}).get("model_config_id") if primary_agent else None
+        )
+        selected_model_config_id = model_config_id or agent_model_config_id
+        if selected_model_config_id:
+            provider = await OrchestratorService.create_provider_from_config(
+                db, str(selected_model_config_id)
+            )
+        else:
+            from app.services.model_config_resolver import create_provider_from_db
+
+            default_id = (user.extra or {}).get("default_model_config_id") if user else None
+            provider = await create_provider_from_db(db, default_id)
+
+        agent_configs = tuple(
+            AgentConfig(
+                id=agent.id,
+                name=agent.name,
+                system_prompt=(agent.config or {}).get("system_prompt", "")
+                or agent.description
+                or f"你是 {agent.name}。",
+                role=agent.type or "worker",
+                model_config={**(agent.config or {}), "avatar_url": agent.avatar_url},
+                tools=_runtime_agent_tools(agent),
+            )
+            for agent in agents
+        )
+        strategy = resolve_scheduling_strategy(conversation, scheduling_strategy)
+        if strategy == "workflow":
+            from agent_runtime.workflow.replanner import _fallback_workflow
+
+            raw_workflow = (conversation.extra or {}).get("workflow") or _fallback_workflow(
+                str(conversation.id),
+                [
+                    {
+                        "id": agent.id,
+                        "name": agent.name,
+                        "type": agent.type,
+                        "description": agent.description,
+                        "config": agent.config,
+                    }
+                    for agent in agents
+                ],
+            )
+            workflow = sanitize_workflow(
+                raw_workflow,
+                conversation_id=str(conversation.id),
+                available_agents=[
+                    {"id": agent.id, "name": agent.name, "type": agent.type}
+                    for agent in agents
+                ],
+            )
+
+            def policy_factory():
+                return WorkflowPolicy(workflow=workflow, agents=agent_configs, input="")
+
+            policy_agents = policy_factory().agents
+        elif len(agent_configs) == 1:
+            policy_factory = SingleAgentPolicy
+            policy_agents = agent_configs
+            strategy = "single_agent"
+        else:
+            policy_factory = AgentHubTeamLeadPolicy
+            policy_agents = agent_configs
+
+        tool_executor = (
+            _ToolExecutorAdapter(
+                db,
+                primary_agent,
+                user,
+                conversation,
+                {agent.id: agent for agent in agents},
+            )
+            if primary_agent and user
+            else None
+        )
+        engine = RuntimeEngine(
+            agent_executor=AgentLoopExecutor(
+                model_provider=provider,
+                tool_executor=tool_executor,
+                context_provider=_ContextBuilderProvider(session_factory),
+                use_streaming=True,
+            ),
+            context_store=SQLContextStore(session_factory),
+            run_store=SQLRunStore(session_factory),
+        )
+        return RuntimeBinding(
+            engine=engine,
+            agents=policy_agents,
+            policy_factory=policy_factory,
+            scheduling_strategy=strategy,
         )
 
     @staticmethod

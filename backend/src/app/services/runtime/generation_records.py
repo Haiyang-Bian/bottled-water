@@ -85,13 +85,12 @@ async def create_generation_record(
     db: AsyncSession,
     conversation_id: str,
     *,
-    session_id: str,
+    run_id: str | None = None,
     agents: Iterable[Any],
     prompt: str,
     user_message_id: str | None = None,
     model_config_id: str | None = None,
     scheduling_strategy: str | None = None,
-    runtime_mode: str | None = None,
     workflow_enabled: bool | None = None,
 ) -> str:
     """创建可恢复的 generation 运行记录。"""
@@ -99,17 +98,16 @@ async def create_generation_record(
     if not conversation:
         raise ValueError(f"Conversation not found: {conversation_id}")
 
-    generation_id = str(uuid.uuid4())
+    generation_id = run_id or str(uuid.uuid4())
     _extra, runtime = _runtime_payload(conversation)
     generations = list(runtime.get("generations") or [])
     record = {
         "id": generation_id,
-        "session_id": session_id,
+        "run_id": generation_id,
         "status": "running",
         "model_config_id": model_config_id,
         "user_message_id": user_message_id,
         "scheduling_strategy": scheduling_strategy,
-        "runtime_mode": runtime_mode,
         "workflow_enabled": bool(workflow_enabled),
         "prompt_preview": prompt[:300],
         "started_at": _now_iso(),
@@ -129,7 +127,7 @@ async def create_generation_record(
     runtime["active_generation_id"] = generation_id
     _set_runtime(conversation, runtime)
     conversation.generation_status = "running"
-    conversation.active_session_id = session_id
+    conversation.active_run_id = generation_id
     await db.commit()
     return generation_id
 
@@ -200,20 +198,40 @@ async def finish_generation_record(
         runtime["active_generation_id"] = None
     _set_runtime(conversation, runtime)
     conversation.generation_status = "idle" if terminal_status == "completed" else terminal_status
+    if conversation.active_run_id == generation_id:
+        conversation.active_run_id = None
     await db.commit()
+
+
+async def fail_abandoned_generation_record(
+    db: AsyncSession,
+    conversation_id: str,
+    *,
+    reason: str = "process_lost",
+) -> str | None:
+    """Cancel a persisted running generation that no in-process task owns."""
+    conversation = await db.get(Conversation, conversation_id)
+    if not conversation:
+        return None
+    recovered = _fail_abandoned_generation(conversation, reason=reason)
+    if recovered:
+        await db.commit()
+        return recovered.generation_id
+    return None
 
 
 async def cancel_abandoned_generation_record(
     db: AsyncSession,
     conversation_id: str,
     *,
-    reason: str = "server_restarted",
+    reason: str = "user_cancelled",
 ) -> str | None:
-    """Cancel a persisted running generation that no in-process task owns."""
     conversation = await db.get(Conversation, conversation_id)
     if not conversation:
         return None
-    recovered = _cancel_abandoned_generation(conversation, reason=reason)
+    recovered = _fail_abandoned_generation(
+        conversation, reason=reason, terminal_status="cancelled"
+    )
     if recovered:
         await db.commit()
         return recovered.generation_id
@@ -224,22 +242,22 @@ async def recover_abandoned_generation_record(
     db: AsyncSession,
     conversation_id: str,
     *,
-    reason: str = "server_restarted",
+    reason: str = "process_lost",
 ) -> RecoveredGeneration | None:
     """Recover a persisted active generation that no in-process task owns."""
     conversation = await db.get(Conversation, conversation_id)
     if not conversation:
         return None
-    recovered = _cancel_abandoned_generation(conversation, reason=reason)
+    recovered = _fail_abandoned_generation(conversation, reason=reason)
     if recovered:
         await db.commit()
     return recovered
 
 
-async def cancel_abandoned_generation_records(
+async def fail_abandoned_generation_records(
     db: AsyncSession,
     *,
-    reason: str = "server_restarted",
+    reason: str = "process_lost",
 ) -> list[RecoveredGeneration]:
     """Cancel persisted running generations left behind by a process restart."""
     result = await db.scalars(
@@ -247,7 +265,7 @@ async def cancel_abandoned_generation_records(
     )
     recovered: list[RecoveredGeneration] = []
     for conversation in result.all():
-        recovered_generation = _cancel_abandoned_generation(conversation, reason=reason)
+        recovered_generation = _fail_abandoned_generation(conversation, reason=reason)
         if recovered_generation:
             recovered.append(recovered_generation)
     if recovered:
@@ -255,10 +273,11 @@ async def cancel_abandoned_generation_records(
     return recovered
 
 
-def _cancel_abandoned_generation(
+def _fail_abandoned_generation(
     conversation: Conversation,
     *,
     reason: str,
+    terminal_status: str = "failed",
 ) -> RecoveredGeneration | None:
     _extra, runtime = _runtime_payload(conversation)
     generations = list(runtime.get("generations") or [])
@@ -285,11 +304,12 @@ def _cancel_abandoned_generation(
         record_id = str(record.get("id") or "")
         status = str(record.get("status") or "").lower()
         if record_id in candidate_ids and status not in TERMINAL_GENERATION_STATUSES:
-            record["status"] = "cancelled"
+            record["status"] = terminal_status
             record["completed_at"] = record.get("completed_at") or completed_at
-            record["cancelled_at"] = record.get("cancelled_at") or record["completed_at"]
-            record["error"] = str(reason or "server_restarted")[:1000]
-            _mark_open_agents_for_terminal_status(record, "cancelled", record["error"])
+            if terminal_status == "cancelled":
+                record["cancelled_at"] = record.get("cancelled_at") or record["completed_at"]
+            record["error"] = str(reason or "process_lost")[:1000]
+            _mark_open_agents_for_terminal_status(record, terminal_status, record["error"])
             recovered_generation_id = record_id
         elif record_id in candidate_ids and status in TERMINAL_GENERATION_STATUSES:
             terminal_candidate_status = "cancelled" if status == "canceled" else status
@@ -306,15 +326,15 @@ def _cancel_abandoned_generation(
     runtime["generations"] = updated_generations
     _set_runtime(conversation, runtime)
     if recovered_generation_id or not terminal_candidate_status:
-        recovered_status = "cancelled"
-        conversation_status = "cancelled"
-        error = str(reason or "server_restarted")[:1000]
+        recovered_status = terminal_status
+        conversation_status = terminal_status
+        error = str(reason or "process_lost")[:1000]
     else:
         recovered_status = terminal_candidate_status
         conversation_status = "idle" if terminal_candidate_status == "completed" else terminal_candidate_status
         error = None
     conversation.generation_status = conversation_status
-    conversation.active_session_id = None
+    conversation.active_run_id = None
     generation_id = recovered_generation_id or (candidate_ids[0] if candidate_ids else "status-only")
     return RecoveredGeneration(
         conversation_id=str(conversation.id),

@@ -33,6 +33,7 @@ from .runtime.event_dispatcher import EventDispatcher
 from .runtime.mailbox import Mailbox
 from .runtime.watchdog import Watchdog, WatchdogConfig
 from .runtime.engine import RuntimeEngine, RunHandle
+from .runtime.agent_executor import AgentLoopExecutor
 from .runtime.cancellation import CancellationScope, RunLease
 from .core.run_types import (
     AgentMemory,
@@ -86,6 +87,7 @@ __all__ = [
     "WatchdogConfig",
     "RuntimeEngine",
     "RunHandle",
+    "AgentLoopExecutor",
     "RunRequest",
     "RunResult",
     "RunSnapshot",

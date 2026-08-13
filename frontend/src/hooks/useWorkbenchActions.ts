@@ -59,7 +59,6 @@ export function useWorkbenchActions(
       participant_agent_ids: payload.agentIds,
       master_enabled: payload.masterEnabled,
       scheduling_strategy: payload.group ? "tech_lead" : "single_agent",
-      runtime_mode: payload.group ? "actor" : "legacy",
       workflow_enabled: false,
       folder: payload.folder,
       category: payload.folder,

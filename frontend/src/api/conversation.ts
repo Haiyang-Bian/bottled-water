@@ -21,7 +21,6 @@ export async function createConversationWithAgents(payload: {
   participant_agent_ids: string[];
   master_enabled?: boolean;
   scheduling_strategy?: "workflow" | "tech_lead" | "single_agent";
-  runtime_mode?: "actor" | "legacy";
   workflow_enabled?: boolean;
   workspace_id?: string;
   folder?: string;
@@ -36,13 +35,11 @@ export async function updateConversation(
 ): Promise<Conversation> {
   if (
     "scheduling_strategy" in patchData ||
-    "runtime_mode" in patchData ||
     "workflow_enabled" in patchData
   ) {
     return await patch<Conversation>(`/conversations/${id}`, {
       action: "runtime",
       scheduling_strategy: patchData.scheduling_strategy,
-      runtime_mode: patchData.runtime_mode,
       workflow_enabled: patchData.workflow_enabled,
     });
   }

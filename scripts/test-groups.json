@@ -42,7 +42,9 @@
       "tests/test_output_filter.py"
     ],
     "runtime:integration": [
-      "tests/test_runtime_scheduling.py",
+      "tests/test_agent_runtime/test_runtime_store.py",
+      "tests/test_runtime_mode_removed.py",
+      "tests/test_conversation_run_manager.py",
       "tests/test_chat_stability.py",
       "tests/test_websocket.py"
     ],

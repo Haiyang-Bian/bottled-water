@@ -34,7 +34,7 @@ class Conversation(Base, TimestampMixin):
     message_count: Mapped[int] = mapped_column(Integer, default=0)
     extra: Mapped[dict] = mapped_column("metadata", ContentJSON, default=dict)
     generation_status: Mapped[str] = mapped_column(String(20), default="idle")
-    active_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    active_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     creator: Mapped["User"] = relationship(back_populates="conversations")
     participants: Mapped[list["ConversationParticipant"]] = relationship(

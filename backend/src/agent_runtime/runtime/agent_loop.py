@@ -150,10 +150,14 @@ class AgentLoop:
         agent_config: AgentConfig,
         model_provider: BaseModelProvider,
         use_streaming: bool = False,
+        max_output_tokens: int | None = None,
     ):
         self.agent = agent_config
         self.model = model_provider
         self.use_streaming = use_streaming
+        self.max_output_tokens = max_output_tokens
+        self.usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
+        self.usage_estimated = False
         self._state = AgentState.IDLE
         self._step_data: Dict[str, Any] = {}
 
@@ -342,7 +346,9 @@ class AgentLoop:
                         messages=messages,
                         system_prompt=system_prompt,
                         tools=tools_for_round,
+                        max_tokens=self.max_output_tokens,
                     )
+                self._record_usage(response, system_prompt, messages)
             except Exception as e:
                 logger.error("Agent LLM 调用失败", agent_id=self.agent.id, error=str(e))
                 raise
@@ -764,7 +770,25 @@ class AgentLoop:
             "status_report": status_report,
             "tool_events": tool_events,
             "stream_message_id": stream_message_id,
+            "usage": dict(self.usage),
+            "usage_estimated": self.usage_estimated,
         }
+
+    def _record_usage(
+        self,
+        response: ChatResponse,
+        system_prompt: str,
+        messages: list[ChatMessage],
+    ) -> None:
+        usage = response.usage or {}
+        if usage:
+            self.usage["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+            self.usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+            return
+        prompt = system_prompt + "\n" + "\n".join(message.content or "" for message in messages)
+        self.usage["prompt_tokens"] += self.model.count_tokens(prompt)
+        self.usage["completion_tokens"] += self.model.count_tokens(response.content or "")
+        self.usage_estimated = True
 
     @staticmethod
     async def _run_checkpoint(checkpoint, stage: str, payload: Dict[str, Any]) -> None:
@@ -1609,6 +1633,7 @@ class AgentLoop:
             messages=messages,
             system_prompt=system_prompt,
             tools=tools,
+            max_tokens=self.max_output_tokens,
         )
 
         async for chunk in stream:

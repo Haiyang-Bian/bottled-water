@@ -194,11 +194,6 @@ async def _create(db: AsyncSession, user: User, payload: dict) -> Conversation:
         if not is_group
         else ("workflow" if workflow_enabled and requested_strategy == "workflow" else "tech_lead")
     )
-    runtime_mode = (
-        "legacy"
-        if scheduling_strategy in {"workflow", "single_agent"}
-        else str(payload.get("runtime_mode") or "actor")
-    )
     conversation_number = generate_conversation_number()
     conversation = Conversation(
         creator_id=user.id,
@@ -214,7 +209,6 @@ async def _create(db: AsyncSession, user: User, payload: dict) -> Conversation:
             "folder": payload.get("folder") or "Default",
             "remark": payload.get("remark") or "",
             "scheduling_strategy": scheduling_strategy,
-            "runtime_mode": runtime_mode,
             "workflow_enabled": workflow_enabled and scheduling_strategy == "workflow",
         },
         last_message_preview="",
@@ -852,7 +846,7 @@ async def _patch(db: AsyncSession, user: User, conversation_id: str, payload: di
             action = "pin" if payload["pinned"] else "unpin"
         elif payload.get("archived") is not None:
             action = "archive" if payload["archived"] else "unarchive"
-        elif any(payload.get(k) is not None for k in ("scheduling_strategy", "runtime_mode", "workflow_enabled")):
+        elif any(payload.get(k) is not None for k in ("scheduling_strategy", "workflow_enabled")):
             action = "runtime"
         elif any(payload.get(k) is not None for k in ("title", "description", "remark", "category", "folder")):
             action = "rename"
@@ -896,11 +890,6 @@ async def _patch(db: AsyncSession, user: User, conversation_id: str, payload: di
             strategy = "tech_lead"
         extra["scheduling_strategy"] = strategy
         extra["workflow_enabled"] = bool(payload.get("workflow_enabled")) and strategy == "workflow"
-        extra["runtime_mode"] = (
-            "legacy"
-            if strategy in {"workflow", "single_agent"}
-            else str(payload.get("runtime_mode") or "actor")
-        )
         conversation.extra = extra
     else:
         raise ValidationAppError("不支持的操作类型")
@@ -977,7 +966,6 @@ async def update_conversation_workflow(
         "workflow": workflow,
         "workflow_enabled": enabled and strategy == "workflow",
         "scheduling_strategy": strategy,
-        "runtime_mode": "legacy" if strategy in {"workflow", "single_agent"} else "actor",
     }
     await db.commit()
     return ok(workflow, "工作流已保存")
@@ -1246,9 +1234,9 @@ async def delete_conversation(
     conversation_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ):
     conversation = await _get(db, user, conversation_id)
-    from app.services.conversation_session_manager import ConversationSessionManager
+    from app.services.conversation_session_manager import ConversationRunManager
 
-    await ConversationSessionManager.get_instance().close_session(conversation_id)
+    await ConversationRunManager.get_instance().close_session(conversation_id)
     conversation.deleted_at = utcnow()
     conversation.status = "deleted"
     await db.commit()

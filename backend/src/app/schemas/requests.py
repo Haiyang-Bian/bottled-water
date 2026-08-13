@@ -1,5 +1,18 @@
 from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
+from pydantic_core import PydanticCustomError
+
+
+class _RuntimeModeRemovedMixin:
+    @model_validator(mode="before")
+    @classmethod
+    def reject_runtime_mode(cls, value):
+        if isinstance(value, dict) and "runtime_mode" in value:
+            raise PydanticCustomError(
+                "runtime_mode_removed",
+                "runtime_mode was removed; use scheduling_strategy and workflow_enabled",
+            )
+        return value
 
 
 class LoginRequest(BaseModel):
@@ -16,7 +29,7 @@ class RegisterRequest(BaseModel):
     display_name: str | None = None
 
 
-class CreateConversationRequest(BaseModel):
+class CreateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
     chat_type: Literal["single", "group"] = "single"
     type: Literal["single", "group"] | None = None
     title: str | None = None
@@ -30,11 +43,10 @@ class CreateConversationRequest(BaseModel):
     folder: str | None = None
     remark: str | None = None
     scheduling_strategy: Literal["workflow", "tech_lead", "single_agent"] | None = None
-    runtime_mode: Literal["actor", "legacy"] | None = None
     workflow_enabled: bool | None = None
 
 
-class UpdateConversationRequest(BaseModel):
+class UpdateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
     action: Literal["pin", "unpin", "archive", "unarchive", "rename", "runtime"] | None = None
     title: str | None = None
     description: str | None = None
@@ -44,7 +56,6 @@ class UpdateConversationRequest(BaseModel):
     pinned: bool | None = None
     archived: bool | None = None
     scheduling_strategy: Literal["workflow", "tech_lead", "single_agent"] | None = None
-    runtime_mode: Literal["actor", "legacy"] | None = None
     workflow_enabled: bool | None = None
 
 

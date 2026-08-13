@@ -51,9 +51,8 @@ export interface Conversation {
   workflow?: ConversationWorkflow;
   workflow_runtime?: WorkflowRun;
   generation_status?: "idle" | "running" | "failed" | "cancelled" | string;
-  active_session_id?: string | null;
+  active_run_id?: string | null;
   scheduling_strategy?: "workflow" | "tech_lead" | "single_agent" | string;
-  runtime_mode?: "actor" | "legacy" | string;
   workflow_enabled?: boolean;
   runtime?: ConversationRuntime;
 }

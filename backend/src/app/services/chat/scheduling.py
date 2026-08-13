@@ -28,16 +28,6 @@ def workflow_enabled(conversation: Any) -> bool:
     return bool(extra.get("workflow_enabled"))
 
 
-def runtime_mode(conversation: Any) -> str:
-    extra = conversation.extra if isinstance(getattr(conversation, "extra", None), dict) else {}
-    value = str(extra.get("runtime_mode") or extra.get("runtime") or "").strip()
-    if value:
-        return value
-    if getattr(conversation, "chat_type", "") == "group":
-        return "actor"
-    return "legacy"
-
-
 def resolve_scheduling_strategy(conversation: Any, requested: Any = None) -> str:
     """Resolve message/session scheduling with one canonical precedence order.
 
@@ -97,14 +87,12 @@ def persist_scheduling_strategy(conversation: Any, strategy: str) -> bool:
     if normalized == "workflow":
         changed = changed or not bool(extra.get("workflow_enabled"))
         extra["workflow_enabled"] = True
-        extra["runtime_mode"] = "legacy"
     elif normalized == "tech_lead":
-        changed = changed or bool(extra.get("workflow_enabled")) or extra.get("runtime_mode") != "actor"
+        changed = changed or bool(extra.get("workflow_enabled"))
         extra["workflow_enabled"] = False
-        extra["runtime_mode"] = "actor"
     else:
-        changed = changed or bool(extra.get("workflow_enabled")) or extra.get("runtime_mode") != "legacy"
+        changed = changed or bool(extra.get("workflow_enabled"))
         extra["workflow_enabled"] = False
-        extra["runtime_mode"] = "legacy"
+    extra.pop("runtime_mode", None)
     conversation.extra = extra
     return changed

@@ -80,7 +80,6 @@ export function WorkflowStudioContent({
     const enabled = Boolean(workflowSettings(saved).enabled);
     const patch = {
       scheduling_strategy: enabled ? "workflow" : "tech_lead",
-      runtime_mode: enabled ? "legacy" : "actor",
       workflow_enabled: enabled,
     } as const;
 

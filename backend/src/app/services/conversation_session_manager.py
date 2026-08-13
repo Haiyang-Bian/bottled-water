@@ -1,6 +1,6 @@
-"""Conversation-level runtime session manager.
+"""Conversation-level Runtime Run manager.
 
-The manager owns the long-lived AgentSession cache for each conversation,
+The manager owns reusable RuntimeEngine adapters for each conversation,
 starts and cancels generations, queues user inputs, and records runtime events
 for recovery.
 """
@@ -14,13 +14,14 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent_runtime import Session as AgentSession
+from agent_runtime import RunHandle, RunRequest, RunState
 from agent_runtime.core.protocol import SCHEDULER_SUMMARY
 from agent_runtime.core.types import Event as RuntimeEvent
 from app.events import WebSocketSink
 from db.models import Conversation, ConversationParticipant, Message, utcnow
 from db.session import AsyncSessionLocal
 from app.services.runtime.generation_records import (
+    fail_abandoned_generation_record,
     cancel_abandoned_generation_record,
     create_generation_record,
     finish_generation_record,
@@ -28,35 +29,36 @@ from app.services.runtime.generation_records import (
     recover_abandoned_generation_record,
 )
 from app.services.serialization import conversation_to_dict, message_to_dict
-from app.services.chat.scheduling import resolve_scheduling_strategy, runtime_mode, workflow_enabled
-from app.services.runtime_service import OrchestratorService
+from app.services.chat.scheduling import resolve_scheduling_strategy, workflow_enabled
+from app.services.runtime.event_projection import project_runtime_event
+from app.services.runtime_service import OrchestratorService, RuntimeBinding
 from common.logger import get_logger
 
 logger = get_logger("app.services.conversation_session_manager")
 
 
-class SessionNotFoundError(Exception):
-    """Raised when no session is cached for a conversation."""
+class RunManagerNotReadyError(Exception):
+    """Raised when no RuntimeEngine binding is cached for a conversation."""
 
     pass
 
 
-class SessionAlreadyRunningError(Exception):
+class RunAlreadyActiveError(Exception):
     """Raised when a conversation already has a running generation."""
 
     pass
 
 
-class ConversationSessionManager:
-    """Conversation-level session manager."""
+class ConversationRunManager:
+    """Conversation-level manager with at most one active RunHandle."""
 
-    _instance: ClassVar[Optional["ConversationSessionManager"]] = None
+    _instance: ClassVar[Optional["ConversationRunManager"]] = None
 
     def __init__(self, session_factory: Any = None):
-        self._sessions: dict[str, AgentSession] = {}
+        self._bindings: dict[str, RuntimeBinding] = {}
+        self._active_handles: dict[str, RunHandle] = {}
         self._session_model_config_ids: dict[str, str | None] = {}
         self._session_scheduling_strategies: dict[str, str] = {}
-        self._session_runtime_modes: dict[str, str] = {}
         self._session_workflow_enabled: dict[str, bool] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._running_tasks: dict[str, asyncio.Task] = {}
@@ -69,7 +71,7 @@ class ConversationSessionManager:
         self._session_factory = session_factory or AsyncSessionLocal
 
     @classmethod
-    def get_instance(cls) -> "ConversationSessionManager":
+    def get_instance(cls) -> "ConversationRunManager":
         """Return the singleton manager."""
         if cls._instance is None:
             cls._instance = cls()
@@ -81,81 +83,72 @@ class ConversationSessionManager:
             self._locks[conversation_id] = asyncio.Lock()
         return self._locks[conversation_id]
 
-    async def get_or_create_session(
+    async def get_or_create_engine(
         self,
         db: AsyncSession,
         conversation: Conversation,
         model_config_id: str | None = None,
         event_sink=None,
-    ) -> AgentSession:
-        """Get or create a cached runtime session."""
+    ) -> RuntimeBinding:
+        """Get or create cached adapters; terminated Runs themselves are never cached."""
 
 
 
         conversation_id = str(conversation.id)
         requested_model_config_id = str(model_config_id) if model_config_id else None
         requested_strategy = resolve_scheduling_strategy(conversation)
-        requested_runtime_mode = runtime_mode(conversation)
         requested_workflow_enabled = workflow_enabled(conversation)
 
         async with self._get_lock(conversation_id):
             await self._recover_abandoned_generation_if_needed(
                 db,
                 conversation,
-                reason="server_restarted",
+                reason="process_lost",
             )
 
-            if conversation_id in self._sessions:
+            if conversation_id in self._bindings:
                 task = self._running_tasks.get(conversation_id)
                 if task and not task.done():
-                    return self._sessions[conversation_id]
+                    return self._bindings[conversation_id]
                 if (
                     self._session_model_config_ids.get(conversation_id) == requested_model_config_id
                     and self._session_scheduling_strategies.get(conversation_id) == requested_strategy
-                    and self._session_runtime_modes.get(conversation_id) == requested_runtime_mode
                     and self._session_workflow_enabled.get(conversation_id) == requested_workflow_enabled
                 ):
-                    if event_sink is not None:
-                        self._sessions[conversation_id].event_dispatcher.register_sink(event_sink)
-                    return self._sessions[conversation_id]
-                self._sessions.pop(conversation_id, None)
+                    return self._bindings[conversation_id]
+                self._bindings.pop(conversation_id, None)
                 self._session_model_config_ids.pop(conversation_id, None)
                 self._session_scheduling_strategies.pop(conversation_id, None)
-                self._session_runtime_modes.pop(conversation_id, None)
                 self._session_workflow_enabled.pop(conversation_id, None)
 
             agents = await OrchestratorService._get_conversation_agents(db, conversation)
             if not agents:
                 raise ValueError(f"Conversation has no available agents: conversation_id={conversation_id}")
 
-            session = await OrchestratorService.create_session(
+            binding = await OrchestratorService.create_engine(
                 db,
                 conversation,
                 agents,
                 model_config_id,
-                event_sink=event_sink,
                 scheduling_strategy=requested_strategy,
+                session_factory=self._session_factory,
             )
-            self._sessions[conversation_id] = session
+            self._bindings[conversation_id] = binding
             self._session_model_config_ids[conversation_id] = requested_model_config_id
             self._session_scheduling_strategies[conversation_id] = requested_strategy
-            self._session_runtime_modes[conversation_id] = requested_runtime_mode
             self._session_workflow_enabled[conversation_id] = requested_workflow_enabled
 
-            # Keep the persisted conversation pointed at the active runtime session.
             conversation.generation_status = "idle"
-            conversation.active_session_id = session.session_id
             await db.commit()
 
             logger.info(
-                "Session created",
+                "RuntimeEngine binding created",
                 conversation_id=conversation_id,
-                session_id=session.session_id,
                 agent_count=len(agents),
             )
-            return session
+            return binding
 
-    async def recover_conversation(self, conversation_id: str, *, reason: str = "server_restarted") -> bool:
+    async def recover_conversation(self, conversation_id: str, *, reason: str = "process_lost") -> bool:
         """Recover a conversation whose running generation belongs to a dead process."""
         if self.is_generation_running(conversation_id):
             return False
@@ -222,9 +215,11 @@ class ConversationSessionManager:
         """Start a generation if this user message has not already been handled."""
         user_message_key = str(user_message_id or "").strip()
         async with self._get_lock(conversation_id):
-            session = self._sessions.get(conversation_id)
-            if not session:
-                raise SessionNotFoundError(f"Conversation {conversation_id} has no active Session")
+            binding = self._bindings.get(conversation_id)
+            if not binding:
+                raise RunManagerNotReadyError(
+                    f"Conversation {conversation_id} has no RuntimeEngine binding"
+                )
 
             if user_message_key and await self._generation_exists_for_user_message(
                 conversation_id,
@@ -239,11 +234,13 @@ class ConversationSessionManager:
 
             task = self._running_tasks.get(conversation_id)
             if task and not task.done():
-                raise SessionAlreadyRunningError(f"Conversation {conversation_id} already has a running generation")
+                raise RunAlreadyActiveError(
+                    f"Conversation {conversation_id} already has an active Run"
+                )
 
             generation_id = await self._create_generation_record(
                 conversation_id,
-                session,
+                binding,
                 content,
                 user_message_id=user_message_key or None,
             )
@@ -258,13 +255,26 @@ class ConversationSessionManager:
                 client_message_id=client_message_id,
                 agent_mentions=agent_mentions,
             )
+            context_metadata["allowed_agent_ids"] = [agent.id for agent in binding.agents]
+            context_metadata["mentioned_agent_ids"] = context_metadata.get(
+                "mention_target_agent_ids", []
+            )
+            handle = await binding.engine.start(
+                RunRequest(
+                    run_id=generation_id,
+                    context_scope_id=conversation_id,
+                    input=runtime_content or content,
+                    agents=binding.agents,
+                    policy=binding.create_policy(),
+                    metadata=context_metadata,
+                )
+            )
+            self._active_handles[conversation_id] = handle
             task = asyncio.create_task(
                 self._run_generation(
-                    session,
+                    handle,
                     conversation_id,
                     generation_id,
-                    runtime_content or content,
-                    context_metadata=context_metadata,
                 ),
                 name=f"generation-{conversation_id}",
             )
@@ -349,19 +359,25 @@ class ConversationSessionManager:
 
     async def _run_generation(
         self,
-        session: AgentSession,
+        handle: RunHandle,
         conversation_id: str,
         generation_id: str,
-        content: str,
-        *,
-        context_metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Run a session generation in the background."""
+        """Project one Run's envelopes onto the existing AgentHub read model."""
 
-
-
-        async for event in session.run(content, context_metadata=context_metadata):
-            await self._record_generation_event(conversation_id, generation_id, event)
+        async for envelope in handle.events():
+            event = project_runtime_event(envelope)
+            await WebSocketSink(conversation_id).emit(event)
+            await self._record_generation_event(
+                conversation_id,
+                generation_id,
+                event,
+            )
+        result = await handle.result()
+        if result.state is RunState.CANCELLED:
+            raise asyncio.CancelledError(result.reason_code)
+        if result.state is RunState.FAILED:
+            raise RuntimeError(result.reason_code)
 
     async def send_user_input(
         self,
@@ -378,9 +394,10 @@ class ConversationSessionManager:
         user_message_key = str(user_message_id or "").strip()
         queued_payload: dict[str, str] | None = None
         async with self._get_lock(conversation_id):
-            session = self._sessions.get(conversation_id)
-            if not session:
-                raise SessionNotFoundError(f"Conversation {conversation_id} has no active Session")
+            if conversation_id not in self._bindings:
+                raise RunManagerNotReadyError(
+                    f"Conversation {conversation_id} has no RuntimeEngine binding"
+                )
 
             if user_message_key and await self._generation_exists_for_user_message(
                 conversation_id,
@@ -436,11 +453,9 @@ class ConversationSessionManager:
 
         task = self._running_tasks.get(conversation_id)
         if task and not task.done():
-            session = self._sessions.get(conversation_id)
-            cancel = getattr(session, "cancel", None) if session else None
-            if cancel:
-                await cancel("user_cancelled")
-            task.cancel()
+            handle = self._active_handles.get(conversation_id)
+            if handle:
+                await handle.cancel("user_cancelled")
             logger.info("Generation cancellation requested", conversation_id=conversation_id)
 
             # Broadcast cancellation so all connected clients stop rendering the stream.
@@ -466,7 +481,17 @@ class ConversationSessionManager:
             self._active_user_message_ids.pop(conversation_id, None)
 
             return True
-        return await self.recover_conversation(conversation_id, reason="user_cancelled")
+        async with self._session_factory() as db:
+            generation_id = await cancel_abandoned_generation_record(
+                db, conversation_id, reason="user_cancelled"
+            )
+        binding = self._bindings.get(conversation_id)
+        cancel_abandoned = (
+            getattr(binding.engine.run_store, "cancel_abandoned", None) if binding else None
+        )
+        if cancel_abandoned:
+            await cancel_abandoned(conversation_id)
+        return generation_id is not None
 
     async def _recover_abandoned_generation_if_needed(
         self,
@@ -478,7 +503,7 @@ class ConversationSessionManager:
         conversation_id = str(conversation.id)
         if self.is_generation_running(conversation_id):
             return False
-        generation_id = await cancel_abandoned_generation_record(
+        generation_id = await fail_abandoned_generation_record(
             db,
             conversation_id,
             reason=reason,
@@ -503,6 +528,9 @@ class ConversationSessionManager:
     def _on_generation_done(self, conversation_id: str, generation_id: str, task: asyncio.Task) -> None:
         """Handle generation task completion."""
         self._running_tasks.pop(conversation_id, None)
+        handle = self._active_handles.get(conversation_id)
+        if handle and handle.run_id == generation_id:
+            self._active_handles.pop(conversation_id, None)
 
         try:
             task.result()
@@ -542,10 +570,10 @@ class ConversationSessionManager:
 
 
         await self.cancel_generation(conversation_id)
-        session = self._sessions.pop(conversation_id, None)
+        binding = self._bindings.pop(conversation_id, None)
+        self._active_handles.pop(conversation_id, None)
         self._session_model_config_ids.pop(conversation_id, None)
         self._session_scheduling_strategies.pop(conversation_id, None)
-        self._session_runtime_modes.pop(conversation_id, None)
         self._session_workflow_enabled.pop(conversation_id, None)
         generation_id = self._generation_ids.pop(conversation_id, None)
         if generation_id:
@@ -556,15 +584,22 @@ class ConversationSessionManager:
         self._active_user_message_ids.pop(conversation_id, None)
         self._locks.pop(conversation_id, None)
 
-        if session:
-            logger.info("Session closed", conversation_id=conversation_id, session_id=session.session_id)
+        if binding:
+            logger.info("RuntimeEngine binding closed", conversation_id=conversation_id)
 
-    def get_session_status(self, conversation_id: str) -> dict | None:
-        """Return session status if the session exists."""
-        session = self._sessions.get(conversation_id)
-        if not session:
+    def get_run_status(self, conversation_id: str) -> dict | None:
+        """Return the active Run snapshot, if any."""
+        handle = self._active_handles.get(conversation_id)
+        if not handle:
             return None
-        return session.get_status()
+        snapshot = handle.snapshot()
+        return {
+            "run_id": snapshot.run_id,
+            "status": snapshot.state.value,
+            "reason_code": snapshot.reason_code,
+            "sequence": snapshot.sequence,
+            "usage": snapshot.usage.to_dict(),
+        }
 
     def is_generation_running(self, conversation_id: str) -> bool:
         """Return whether a generation is currently running."""
@@ -625,7 +660,7 @@ class ConversationSessionManager:
     async def _create_generation_record(
         self,
         conversation_id: str,
-        session: AgentSession,
+        binding: RuntimeBinding,
         content: str,
         *,
         user_message_id: str | None = None,
@@ -634,13 +669,12 @@ class ConversationSessionManager:
             generation_id = await create_generation_record(
                 db,
                 conversation_id,
-                session_id=session.session_id,
-                agents=session.agents.values(),
+                run_id=None,
+                agents=binding.agents,
                 prompt=content,
                 user_message_id=user_message_id,
                 model_config_id=self._session_model_config_ids.get(conversation_id),
                 scheduling_strategy=self._session_scheduling_strategies.get(conversation_id),
-                runtime_mode=self._session_runtime_modes.get(conversation_id),
                 workflow_enabled=self._session_workflow_enabled.get(conversation_id),
             )
         self._generation_ids[conversation_id] = generation_id
@@ -926,8 +960,12 @@ class ConversationSessionManager:
             or payload.get("message_id")
             or ""
         )
-        session = self._sessions.get(conversation_id)
-        agent = session.agents.get(agent_id) if session and agent_id else None
+        binding = self._bindings.get(conversation_id)
+        agent = (
+            next((item for item in binding.agents if item.id == agent_id), None)
+            if binding and agent_id
+            else None
+        )
         agent_name = getattr(agent, "name", None) or str(payload.get("agent_name") or "Agent")
         agent_avatar_url = (
             str((getattr(agent, "model_config", {}) or {}).get("avatar_url") or "")

@@ -83,10 +83,10 @@ async def _send_async(
     text = _message_text(payload).strip()
 
     if trigger_agent:
-        from app.services.conversation_session_manager import ConversationSessionManager
+        from app.services.conversation_session_manager import ConversationRunManager
 
-        session_manager = ConversationSessionManager.get_instance()
-        await session_manager.get_or_create_session(
+        session_manager = ConversationRunManager.get_instance()
+        await session_manager.get_or_create_engine(
             db,
             conversation,
             model_config_id=payload.get("model_config_id"),
@@ -276,11 +276,11 @@ async def stream_conversation(
 
     # Bridge runtime events into the SSE response stream.
     async def generator():
-        from app.services.conversation_session_manager import ConversationSessionManager
+        from app.services.conversation_session_manager import ConversationRunManager
 
-        session_manager = ConversationSessionManager.get_instance()
+        session_manager = ConversationRunManager.get_instance()
         conversation = await _get_conversation(db, user, conversation_id)
-        await session_manager.get_or_create_session(
+        await session_manager.get_or_create_engine(
             db,
             conversation,
             model_config_id=message_payload.get("model_config_id"),
@@ -325,7 +325,7 @@ async def cancel_stream(
     user: User = Depends(get_current_user),
 ):
     """Cancel the active generation."""
-    from app.services.conversation_session_manager import ConversationSessionManager
+    from app.services.conversation_session_manager import ConversationRunManager
 
     conversation = await _get_conversation(db, user, conversation_id)
 
@@ -337,7 +337,7 @@ async def cancel_stream(
         cancelled = True
 
     # Cancel the shared conversation session generation as well.
-    session_manager = ConversationSessionManager.get_instance()
+    session_manager = ConversationRunManager.get_instance()
     if session_manager.is_generation_running(conversation.id):
         await session_manager.cancel_generation(conversation.id)
         cancelled = True
@@ -400,7 +400,7 @@ async def compat_cancel_stream(
     user: User = Depends(get_current_user),
 ):
     """Cancel the active generation for compatibility routes."""
-    from app.services.conversation_session_manager import ConversationSessionManager
+    from app.services.conversation_session_manager import ConversationRunManager
 
     conversation = await _get_conversation(db, user, conversation_id)
 
@@ -410,7 +410,7 @@ async def compat_cancel_stream(
         task.cancel()
         cancelled = True
 
-    session_manager = ConversationSessionManager.get_instance()
+    session_manager = ConversationRunManager.get_instance()
     if session_manager.is_generation_running(conversation.id):
         await session_manager.cancel_generation(conversation.id)
         cancelled = True

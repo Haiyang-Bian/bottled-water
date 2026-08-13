@@ -169,6 +169,8 @@ class RunKernel:
                 completion_tokens=self.usage.completion_tokens,
                 estimated=self.usage.estimated,
             ),
+            context_version=self._context.version if self._context is not None else 0,
+            limits=self.limits,
             started_at=self.started_at,
             finished_at=self.finished_at,
         )
@@ -388,6 +390,15 @@ class RunKernel:
                 "state": result.report.state.value,
                 "will": result.report.will.value,
                 "work_product": result.output,
+                "report": {
+                    "agent_id": result.report.agent_id,
+                    "state": result.report.state.value,
+                    "will": result.report.will.value,
+                    "target_task": result.report.target_task,
+                    "blockers": list(result.report.blockers),
+                    "confidence": result.report.confidence,
+                    "rationale": result.report.rationale,
+                },
             },
             source=f"agent:{result.agent_id}",
         )
@@ -524,6 +535,7 @@ class RunKernel:
                     completion_tokens=self.usage.completion_tokens,
                     estimated=self.usage.estimated,
                 ),
+                context_version=self._context.version if self._context is not None else 0,
                 output=output,
             )
             persisted = await self.run_store.try_finish(result)

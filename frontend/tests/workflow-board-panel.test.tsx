@@ -53,13 +53,12 @@ describe("workflow board panel", () => {
     vi.mocked(api.updateConversation).mockResolvedValue({
       ...conversation,
       scheduling_strategy: "workflow",
-      runtime_mode: "legacy",
       workflow_enabled: true,
     });
     vi.mocked(api.generateConversationWorkflow).mockResolvedValue(workflow);
   });
 
-  it("updates conversation runtime mode when saving an enabled workflow", async () => {
+  it("updates the scheduling strategy when saving an enabled workflow", async () => {
     render(
       <AntApp>
         <WorkflowBoardPanel activeConversation={conversation} />
@@ -79,7 +78,6 @@ describe("workflow board panel", () => {
         "c1",
         expect.objectContaining({
           scheduling_strategy: "workflow",
-          runtime_mode: "legacy",
           workflow_enabled: true,
         }),
       );

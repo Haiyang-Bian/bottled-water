@@ -160,7 +160,6 @@ describe("embedded workflow studio", () => {
     vi.mocked(api.updateConversation).mockResolvedValue({
       ...conversation,
       scheduling_strategy: "workflow",
-      runtime_mode: "legacy",
       workflow_enabled: true,
     });
     vi.mocked(api.generateConversationWorkflow).mockResolvedValue(generatedWorkflow);
@@ -205,7 +204,7 @@ describe("embedded workflow studio", () => {
     expect(api.workflowRuns).toHaveBeenCalledWith("c1");
   });
 
-  it("persists workflow chat mode when the enabled switch is clicked", async () => {
+  it("persists the workflow strategy when the enabled switch is clicked", async () => {
     vi.mocked(api.conversationWorkflow).mockResolvedValue(disabledWorkflow);
     vi.mocked(api.saveConversationWorkflow).mockImplementation(async (_id, next) => next);
 
@@ -228,7 +227,6 @@ describe("embedded workflow studio", () => {
         "c1",
         expect.objectContaining({
           scheduling_strategy: "workflow",
-          runtime_mode: "legacy",
           workflow_enabled: true,
         }),
       );

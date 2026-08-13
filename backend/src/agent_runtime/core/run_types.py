@@ -189,6 +189,7 @@ class RunResult:
     started_at: datetime
     finished_at: datetime
     usage: Usage
+    context_version: int = 0
     output: str = ""
 
 
@@ -202,5 +203,7 @@ class RunSnapshot:
     decision_count: int
     no_progress_count: int
     usage: Usage
+    context_version: int
+    limits: RuntimeLimits
     started_at: datetime | None
     finished_at: datetime | None
