@@ -786,9 +786,17 @@ class AgentLoop:
             self.usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
             return
         prompt = system_prompt + "\n" + "\n".join(message.content or "" for message in messages)
-        self.usage["prompt_tokens"] += self.model.count_tokens(prompt)
-        self.usage["completion_tokens"] += self.model.count_tokens(response.content or "")
+        self.usage["prompt_tokens"] += self._estimate_tokens(prompt)
+        self.usage["completion_tokens"] += self._estimate_tokens(response.content or "")
         self.usage_estimated = True
+
+    def _estimate_tokens(self, text: str) -> int:
+        counter = getattr(self.model, "count_tokens", None)
+        if callable(counter):
+            return max(0, int(counter(text)))
+        cn_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+        en_words = len(re.findall(r"[a-zA-Z]+", text))
+        return cn_chars + int(en_words * 1.3) + 10
 
     @staticmethod
     async def _run_checkpoint(checkpoint, stage: str, payload: Dict[str, Any]) -> None:

@@ -8,7 +8,6 @@ from agent_runtime.core.interfaces import AgentContextBuildResult
 from agent_runtime.core.protocol import AGENT_REPORT, CONTROL_ASSIGN, CONTROL_COMPLETE
 from agent_runtime.core.types import AgentConfig, AgentState, Event
 from agent_runtime.runtime.agent_actor import AgentActor
-from agent_runtime.runtime.session import Session
 from agent_runtime.runtime.event_dispatcher import EventDispatcher
 
 
@@ -198,32 +197,6 @@ async def test_agent_actor_exits_on_control_complete(mock_provider, mock_tool_ex
 
     assert report_event.payload["agent_id"] == "reviewer"
     assert report_event.payload["report"]["state"] == AgentState.COMPLETED.value
-
-
-@pytest.mark.asyncio
-async def test_actor_runtime_without_tool_executor_can_complete(mock_provider):
-    mock_provider.responses = [
-        ChatResponse(
-            content='{"decision_type":"assign","target_agent_id":"coder","target_agent_ids":["coder"],"task_description":"write a helper","rationale":"Coder should do it"}'
-        ),
-        ChatResponse(
-            content='done\n```status_report\n{"state":"completed","will":"complete","confidence":0.9}\n```'
-        ),
-    ]
-    session = Session.create(
-        agents=[AgentConfig(id="coder", name="Coder", system_prompt="You code.")],
-        model_provider=mock_provider,
-        scheduler_config={"strategy": "tech_lead", "runtime": "actor", "max_runtime_seconds": 2},
-        session_id="sess_actor_no_tools",
-    )
-
-    events = []
-    async for event in session.run("write a helper"):
-        events.append(event)
-
-    reports = [event for event in events if event.type == AGENT_REPORT]
-    assert reports
-    assert reports[-1].payload["report"]["state"] == AgentState.COMPLETED.value
 
 
 async def _append(target: list[Event], event: Event) -> None:

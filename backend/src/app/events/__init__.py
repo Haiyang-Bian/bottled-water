@@ -3,11 +3,11 @@
 
 作为 agent_runtime EventDispatcher 的 app 层桥接层。
 运行时事件通过 EventDispatcher 分发给多个 Sink（Redis、数据库、SSE 等），
-由 Session 统一管理生命周期。
+由 Run Kernel 统一管理生命周期。
 
 设计原则：
 - EventDispatcher 是运行时唯一的事件总线
-- 各 Sink 由 app 层注册到 Session
+- 各 Sink 由 app 层注入 RuntimeEngine
 - 多订阅者模式：同一事件可同时推给 SSE、Redis Stream、数据库等
 """
 
@@ -174,7 +174,7 @@ class WebSocketSink(EventSink):
     """将运行时事件推送到 WebSocket 连接。
 
     支持多客户端同时连接同一 conversation（Web + 移动端同时在线）。
-    客户端断开连接后自动清理，不影响 Session 继续运行。
+    客户端断开连接后自动清理，不影响 Run 继续执行。
     """
 
     _connections: dict[str, list[WebSocket]] = {}

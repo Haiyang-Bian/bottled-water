@@ -40,7 +40,7 @@ class WorkflowScheduler(Scheduler):
         self._last_parallel_node_ids: list[str] = []
 
     def reset(self) -> None:
-        """重置 Workflow 遍历状态，支持 Session 复用。"""
+        """重置 Workflow 遍历状态，支持策略实例跨 Run 复用。"""
         super().reset()
         self._state = WorkflowState()
         self._last_decision_node_id = None

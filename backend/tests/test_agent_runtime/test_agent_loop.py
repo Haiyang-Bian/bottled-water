@@ -226,7 +226,7 @@ class TestAgentLoopBasic:
         assert result["status_report"].state == AgentState.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_run_recovers_bad_html_tool_arguments(
+    async def test_run_recovers_bad_html_tool_arguments_without_template_fallback(
         self,
         agent_config,
         mock_provider,
@@ -260,7 +260,10 @@ class TestAgentLoopBasic:
 
         assert mock_tool_executor.calls
         assert mock_tool_executor.calls[0]["tool_name"] == "artifact.create_html"
-        assert "<!doctype html>" in mock_tool_executor.calls[0]["parameters"]["html"].lower()
+        assert mock_tool_executor.calls[0]["parameters"] == {
+            "title": "生成一个企业知识库问答 HTML 页面",
+            "body": "生成一个企业知识库问答 HTML 页面",
+        }
         assert result["tool_events"][0]["results"][0]["success"] is True
         assert result["status_report"].state == AgentState.COMPLETED
 

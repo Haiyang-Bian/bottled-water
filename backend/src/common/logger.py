@@ -7,8 +7,8 @@
 使用示例：
     from common.logger import get_logger
 
-    logger = get_logger("agent_runtime.orchestrator")
-    logger.info("Session started", session_id="xxx")
+    logger = get_logger("agent_runtime.run_kernel")
+    logger.info("Run started", run_id="xxx")
     logger.debug("调度决策", decision="assign", target="agent_1")
     logger.warning("Token 接近上限", usage=8000, limit=10000)
     logger.error("Agent 执行失败", agent_id="xxx", error="timeout")
@@ -181,7 +181,7 @@ def get_logger(name: str) -> "_KwargsLogger":
 
     Args:
         name: 日志器名称，建议格式 "模块名.组件名"
-              如 "model_provider.ark"、"agent_runtime.orchestrator"
+              如 "model_provider.ark"、"agent_runtime.run_kernel"
     """
     # 自动配置（如果没有手动配置过）
     if not _is_configured:
@@ -242,9 +242,9 @@ def ctx_logger(name: str) -> logging.LoggerAdapter:
     自动附加 LogContext 中的信息。
 
     使用示例：
-        logger = ctx_logger("agent_runtime.session")
-        with LogContext(session_id="xxx"):
-            logger.info("Session started")
+        logger = ctx_logger("agent_runtime.run_kernel")
+        with LogContext(run_id="xxx"):
+            logger.info("Run started")
     """
     logger = get_logger(name)
     return logging.LoggerAdapter(logger, {})

@@ -1,13 +1,14 @@
 """
 运行时服务 - 统一编排入口
 
-管理 agent_runtime Session 的生命周期，统一 tech_lead 调度策略。
+通过 RuntimeEngine 管理 Run 生命周期，并统一选择调度策略。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,9 +17,9 @@ from sqlalchemy.orm import selectinload
 from agent_runtime import (
     AgentConfig,
     AgentLoopExecutor,
+    RunRequest,
     AgentContextBuildRequest,
     AgentContextBuildResult,
-    Session as AgentSession,
     ToolCall,
     RuntimeEngine,
     SingleAgentPolicy,
@@ -32,7 +33,6 @@ from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatR
 
 from db.models import Agent, Artifact, Conversation, Message, User
 from db.session import AsyncSessionLocal
-from app.persistence.sqlalchemy_backend import SQLAlchemyBackend
 from app.persistence.runtime_store import SQLContextStore, SQLRunStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
@@ -42,6 +42,7 @@ from app.services.agents.capability_permissions import (
 )
 from app.services.chat.scheduling import resolve_scheduling_strategy
 from app.services.runtime.policies import AgentHubTeamLeadPolicy
+from app.services.runtime.event_projection import project_runtime_event
 from app.services.model_config_resolver import normalize_provider_type
 from app.services.serialization import artifact_to_dict
 from common.logger import get_logger
@@ -159,9 +160,7 @@ class OrchestratorService:
     """
     统一编排服务。
 
-    根据 Agent 数量自动选择调度器：
-    - 单 Agent：SingleAgentScheduler（纯代码，无 LLM 开销）
-    - 多 Agent：TechLeadScheduler（LLM 驱动的协调调度）
+    所有策略通过 RuntimeEngine 和 SchedulerPolicy 执行。
     """
 
     @staticmethod
@@ -223,157 +222,6 @@ class OrchestratorService:
             api_key=api_key,
             base_url=provider.base_url or None,
         ))
-
-    @staticmethod
-    async def create_session(
-        db: AsyncSession,
-        conversation: Conversation,
-        agents: list[Agent],
-        model_config_id: str | None = None,
-        event_sink=None,
-        scheduling_strategy: str | None = None,
-    ) -> AgentSession:
-        """创建 AgentSession（不运行）。
-
-        调度器由 AgentSession 内部根据配置创建，从属于会话生命周期。
-        支持三种调度策略：
-        - single_agent：单 Agent 纯代码调度
-        - tech_lead：多 Agent LLM 协调调度
-        - workflow：Workflow 图遍历调度
-        """
-        user = await db.get(User, conversation.creator_id)
-        agent_count = len(agents)
-
-        primary_agent = agents[0] if agents else None
-        agent_model_config_id = (
-            (primary_agent.config or {}).get("model_config_id")
-            if primary_agent is not None
-            else None
-        )
-        selected_model_config_id = model_config_id or agent_model_config_id
-
-        # 构建统一的模型提供者。优先级：聊天框选择 > Agent 绑定模型 > 用户默认/环境默认。
-        if selected_model_config_id:
-            model_provider = await OrchestratorService.create_provider_from_config(
-                db,
-                str(selected_model_config_id),
-            )
-        else:
-            from app.services.model_config_resolver import create_provider_from_db
-            default_id = (user.extra or {}).get("default_model_config_id") if user else None
-            model_provider = await create_provider_from_db(db, default_id)
-
-        # 统一构建 AgentConfig
-        agent_configs = [
-            AgentConfig(
-                id=agent.id,
-                name=agent.name,
-                system_prompt=(agent.config or {}).get("system_prompt", "") or agent.description or f"你是 {agent.name}。",
-                role=agent.type or "worker",
-                model_config={**(agent.config or {}), "avatar_url": agent.avatar_url},
-                tools=_runtime_agent_tools(agent),
-            )
-            for agent in agents
-        ]
-
-        # 判断调度策略
-        resolved_strategy = resolve_scheduling_strategy(conversation, scheduling_strategy)
-
-        has_workflow = (
-            conversation.extra
-            and isinstance(conversation.extra, dict)
-            and isinstance(conversation.extra.get("workflow"), dict)
-        )
-        runtime_mode = ""
-        if conversation.extra and isinstance(conversation.extra, dict):
-            runtime_mode = str(
-                conversation.extra.get("runtime")
-                or conversation.extra.get("runtime_mode")
-                or ""
-            ).strip()
-        if not runtime_mode and conversation.chat_type == "group" and resolved_strategy == "tech_lead":
-            runtime_mode = "actor"
-
-        tool_executor = _ToolExecutorAdapter(
-            db, primary_agent, user, conversation, {agent.id: agent for agent in agents}
-        ) if primary_agent else None
-        context_provider = _ContextBuilderProvider()
-
-        # ---- Workflow 模式 ----
-        # Strategy resolution is centralized in services.chat.scheduling.
-        if resolved_strategy == "workflow":
-            from agent_runtime.workflow.replanner import _fallback_workflow
-
-            if has_workflow:
-                raw_workflow = conversation.extra["workflow"]
-            else:
-                # 无 workflow 定义时构建默认 workflow
-                raw_workflow = _fallback_workflow(
-                    conversation.id,
-                    [
-                        {
-                            "id": agent.id,
-                            "name": agent.name,
-                            "type": agent.type,
-                            "description": agent.description,
-                            "config": agent.config,
-                        }
-                        for agent in agents
-                    ],
-                )
-
-            # 清理 workflow
-            workflow = sanitize_workflow(
-                raw_workflow,
-                conversation_id=str(conversation.id),
-                available_agents=[
-                    {"id": agent.id, "name": agent.name, "type": agent.type}
-                    for agent in agents
-                ],
-            )
-
-            return AgentSession.create(
-                agents=agent_configs,
-                scheduler_config={
-                    "strategy": "workflow",
-                    "workflow": workflow,
-                    "prompt": "",
-                },
-                model_provider=model_provider,
-                persistence=SQLAlchemyBackend(db),
-                event_sink=event_sink,
-                tool_executor=tool_executor,
-                context_provider=context_provider,
-                session_id=str(conversation.id),
-            )
-
-        # ---- 单 Agent 模式 ----
-        if agent_count == 1:
-            return AgentSession.create(
-                agents=[agent_configs[0]],
-                scheduler_config={"strategy": "single_agent"},
-                model_provider=model_provider,
-                persistence=SQLAlchemyBackend(db),
-                event_sink=event_sink,
-                tool_executor=tool_executor,
-                context_provider=context_provider,
-                session_id=str(conversation.id),
-            )
-
-        # ---- 多 Agent TechLead 模式 ----
-        return AgentSession.create(
-            agents=agent_configs,
-            scheduler_config={
-                "strategy": "tech_lead",
-                **({"runtime": "actor"} if runtime_mode == "actor" else {}),
-            },
-            model_provider=model_provider,
-            persistence=SQLAlchemyBackend(db),
-            event_sink=event_sink,
-            tool_executor=tool_executor,
-            context_provider=context_provider,
-            session_id=str(conversation.id),
-        )
 
     @staticmethod
     async def create_engine(
@@ -493,12 +341,11 @@ class OrchestratorService:
             logger.warning(f"会话没有可用 Agent conversation_id={conversation.id}")
             return
 
-        session = await OrchestratorService.create_session(
+        binding = await OrchestratorService.create_engine(
             db,
             conversation,
             agents,
             model_config_id,
-            event_sink=SseSink(conversation_id=str(conversation.id)),
             scheduling_strategy=strategy,
         )
         prompt = (
@@ -513,8 +360,22 @@ class OrchestratorService:
             strategy=resolved_strategy,
             agent_count=len(agents),
         )
-        async for event in session.run(prompt):
+        run_id = str(uuid4())
+        handle = await binding.engine.start(
+            RunRequest(
+                run_id=run_id,
+                context_scope_id=str(conversation.id),
+                input=prompt,
+                agents=binding.agents,
+                policy=binding.create_policy(),
+            )
+        )
+        sink = SseSink(conversation_id=str(conversation.id))
+        async for envelope in handle.events():
+            event = project_runtime_event(envelope)
+            await sink.emit(event)
             logger.debug("OrchestratorService event", type=event.type)
+        await handle.result()
 
 
 def _runtime_agent_tools(agent: Agent) -> list[str]:
@@ -612,77 +473,3 @@ class _ToolExecutorAdapter(ToolExecutor):
         # emit it here: agent_runtime will publish persisted preview cards
         # after the agent report message so the chat order stays natural
         # (assistant reply first, artifact card second).
-
-
-class SingleAgentOrchestrator:
-    """单 Agent 编排器，使用 SingleAgentScheduler（纯代码，无 LLM 开销）。
-
-    保留用于 SSE 兼容路径，新代码应使用 ConversationSessionManager。
-    """
-
-    def __init__(self, db: AsyncSession, conversation: Conversation, message: Message, channel: str, agents: list[Agent], model_config_id: str | None = None):
-        self.db = db
-        self.conversation = conversation
-        self.message = message
-        self.channel = channel
-        self.agents = agents
-        self.model_config_id = model_config_id
-
-    async def run(self) -> None:
-        session = await OrchestratorService.create_session(
-            self.db,
-            self.conversation,
-            self.agents,
-            self.model_config_id,
-            event_sink=SseSink(conversation_id=str(self.conversation.id)),
-        )
-
-        logger.info(f"SingleAgentOrchestrator 启动 session_id={session.session_id} agent_id={self.agents[0].id}")
-
-        prompt = (
-            self.message.content.get("text", "")
-            if isinstance(self.message.content, dict)
-            else str(self.message.content)
-        )
-
-        async for event in session.run(prompt):
-            logger.debug(f"SingleAgentOrchestrator 事件 type={event.type}")
-            # 运行时事件通过 EventDispatcher -> SseSink 自动推送，
-            # 不再手动 event_bus.publish
-
-
-class TechLeadOrchestrator:
-    """多 Agent 编排器，使用 TechLeadScheduler（LLM 驱动协调）。
-
-    保留用于 SSE 兼容路径，新代码应使用 ConversationSessionManager。
-    """
-
-    def __init__(self, db: AsyncSession, conversation: Conversation, message: Message, channel: str, agents: list[Agent], model_config_id: str | None = None):
-        self.db = db
-        self.conversation = conversation
-        self.message = message
-        self.channel = channel
-        self.agents = agents
-        self.model_config_id = model_config_id
-
-    async def run(self) -> None:
-        session = await OrchestratorService.create_session(
-            self.db,
-            self.conversation,
-            self.agents,
-            self.model_config_id,
-            event_sink=SseSink(conversation_id=str(self.conversation.id)),
-        )
-
-        logger.info(f"TechLeadOrchestrator 启动 session_id={session.session_id} agent_count={len(self.agents)}")
-
-        prompt = (
-            self.message.content.get("text", "")
-            if isinstance(self.message.content, dict)
-            else str(self.message.content)
-        )
-
-        async for event in session.run(prompt):
-            logger.debug(f"TechLeadOrchestrator 事件 type={event.type}")
-            # 运行时事件通过 EventDispatcher -> SseSink 自动推送，
-            # 不再手动 event_bus.publish

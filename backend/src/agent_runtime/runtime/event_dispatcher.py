@@ -7,13 +7,13 @@
 - Persistence → 持久化存储
 - 支持自定义 Sink 扩展
 
-职责上提：由 Session 层统一管理，Orchestrator 只负责产生事件。
+职责上提：由 Run Kernel 统一管理，执行器只负责产生事件。
 
 事件分类（按 type 前缀）：
 - control.*  → 控制事件（调度决策、看门狗等，系统内部消费）
 - agent.*    → Agent 观测事件（thinking、token、tool_call 等，前端可展示）
 - user.*     → 用户相关事件（用户输入、等待输入等）
-- system.*   → 系统级事件（session 生命周期、round 生命周期等）
+- system.*   → 系统级事件（run 生命周期、round 生命周期等）
 """
 
 import asyncio

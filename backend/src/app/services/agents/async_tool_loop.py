@@ -225,8 +225,8 @@ async def run_agentic_tool_loop(
     """
     .. deprecated::
         该函数已被 `agent_runtime` 运行时替代。
-        仅保留用于兼容旧编排器的 workflow 模式。
-        新代码请使用 `agent_runtime.Session` + `OrchestratorV2`。
+        仅保留供应用层的 workflow 适配逻辑使用。
+        新代码请通过 `agent_runtime.RuntimeEngine` 启动 Run。
     """
     user = await db.get(User, conversation.creator_id)
     if agent:
