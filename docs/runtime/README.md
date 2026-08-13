@@ -1,6 +1,6 @@
-# Runtime 设计孵化区
+# Runtime 设计与实现边界
 
-本目录定义 AgentHub Runtime 的架构契约并记录实现差距。它面向 Runtime 实现者和 Coding Agent，不是产品能力清单。当前仓库仍是孵化载体；待公共 API、依赖方向和恢复语义稳定后，再评估拆分为独立仓库。
+本目录定义 AgentHub Runtime 的架构契约并记录实现差距。它面向 Runtime 实现者和 Coding Agent，不是产品能力清单。Runtime 长期保留在当前 monorepo；`agent_runtime` 通过公开 Port 与 AgentHub Adapter 集成，并由依赖边界测试阻止反向导入 `app` 或 `db`。
 
 ## 阅读顺序
 
@@ -19,4 +19,4 @@ V1 已提供 `RuntimeEngine`、`RunHandle`、`RunRequest`、`RunState`、`Runtim
 
 ## 当前阶段
 
-Runtime Kernel V1 已收敛生命周期、Watchdog、Actor/Mailbox、策略和 ContextStore 主链。下一阶段集中处理完整 Event Log、有界背压、慢订阅者隔离、中途检查点和安全续跑，不扩张 AgentHub 平台功能。
+Runtime 已收敛生命周期、Watchdog、Actor/Mailbox、ContextStore 和持久 Event Log 主链，AgentHub 支持幂等投影与前端断线补拉。后续集中处理有界 Sink 背压、失败队列、日志压缩、跨进程实时广播、中途检查点和安全续跑，不扩张 AgentHub 平台功能。
