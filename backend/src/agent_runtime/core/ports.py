@@ -11,6 +11,7 @@ from .run_types import (
     ContextDelta,
     ContextSnapshot,
     EventEnvelope,
+    EventPage,
     PolicySnapshot,
     RunRequest,
     RunResult,
@@ -33,6 +34,20 @@ class RunStore(Protocol):
     async def create(self, request: RunRequest, snapshot: RunSnapshot) -> None: ...
 
     async def try_finish(self, result: RunResult) -> bool: ...
+
+
+class RunJournal(Protocol):
+    """Durable, ordered source of truth for Run state and events."""
+
+    async def create_run(self, request: RunRequest, snapshot: RunSnapshot) -> None: ...
+
+    async def append_event(self, event: EventEnvelope) -> None: ...
+
+    async def try_finish(self, result: RunResult, terminal_event: EventEnvelope) -> bool: ...
+
+    async def read_events(
+        self, run_id: str, *, after_sequence: int = 0, limit: int = 200
+    ) -> EventPage: ...
 
 
 class SchedulerPolicy(Protocol):
