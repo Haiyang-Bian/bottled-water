@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+from copy import deepcopy
 from collections.abc import AsyncIterator
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +20,8 @@ logger = get_logger(__name__)
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
 }
+
+_VALID_TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class OpenAICompatibleProvider(BaseModelProvider):
@@ -44,12 +49,21 @@ class OpenAICompatibleProvider(BaseModelProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> ChatResponse:
-        payload = self._build_payload(messages, system_prompt, tools, temperature, max_tokens)
+        provider_tools, tool_aliases = _alias_tool_definitions(tools)
+        provider_messages = _alias_message_tool_calls(messages, tool_aliases)
+        payload = self._build_payload(
+            provider_messages,
+            system_prompt,
+            provider_tools,
+            temperature,
+            max_tokens,
+        )
         response = await self.client.chat.completions.create(**payload)
         choice = response.choices[0]
         message = choice.message
         tool_calls = [
-            item.model_dump(exclude_none=True) for item in (message.tool_calls or [])
+            _restore_tool_call_name(item.model_dump(exclude_none=True), tool_aliases)
+            for item in (message.tool_calls or [])
         ] or None
         usage = response.usage.model_dump() if response.usage else None
         return ChatResponse(
@@ -69,7 +83,15 @@ class OpenAICompatibleProvider(BaseModelProvider):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> AsyncIterator[StreamChunk]:
-        payload = self._build_payload(messages, system_prompt, tools, temperature, max_tokens)
+        provider_tools, tool_aliases = _alias_tool_definitions(tools)
+        provider_messages = _alias_message_tool_calls(messages, tool_aliases)
+        payload = self._build_payload(
+            provider_messages,
+            system_prompt,
+            provider_tools,
+            temperature,
+            max_tokens,
+        )
         stream = await self.client.chat.completions.create(
             **payload,
             stream=True,
@@ -88,7 +110,10 @@ class OpenAICompatibleProvider(BaseModelProvider):
                 tool_call_deltas = delta.tool_calls or []
                 for index, tool_call in enumerate(tool_call_deltas):
                     yield StreamChunk(
-                        tool_call=tool_call.model_dump(exclude_none=True),
+                        tool_call=_restore_tool_call_name(
+                            tool_call.model_dump(exclude_none=True),
+                            tool_aliases,
+                        ),
                         finish_reason=(
                             choice.finish_reason
                             if index == len(tool_call_deltas) - 1
@@ -162,3 +187,106 @@ def _reasoning_content(value: Any) -> str:
     if isinstance(extra, dict) and extra.get("reasoning_content"):
         return str(extra["reasoning_content"])
     return ""
+
+
+def _alias_tool_definitions(
+    tools: Optional[List[Dict]],
+) -> tuple[Optional[List[Dict]], dict[str, str]]:
+    """Make internal tool names OpenAI-compatible without mutating callers.
+
+    AgentHub uses dotted names such as ``file.read`` for routing. OpenAI-compatible
+    APIs only accept letters, digits, underscores, and dashes in function names.
+    The alias map restores provider responses to the internal name before they
+    reach the Runtime tool executor.
+    """
+    if not tools:
+        return tools, {}
+
+    valid_names = {
+        str(item.get("function", {}).get("name") or "")
+        for item in tools
+        if _VALID_TOOL_NAME.fullmatch(
+            str(item.get("function", {}).get("name") or "")
+        )
+    }
+    aliases_by_original: dict[str, str] = {}
+    originals_by_alias: dict[str, str] = {}
+    aliased_tools: List[Dict] = []
+
+    for item in tools:
+        aliased_item = deepcopy(item)
+        function = aliased_item.get("function")
+        if not isinstance(function, dict):
+            aliased_tools.append(aliased_item)
+            continue
+
+        original_name = str(function.get("name") or "")
+        if _VALID_TOOL_NAME.fullmatch(original_name):
+            alias = original_name
+        else:
+            alias = aliases_by_original.get(original_name) or _make_tool_alias(
+                original_name,
+                reserved=valid_names | set(originals_by_alias),
+            )
+            aliases_by_original[original_name] = alias
+            originals_by_alias[alias] = original_name
+        function["name"] = alias
+        aliased_tools.append(aliased_item)
+
+    return aliased_tools, originals_by_alias
+
+
+def _make_tool_alias(name: str, *, reserved: set[str]) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_-") or "tool"
+    for digest_length in range(8, 33, 4):
+        digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:digest_length]
+        max_stem_length = 64 - digest_length - 1
+        alias = f"{stem[:max_stem_length]}_{digest}"
+        if alias not in reserved:
+            return alias
+    raise ValueError("Unable to create a unique provider tool alias")
+
+
+def _restore_tool_call_name(
+    tool_call: dict[str, Any],
+    aliases: dict[str, str],
+) -> dict[str, Any]:
+    function = tool_call.get("function")
+    if not isinstance(function, dict):
+        return tool_call
+    alias = str(function.get("name") or "")
+    original = aliases.get(alias)
+    if original:
+        function["name"] = original
+    return tool_call
+
+
+def _alias_message_tool_calls(
+    messages: List[ChatMessage],
+    aliases: dict[str, str],
+) -> List[ChatMessage]:
+    if not aliases:
+        return messages
+    aliases_by_original = {original: alias for alias, original in aliases.items()}
+    result: List[ChatMessage] = []
+    for message in messages:
+        tool_calls = deepcopy(message.tool_calls)
+        for tool_call in tool_calls or []:
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            original = str(function.get("name") or "")
+            if original in aliases_by_original:
+                function["name"] = aliases_by_original[original]
+        name = aliases_by_original.get(message.name or "", message.name)
+        result.append(
+            ChatMessage(
+                role=message.role,
+                content=message.content,
+                name=name,
+                tool_calls=tool_calls,
+                tool_call_id=message.tool_call_id,
+                reasoning_content=message.reasoning_content,
+            )
+        )
+    return result

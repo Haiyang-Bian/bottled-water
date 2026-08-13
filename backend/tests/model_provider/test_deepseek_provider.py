@@ -39,6 +39,11 @@ class FakeCompletions:
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
+        requested_tool_name = (
+            kwargs.get("tools", [{}])[0].get("function", {}).get("name", "lookup")
+            if kwargs.get("tools")
+            else "lookup"
+        )
         if kwargs.get("stream"):
             return FakeAsyncStream(
                 [
@@ -66,7 +71,7 @@ class FakeCompletions:
                                                 "id": "call-1",
                                                 "type": "function",
                                                 "function": {
-                                                    "name": "lookup",
+                                                    "name": requested_tool_name,
                                                     "arguments": '{"q":',
                                                 },
                                             }
@@ -99,9 +104,23 @@ class FakeCompletions:
                     ),
                 ]
             )
+        tool_calls = []
+        if kwargs.get("tools"):
+            tool_calls = [
+                FakeToolCall(
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": requested_tool_name,
+                            "arguments": "{}",
+                        },
+                    }
+                )
+            ]
         message = SimpleNamespace(
             content="answer",
-            tool_calls=[],
+            tool_calls=tool_calls,
             model_extra={"reasoning_content": "reason"},
         )
         return SimpleNamespace(
@@ -187,12 +206,115 @@ def test_thinking_is_disabled_by_default_and_enabled_mode_omits_sampling(fake_cl
         top_p=0.8,
     )
     payload = enabled._build_payload(
-        [ChatMessage(role="user", content="hello")], None, None, 0.7, 1024
+        [ChatMessage(role="user", content="hello")],
+        None,
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        0.7,
+        1024,
     )
     assert payload["extra_body"] == {"thinking": {"type": "enabled"}}
     assert payload["reasoning_effort"] == "max"
     assert "temperature" not in payload
     assert "top_p" not in payload
+    assert "tool_choice" not in payload
+
+
+@pytest.mark.asyncio
+async def test_invalid_internal_tool_names_are_aliased_and_restored(fake_client):
+    provider = make_provider(fake_client)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "artifact.create_pdf",
+                "description": "Create a PDF artifact",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    response = await provider.chat(
+        messages=[ChatMessage(role="user", content="create a PDF")],
+        tools=tools,
+    )
+
+    sent_name = fake_client[-1].chat.completions.calls[-1]["tools"][0]["function"]["name"]
+    assert sent_name != "artifact.create_pdf"
+    assert len(sent_name) <= 64
+    assert all(character.isalnum() or character in "_-" for character in sent_name)
+    assert response.tool_calls[0]["function"]["name"] == "artifact.create_pdf"
+    assert tools[0]["function"]["name"] == "artifact.create_pdf"
+
+
+@pytest.mark.asyncio
+async def test_aliased_tool_name_is_reused_in_continuation_messages(fake_client):
+    provider = make_provider(fake_client, thinking_enabled=True)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "file.read",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    await provider.chat(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                content="",
+                reasoning_content="read the requested file",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "file.read", "arguments": "{}"},
+                    }
+                ],
+            ),
+            ChatMessage(role="tool", content="contents", tool_call_id="call-1"),
+        ],
+        tools=tools,
+    )
+
+    call = fake_client[-1].chat.completions.calls[-1]
+    sent_tool_name = call["tools"][0]["function"]["name"]
+    assert call["messages"][0]["tool_calls"][0]["function"]["name"] == sent_tool_name
+    assert call["messages"][0]["reasoning_content"] == "read the requested file"
+
+
+@pytest.mark.asyncio
+async def test_streaming_restores_aliased_tool_names(fake_client):
+    provider = make_provider(fake_client)
+    chunks = [
+        chunk
+        async for chunk in provider.chat_stream(
+            messages=[ChatMessage(role="user", content="read a file")],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "file.read",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+    ]
+
+    sent_name = fake_client[-1].chat.completions.calls[-1]["tools"][0]["function"]["name"]
+    assert sent_name != "file.read"
+    tool_chunk = next(chunk for chunk in chunks if chunk.tool_call)
+    assert tool_chunk.tool_call["function"]["name"] == "file.read"
 
 
 def test_reasoning_content_is_returned_for_tool_call_continuation(fake_client):

@@ -36,5 +36,8 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         if self.thinking_enabled:
             payload.pop("temperature", None)
             payload.pop("top_p", None)
+            # DeepSeek V4 thinking mode rejects tool_choice even though tools
+            # themselves are supported.
+            payload.pop("tool_choice", None)
             payload["reasoning_effort"] = self.reasoning_effort
         return payload

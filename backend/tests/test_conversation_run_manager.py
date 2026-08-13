@@ -110,6 +110,44 @@ def _binding(executor, journal) -> RuntimeBinding:
     )
 
 
+async def test_runtime_provider_preserves_deepseek_model_options():
+    provider = SimpleNamespace(
+        provider_type="deepseek",
+        base_url="https://api.deepseek.com",
+        api_key_ref="stored-key",
+        config={},
+        status="active",
+        name="DeepSeek",
+    )
+    config = SimpleNamespace(
+        id="deepseek-config",
+        provider=provider,
+        model_id="deepseek-v4-pro",
+        temperature_default=0.4,
+        max_output_tokens=4096,
+        config={"thinking_enabled": True, "reasoning_effort": "max"},
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=config))
+
+    with patch(
+        "app.services.model_config_resolver.resolve_api_key",
+        new=AsyncMock(return_value="stored-key"),
+    ), patch(
+        "app.services.runtime_service.create_provider",
+        side_effect=lambda value: value,
+    ):
+        runtime_config = await OrchestratorService.create_provider_from_config(
+            db,
+            "deepseek-config",
+        )
+
+    assert runtime_config.provider == "deepseek"
+    assert runtime_config.extra == {
+        "thinking_enabled": True,
+        "reasoning_effort": "max",
+    }
+
+
 async def _prepare_manager(tmp_path, executor):
     engine, factory = await _database(tmp_path)
     manager = ConversationRunManager(session_factory=factory)
