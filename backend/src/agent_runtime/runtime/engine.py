@@ -301,7 +301,7 @@ class RunKernel:
             run_id=self.request.run_id,
             context_scope_id=self.request.context_scope_id,
             input=self.request.input,
-            agents=self.request.agents,
+            agents=tuple(deepcopy(self.request.agents)),
             context=context,
             reports=tuple(self._reports),
             decision_count=self.decision_count,
@@ -310,7 +310,15 @@ class RunKernel:
 
     async def _execute_targets(self, targets: tuple[str, ...], task: str) -> None:
         known = {agent.id: agent for agent in self.request.agents}
-        if not targets or any(target not in known for target in targets):
+        allowed = {
+            str(agent_id)
+            for agent_id in self.request.metadata.get("allowed_agent_ids", known)
+        }
+        if (
+            not targets
+            or any(target not in known for target in targets)
+            or any(target not in allowed for target in targets)
+        ):
             await self._finish(RunState.FAILED, "policy_error")
             return
         requests = [

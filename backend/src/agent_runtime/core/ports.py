@@ -11,6 +11,7 @@ from .run_types import (
     ContextDelta,
     ContextSnapshot,
     EventEnvelope,
+    PolicySnapshot,
     RunRequest,
     RunResult,
     RunSnapshot,
@@ -35,7 +36,9 @@ class RunStore(Protocol):
 
 
 class SchedulerPolicy(Protocol):
-    async def propose(self, snapshot, trigger: EventEnvelope | None) -> SchedulingProposal: ...
+    async def propose(
+        self, snapshot: PolicySnapshot, trigger: EventEnvelope | None
+    ) -> SchedulingProposal: ...
 
 
 EmitEvent = Callable[[str, dict, str, str | None, str | None, str | None], Awaitable[None]]
