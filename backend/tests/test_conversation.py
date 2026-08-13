@@ -208,4 +208,4 @@ def test_workflow_update_accepts_canvas_object_edges_and_enables_runtime(
     current = next(item for item in unwrap(conversations.json())["items"] if item["id"] == conversation_id)
     assert current["workflow_enabled"] is True
     assert current["scheduling_strategy"] == "workflow"
-    assert current["runtime_mode"] == "legacy"
+    assert "runtime_mode" not in current

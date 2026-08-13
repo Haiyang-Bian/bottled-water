@@ -91,7 +91,6 @@ async function createConversation(token, agent) {
       title: `Streaming Probe ${new Date().toISOString()}`,
       participant_agent_ids: [agent.id],
       scheduling_strategy: "single_agent",
-      runtime_mode: "legacy",
       workflow_enabled: false,
     }),
   });
