@@ -1,74 +1,19 @@
 {
-  "name": "agenthub-desktop-client",
+  "name": "agenthub-tauri-client",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "main": "src/main/main.js",
-  "description": "Lightweight AgentHub desktop client wrapping the web app with tray, global shortcut, quick input, notifications, and detached windows.",
+  "description": "AgentHub local desktop application powered by Tauri 2 and a bundled FastAPI sidecar.",
   "scripts": {
-    "check": "node --check src/main/main.js && node --check src/preload/preload.js && node --check src/renderer/app.js",
-    "dev": "electron .",
-    "pack": "electron-builder --dir",
-    "pack:win": "electron-builder --win nsis portable",
-    "pack:mac": "electron-builder --mac dmg",
-    "pack:linux": "electron-builder --linux AppImage deb",
-    "installable:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1"
+    "tauri": "tauri",
+    "dev": "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "check": "powershell -ExecutionPolicy Bypass -File scripts/check.ps1",
+    "build:frontend": "pnpm --dir ../frontend build --mode desktop",
+    "build:sidecar": "powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1",
+    "smoke:sidecar": "powershell -ExecutionPolicy Bypass -File scripts/smoke-sidecar.ps1",
+    "smoke:app": "powershell -ExecutionPolicy Bypass -File scripts/smoke-app.ps1",
+    "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1"
   },
   "devDependencies": {
-    "electron": "^35.0.0",
-    "electron-builder": "^26.0.12"
-  },
-  "build": {
-    "appId": "com.agenthub.desktop",
-    "productName": "AgentHub Desktop",
-    "copyright": "Copyright (c) 2026 AgentHub",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "src/**/*",
-      "assets/**/*",
-      "config/**/*",
-      "package.json"
-    ],
-    "asar": true,
-    "win": {
-      "icon": "assets/icon.svg",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-portable-${arch}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    },
-    "mac": {
-      "icon": "assets/icon.svg",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "category": "public.app-category.productivity"
-    },
-    "linux": {
-      "icon": "assets/icon.svg",
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Office"
-    }
+    "@tauri-apps/cli": "2.11.4"
   }
 }

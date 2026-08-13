@@ -1,7 +1,8 @@
 import { logger } from "@/utils/logger";
+import { apiBaseUrl, normalizeBackendUrls } from "@/config/desktopRuntime";
 import { logPreview, sanitizeLogValue } from "./logRedaction";
 
-export const API_BASE = "/api/v1";
+export const API_BASE = apiBaseUrl();
 
 /** 统一 API 错误类型。 */
 export class ApiError extends Error {
@@ -28,9 +29,9 @@ export function unwrap<T>(payload: unknown): T {
     "code" in payload &&
     "data" in payload
   ) {
-    return (payload as { data: T }).data;
+    return normalizeBackendUrls((payload as { data: T }).data);
   }
-  return payload as T;
+  return normalizeBackendUrls(payload as T);
 }
 
 /** 请求拦截器：在请求发送前执行。 */

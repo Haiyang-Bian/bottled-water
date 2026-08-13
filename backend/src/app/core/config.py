@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -27,12 +28,16 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Project .env is authoritative for this local app so stale PowerShell
-        # session variables cannot silently override model keys.
+        if os.getenv("AGENTHUB_DESKTOP_MODE") == "1":
+            # The packaged sidecar owns its data and security paths. A .env file
+            # next to the executable must not redirect it to development state.
+            return (init_settings, env_settings, dotenv_settings, file_secret_settings)
+        # Project .env is authoritative for repository development so stale
+        # PowerShell session variables cannot silently override model keys.
         return (init_settings, dotenv_settings, env_settings, file_secret_settings)
 
     app_name: str = "AgentHub"
-    environment: Literal["development", "test", "production"] = "development"
+    environment: Literal["development", "test", "production", "desktop"] = "development"
     debug: bool = True
     api_prefix: str = "/api/v1"
 
@@ -61,8 +66,11 @@ class Settings(BaseSettings):
                 "http://127.0.0.1:5174",
                 "http://localhost:5190",
                 "http://127.0.0.1:5190",
+                "http://tauri.localhost",
+                "https://tauri.localhost",
+                "tauri://localhost",
             ]
-        if not self.cors_origin_regex and self.environment != "production":
+        if not self.cors_origin_regex and self.environment not in {"production", "desktop"}:
             self.cors_origin_regex = (
                 r"^https?://(?:"
                 r"localhost|"
@@ -131,7 +139,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
-        if self.environment != "production":
+        if self.environment not in {"production", "desktop"}:
             return self
         if self.debug:
             raise ValueError("DEBUG must be false in production")

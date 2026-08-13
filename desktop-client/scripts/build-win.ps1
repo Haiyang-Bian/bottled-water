@@ -1,31 +1,22 @@
-param(
-  [switch]$SkipInstall
-)
-
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-Push-Location $root
+$desktopRoot = Split-Path -Parent $PSScriptRoot
+
+Push-Location $desktopRoot
 try {
-  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js is required to build AgentHub Desktop."
-  }
-  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    throw "npm is required to build AgentHub Desktop."
-  }
-
-  if (-not $SkipInstall -and -not (Test-Path "node_modules")) {
-    npm install
-  }
-
-  npm run check
-  npm run pack:win
-
-  Write-Host ""
-  Write-Host "AgentHub Desktop build completed." -ForegroundColor Green
-  Get-ChildItem -Path "release" -Recurse -File |
-    Where-Object { $_.Extension -in ".exe", ".msi", ".zip" } |
-    Select-Object FullName, Length
+    if (-not (Test-Path -LiteralPath "node_modules")) {
+        & pnpm install --frozen-lockfile
+        if ($LASTEXITCODE -ne 0) {
+            throw "Desktop dependency installation failed with exit code $LASTEXITCODE."
+        }
+    }
+    & pnpm exec tauri build --bundles nsis
+    if ($LASTEXITCODE -ne 0) {
+        throw "Tauri build failed with exit code $LASTEXITCODE."
+    }
+    Write-Host "AgentHub Tauri installer completed." -ForegroundColor Green
+    Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -File |
+        Select-Object FullName, Length
 }
 finally {
-  Pop-Location
+    Pop-Location
 }

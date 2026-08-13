@@ -1,4 +1,8 @@
 import { getAuthToken } from "./client";
+import {
+  normalizeBackendUrls,
+  websocketBaseUrl,
+} from "@/config/desktopRuntime";
 
 export type MessageListener = (
   event: string,
@@ -53,8 +57,7 @@ class ConversationWS {
 
       this.closed = false;
       const token = getAuthToken();
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = `${protocol}//${window.location.host}/ws/conversations/${this.conversationId}?token=${token}`;
+      const url = `${websocketBaseUrl()}/ws/conversations/${this.conversationId}?token=${token}`;
 
       try {
         this.ws = new WebSocket(url);
@@ -78,7 +81,8 @@ class ConversationWS {
           return;
         }
         if (msg.event !== undefined) {
-          this.listeners.forEach((fn) => fn(msg.event!, msg.data, msg.request_id));
+          const data = normalizeBackendUrls(msg.data);
+          this.listeners.forEach((fn) => fn(msg.event!, data, msg.request_id));
         }
       };
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import re
 import sys
 from pathlib import Path
@@ -37,8 +38,12 @@ def _make_log_dir() -> Path:
 
     基于当前文件位置计算，不依赖 ROOT_DIR，避免路径漂移。
     """
-    # logging_config.py 位于 src/app/core/，向上 3 层到达 backend/
-    log_dir = Path(__file__).resolve().parents[3] / "logs"
+    desktop_data_dir = os.getenv("AGENTHUB_DESKTOP_DATA_DIR")
+    if desktop_data_dir:
+        log_dir = Path(desktop_data_dir).resolve() / "logs"
+    else:
+        # logging_config.py 位于 src/app/core/，向上 3 层到达 backend/
+        log_dir = Path(__file__).resolve().parents[3] / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
