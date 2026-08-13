@@ -1,8 +1,0 @@
-{
-  "apiBase": "http://127.0.0.1:8000/api/v1",
-  "webAppUrl": "http://127.0.0.1:5174",
-  "globalShortcut": "Alt+Space",
-  "quickCaptureShortcut": "Alt+Shift+Space",
-  "closeToTray": true,
-  "deviceName": "AgentHub Desktop"
-}

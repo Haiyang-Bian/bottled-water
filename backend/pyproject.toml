@@ -61,6 +61,7 @@ markers = [
     "providers: model provider adapter and discovery tests",
     "agents: agent behavior and orchestration tests",
     "runtime: scheduling, event bus, and runtime infrastructure tests",
+    "desktop: packaged desktop runtime and sidecar tests",
 ]
 
 log_cli = true

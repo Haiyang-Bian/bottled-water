@@ -49,6 +49,9 @@
       "tests/test_chat_stability.py",
       "tests/test_websocket.py"
     ],
+    "desktop:unit": [
+      "tests/test_desktop_entry.py"
+    ],
     "providers:live": [
       "tests/model_provider/test_ark_provider.py",
       "tests/model_provider/test_deepseek_live.py"
@@ -68,6 +71,7 @@
       "tests/model-settings-deepseek.test.tsx"
     ],
     "chat:unit": [
+      "tests/desktop-runtime.test.ts",
       "tests/message-cleaning.test.ts",
       "tests/message-filter.test.ts",
       "tests/message-store-isolation.test.ts",

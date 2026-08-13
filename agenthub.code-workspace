@@ -9,6 +9,10 @@
             "name": "Frontend"
         },
         {
+            "path": "desktop-client",
+            "name": "Tauri Desktop"
+        },
+        {
             "path": "e2e",
             "name": "E2E Tests"
         },
@@ -29,8 +33,21 @@
             "**/.pytest_cache": true,
             "**/.ruff_cache": true,
             "**/*.egg-info": true,
-            "**/.pnpm-store": true
-        }
+            "**/.pnpm-store": true,
+            "**/.build-sidecar": true,
+            "**/target": true
+        },
+        "rust-analyzer.linkedProjects": [
+            "${workspaceFolder:Tauri Desktop}/src-tauri/Cargo.toml"
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "tauri-apps.tauri-vscode",
+            "rust-lang.rust-analyzer",
+            "ms-python.python",
+            "dbaeumer.vscode-eslint"
+        ]
     },
     "launch": {
         "version": "0.2.0",
@@ -49,6 +66,64 @@
     "tasks": {
         "version": "2.0.0",
         "tasks": [
+            {
+                "label": "Tauri: Dev",
+                "type": "shell",
+                "command": "pnpm dev",
+                "options": {
+                    "cwd": "${workspaceFolder:Tauri Desktop}"
+                },
+                "problemMatcher": [],
+                "isBackground": true,
+                "presentation": {
+                    "panel": "dedicated",
+                    "group": "tauri"
+                }
+            },
+            {
+                "label": "Tauri: Build Sidecar",
+                "type": "shell",
+                "command": "pnpm build:sidecar",
+                "options": {
+                    "cwd": "${workspaceFolder:Tauri Desktop}"
+                },
+                "problemMatcher": [],
+                "group": "build"
+            },
+            {
+                "label": "Tauri: Check Rust",
+                "type": "shell",
+                "command": "pnpm check",
+                "options": {
+                    "cwd": "${workspaceFolder:Tauri Desktop}"
+                },
+                "problemMatcher": ["$rustc"],
+                "group": "test"
+            },
+            {
+                "label": "Tauri: Desktop Tests",
+                "type": "shell",
+                "command": ".\\scripts\\run-tests.ps1 -Stack backend -Module desktop -Type unit",
+                "options": {
+                    "cwd": "${workspaceFolder:Root}"
+                },
+                "problemMatcher": [],
+                "group": "test"
+            },
+            {
+                "label": "Tauri: Build Windows Installer",
+                "type": "shell",
+                "command": "pnpm build:win",
+                "options": {
+                    "cwd": "${workspaceFolder:Tauri Desktop}"
+                },
+                "problemMatcher": [],
+                "group": "build",
+                "presentation": {
+                    "panel": "dedicated",
+                    "group": "build"
+                }
+            },
             {
                 "label": "Start Backend",
                 "type": "shell",

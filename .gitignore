@@ -39,6 +39,11 @@ frontend/.pnpm-store/
 frontend/pnpm-lock.yaml
 frontend/dist/
 desktop-client/release/
+desktop-client/.build-sidecar/
+desktop-client/src-tauri/binaries/*
+!desktop-client/src-tauri/binaries/.gitkeep
+desktop-client/src-tauri/target/
+desktop-client/src-tauri/gen/
 mobile-client/dist/
 dist/
 coverage/

@@ -19,12 +19,16 @@ class DBSettings(BaseSettings):
         extra="ignore",
     )
 
-    environment: Literal["development", "test", "production"] = "development"
+    environment: Literal["development", "test", "production", "desktop"] = "development"
 
     database_url: str = "postgresql+psycopg://agenthub:agenthub@localhost:54326/agenthub"
 
     @model_validator(mode="after")
     def validate_production_database(self) -> "DBSettings":
+        if self.environment == "desktop":
+            if not self.database_url.startswith("sqlite:///"):
+                raise ValueError("Desktop mode requires a local SQLite DATABASE_URL")
+            return self
         if self.environment == "production":
             password = make_url(self.database_url).password
             normalized_password = (password or "").strip().lower()
