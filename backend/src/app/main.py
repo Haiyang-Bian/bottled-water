@@ -17,6 +17,7 @@ from app.core.response import fail, ok
 from app.services.runtime.generation_records import reconcile_terminal_run_records
 from app.persistence.runtime_journal import SQLRunJournal
 from app.services.admin_bootstrap import bootstrap_admin_from_settings
+from app.services.desktop_identity import ensure_desktop_user
 from app.services.system_seed import ensure_system_data
 from common.logger import get_logger
 
@@ -30,6 +31,7 @@ logger = get_logger("app.main")
 async def lifespan(_app: FastAPI):
     async with AsyncSessionLocal() as db:
         await ensure_system_data(db)
+        await ensure_desktop_user(db, settings)
         await bootstrap_admin_from_settings(db, settings)
         try:
             recovered_run_ids = await SQLRunJournal().recover_process_lost()

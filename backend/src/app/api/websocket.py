@@ -10,12 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_runtime.core.types import Event as RuntimeEvent
+from app.core.config import get_settings
 from app.core.errors import NotFoundError, UnauthorizedError
 from app.core.security import decode_access_token
 from app.events import WebSocketSink
 from app.services.chat.message_prompt import agent_mentions_for_message, runtime_prompt_for_message
 from app.services.chat.user_messages import message_text, save_user_message
 from app.services.conversation_run_manager import ConversationRunManager
+from app.services.desktop_identity import get_desktop_user, validate_desktop_session
 from common.logger import get_logger
 from db.models import Conversation, Message, User
 from db.session import AsyncSessionLocal
@@ -25,8 +27,14 @@ logger = get_logger("app.api.websocket")
 router = APIRouter(tags=["websocket"])
 
 
-async def _authenticate_ws(token: str) -> User:
+async def _authenticate_ws(token: str | None, desktop_session: str | None) -> User:
     """Authenticate a WebSocket token."""
+    settings = get_settings()
+    if settings.desktop_single_user:
+        validate_desktop_session(settings, desktop_session)
+        async with AsyncSessionLocal() as db:
+            return await get_desktop_user(db)
+
     if not token:
         raise UnauthorizedError()
     payload = decode_access_token(token)
@@ -71,11 +79,12 @@ async def _save_user_message(
 async def conversation_websocket(
     websocket: WebSocket,
     conversation_id: str,
-    token: str = Query(...),
+    token: str | None = Query(None),
+    desktop_session: str | None = Query(None),
 ) -> None:
     """Conversation-level WebSocket endpoint."""
     try:
-        user = await _authenticate_ws(token)
+        user = await _authenticate_ws(token, desktop_session)
     except UnauthorizedError as exc:
         await websocket.close(code=4001, reason=str(exc))
         return

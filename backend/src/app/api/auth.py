@@ -5,6 +5,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.errors import ConflictError, UnauthorizedError, ValidationAppError
 from app.core.response import ok
 from app.core.security import create_access_token, hash_password, verify_password
@@ -18,11 +19,16 @@ from app.schemas.requests import (
     RegisterRequest,
     UpdateProfileRequest,
 )
+from app.services.desktop_identity import require_account_auth_enabled
 from app.services.serialization import user_to_dict
 
 
 router = APIRouter(tags=["auth"])
 compat_router = APIRouter(tags=["auth-compat"])
+
+
+def account_auth_enabled(settings: Settings = Depends(get_settings)) -> None:
+    require_account_auth_enabled(settings)
 
 
 async def _find_user(db: AsyncSession, username_or_email: str) -> User | None:
@@ -89,7 +95,11 @@ async def _login(db: AsyncSession, payload: dict) -> dict:
 
 
 @router.post("/auth/register", response_model=ApiResponse[LoginOut])
-async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     """用户注册。
 
     Args:
@@ -104,7 +114,11 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/auth/signup", response_model=ApiResponse[LoginOut])
-async def signup_alias(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def signup_alias(
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     """用户注册（别名端点，与 /auth/register 等价）。
 
     Args:
@@ -119,7 +133,11 @@ async def signup_alias(payload: RegisterRequest, db: AsyncSession = Depends(get_
 
 
 @router.post("/auth/login", response_model=ApiResponse[LoginOut])
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     """用户登录。
 
     Args:
@@ -146,7 +164,7 @@ async def me(user: User = Depends(get_current_user)):
 
 
 @router.post("/auth/logout", response_model=ApiResponse[OkResponse])
-async def logout():
+async def logout(_account_auth: None = Depends(account_auth_enabled)):
     """用户登出。
 
     Returns:
@@ -195,9 +213,10 @@ async def update_me(
 @router.post("/auth/password", response_model=ApiResponse[OkResponse])
 async def change_password(
     payload: ChangePasswordRequest,
-        db: AsyncSession = Depends(get_db),
-        user: User = Depends(get_current_user),
-    ):
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     """修改当前用户密码。
 
     Args:
@@ -233,13 +252,21 @@ async def _compat_payload(request: Request) -> dict:
 
 
 @compat_router.post("/auth/signup")
-async def compat_signup(request: Request, db: AsyncSession = Depends(get_db)):
+async def compat_signup(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     data, status = await _register(db, await _compat_payload(request))
     return data if status != 409 else data
 
 
 @compat_router.post("/auth/login")
-async def compat_login(request: Request, db: AsyncSession = Depends(get_db)):
+async def compat_login(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _account_auth: None = Depends(account_auth_enabled),
+):
     return await _login(db, await _compat_payload(request))
 
 

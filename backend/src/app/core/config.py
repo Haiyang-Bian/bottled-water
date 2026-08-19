@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     data_encryption_key: str | None = None
     data_encryption_key_id: str | None = None
 
+    desktop_single_user: bool = False
+    desktop_session_token: str | None = None
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     frontend_port: int = 5173
@@ -139,6 +142,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
+        if self.desktop_single_user:
+            if self.environment != "desktop":
+                raise ValueError("DESKTOP_SINGLE_USER is only valid in desktop mode")
+            if not self.desktop_session_token or len(self.desktop_session_token) < 32:
+                raise ValueError("DESKTOP_SESSION_TOKEN must contain at least 32 characters")
         if self.environment not in {"production", "desktop"}:
             return self
         if self.debug:

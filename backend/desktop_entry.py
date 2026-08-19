@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-def prepare_desktop_environment(data_dir: Path, port: int) -> Path:
+def prepare_desktop_environment(data_dir: Path, port: int, session_token: str) -> Path:
     """Create stable local secrets and configure isolated desktop storage."""
     data_dir = data_dir.expanduser().resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -35,10 +35,14 @@ def prepare_desktop_environment(data_dir: Path, port: int) -> Path:
     storage_dir.mkdir(parents=True, exist_ok=True)
     database_path = (data_dir / "agenthub.db").as_posix()
     base_url = f"http://127.0.0.1:{port}"
+    if len(session_token) < 32:
+        raise ValueError("desktop session token must contain at least 32 characters")
     os.environ.update(
         {
             "AGENTHUB_DESKTOP_MODE": "1",
             "AGENTHUB_DESKTOP_DATA_DIR": str(data_dir),
+            "DESKTOP_SINGLE_USER": "true",
+            "DESKTOP_SESSION_TOKEN": session_token,
             "ENVIRONMENT": "desktop",
             "DEBUG": "false",
             "SECRET_KEY": str(values["secret_key"]),
@@ -77,6 +81,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the AgentHub desktop backend")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--session-token", required=True)
     return parser.parse_args(argv)
 
 
@@ -84,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     if not 1024 <= args.port <= 65535:
         raise SystemExit("--port must be between 1024 and 65535")
-    prepare_desktop_environment(args.data_dir, args.port)
+    prepare_desktop_environment(args.data_dir, args.port, args.session_token)
     run_migrations()
 
     import uvicorn

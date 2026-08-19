@@ -17,10 +17,15 @@ $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $dataDir = Join-Path $tempRoot "agenthub-tauri-smoke-$([guid]::NewGuid().ToString('N'))"
 $stdout = Join-Path $dataDir "sidecar.stdout.log"
 $stderr = Join-Path $dataDir "sidecar.stderr.log"
+$sessionToken = "a" * 64
 New-Item -ItemType Directory -Path $dataDir | Out-Null
 
 $process = Start-Process -FilePath $binary `
-    -ArgumentList @("--data-dir", $dataDir, "--port", $port) `
+    -ArgumentList @(
+        "--data-dir", $dataDir,
+        "--port", $port,
+        "--session-token", $sessionToken
+    ) `
     -PassThru `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdout `
@@ -52,7 +57,31 @@ try {
             throw "Desktop sidecar did not create $required."
         }
     }
-    Write-Host "Desktop sidecar health and first-run migration passed on port $port." -ForegroundColor Green
+    $headers = @{ "X-AgentHub-Desktop-Session" = $sessionToken }
+    $me = Invoke-RestMethod `
+        -Uri "http://127.0.0.1:$port/api/v1/auth/me" `
+        -Headers $headers `
+        -TimeoutSec 5
+    if (-not $me.data.id) {
+        throw "Desktop sidecar did not initialize the local identity."
+    }
+    $loginStatus = $null
+    try {
+        Invoke-WebRequest `
+            -Uri "http://127.0.0.1:$port/api/v1/auth/login" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body '{"username_or_email":"unused","password":"unused"}' `
+            -TimeoutSec 5 | Out-Null
+        $loginStatus = 200
+    }
+    catch {
+        $loginStatus = [int]$_.Exception.Response.StatusCode
+    }
+    if ($loginStatus -ne 404) {
+        throw "Desktop account login must be unavailable; received $loginStatus."
+    }
+    Write-Host "Desktop sidecar migration and single-user identity passed on port $port." -ForegroundColor Green
 }
 finally {
     if (-not $process.HasExited) {
