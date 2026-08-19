@@ -58,6 +58,12 @@
     "collaboration:integration": [
       "tests/test_team_collaboration_store.py"
     ],
+    "worktrees:unit": [
+      "tests/test_worktree_tools.py"
+    ],
+    "worktrees:integration": [
+      "tests/test_worktree_service.py"
+    ],
     "providers:live": [
       "tests/model_provider/test_ark_provider.py",
       "tests/model_provider/test_deepseek_live.py"
@@ -87,14 +93,16 @@
     ],
     "desktop:unit": [
       "tests/desktop-runtime.test.ts",
-      "tests/desktop-single-user.test.tsx"
+      "tests/desktop-single-user.test.tsx",
+      "tests/desktop-directory.test.ts"
     ],
     "chat:component": [
       "tests/chat-send-queue.test.tsx",
       "tests/message-thinking.test.tsx",
       "tests/streaming-internal-filter.test.tsx",
       "tests/create-conversation-modal.test.tsx",
-      "tests/team-activity.test.tsx"
+      "tests/team-activity.test.tsx",
+      "tests/repository-worktrees.test.tsx"
     ],
     "workflow:unit": [
       "tests/workflow-utils.test.ts"
