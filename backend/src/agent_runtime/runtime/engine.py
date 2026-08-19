@@ -273,13 +273,17 @@ class RunKernel:
     ) -> TeamMessage:
         """Inject user input into this Run for delivery at the next safe checkpoint."""
 
-        return await self._send_team_message(
-            sender_type="user",
-            sender_id="user",
-            content=content,
-            recipient_agent_ids=target_agent_ids,
-            expects_reply=False,
-        )
+        try:
+            return await self._send_team_message(
+                sender_type="user",
+                sender_id="user",
+                content=content,
+                recipient_agent_ids=target_agent_ids,
+                expects_reply=False,
+            )
+        except CollaborationProtocolError as exc:
+            await self._record_collaboration_rejection("user:user", str(exc))
+            raise
 
     async def send_message(
         self,
@@ -305,9 +309,13 @@ class RunKernel:
             )
         except CollaborationMessageBudgetExceeded:
             self._collaboration_failure_reason = "collaboration_message_budget_exhausted"
+            await self._record_collaboration_rejection(
+                f"agent:{sender_agent_id}", "collaboration message budget exhausted"
+            )
             raise
-        except CollaborationProtocolError:
+        except CollaborationProtocolError as exc:
             self._collaboration_failure_reason = "collaboration_protocol_error"
+            await self._record_collaboration_rejection(f"agent:{sender_agent_id}", str(exc))
             raise
 
     async def resolve_thread(
@@ -535,6 +543,18 @@ class RunKernel:
                 await self.event_sink.emit(event)
             except Exception:
                 pass
+
+    async def _record_collaboration_rejection(self, source: str, reason: str) -> None:
+        if not self._journal_created or self.state.is_terminal:
+            return
+        try:
+            await self._emit(
+                "collaboration.rejected",
+                {"reason": reason[:500]},
+                source=source,
+            )
+        except Exception:
+            pass
 
     async def cancel(self, reason: str) -> RunResult:
         if self.state.is_terminal:

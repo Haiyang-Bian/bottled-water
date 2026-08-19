@@ -42,8 +42,14 @@ class CreateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
     category: str | None = None
     folder: str | None = None
     remark: str | None = None
-    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent"] | None = None
+    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent", "collaborative"] | None = None
     workflow_enabled: bool | None = None
+    summary_agent_id: str | None = None
+    live_user_input: bool = True
+    max_collaboration_messages: int = Field(default=64, ge=1, le=512)
+    max_agent_turns: int = Field(default=12, ge=1, le=100)
+    max_open_threads: int = Field(default=24, ge=1, le=128)
+    max_team_message_chars: int = Field(default=8_000, ge=100, le=32_000)
 
 
 class UpdateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
@@ -55,8 +61,14 @@ class UpdateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
     folder: str | None = None
     pinned: bool | None = None
     archived: bool | None = None
-    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent"] | None = None
+    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent", "collaborative"] | None = None
     workflow_enabled: bool | None = None
+    summary_agent_id: str | None = None
+    live_user_input: bool | None = None
+    max_collaboration_messages: int | None = Field(default=None, ge=1, le=512)
+    max_agent_turns: int | None = Field(default=None, ge=1, le=100)
+    max_open_threads: int | None = Field(default=None, ge=1, le=128)
+    max_team_message_chars: int | None = Field(default=None, ge=100, le=32_000)
 
 
 class SendMessageRequest(BaseModel):
@@ -557,7 +569,7 @@ class SendMessagePayload(BaseModel):
     reply_to_message_id: str | None = None
     quotedMessageId: str | None = None
     thinking_enabled: bool = False
-    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent"] | None = None
+    scheduling_strategy: Literal["workflow", "tech_lead", "single_agent", "collaborative"] | None = None
     regenerate_message_id: str | None = None
     model_config_id: str | None = None  # 用户选择的模型配置ID
 

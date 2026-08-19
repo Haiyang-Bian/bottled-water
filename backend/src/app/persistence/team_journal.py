@@ -144,26 +144,41 @@ class SQLTeamJournal:
         if limit <= 0:
             raise ValueError("limit must be positive")
         async with self._session_factory() as db:
-            settings = await db.get(ConversationTeamSettings, context_scope_id)
-            rows = list(
-                (
-                    await db.scalars(
-                        select(RuntimeTeamMessage)
-                        .where(
-                            RuntimeTeamMessage.conversation_id == context_scope_id,
-                            RuntimeTeamMessage.sequence > after_sequence,
-                        )
-                        .order_by(RuntimeTeamMessage.sequence)
-                        .limit(limit)
+            return await self.read_messages_with_session(
+                db,
+                context_scope_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+
+    @staticmethod
+    async def read_messages_with_session(
+        db,
+        context_scope_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 200,
+    ) -> TeamMessagePage:  # noqa: ANN001
+        settings = await db.get(ConversationTeamSettings, context_scope_id)
+        rows = list(
+            (
+                await db.scalars(
+                    select(RuntimeTeamMessage)
+                    .where(
+                        RuntimeTeamMessage.conversation_id == context_scope_id,
+                        RuntimeTeamMessage.sequence > after_sequence,
                     )
-                ).all()
-            )
-            items = tuple(_message_from_row(row) for row in rows)
-            return TeamMessagePage(
-                items=items,
-                next_sequence=items[-1].sequence if items else after_sequence,
-                last_sequence=settings.last_message_sequence if settings else 0,
-            )
+                    .order_by(RuntimeTeamMessage.sequence)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        items = tuple(_message_from_row(row) for row in rows)
+        return TeamMessagePage(
+            items=items,
+            next_sequence=items[-1].sequence if items else after_sequence,
+            last_sequence=settings.last_message_sequence if settings else 0,
+        )
 
     @staticmethod
     async def _locked_settings(db, conversation_id: str) -> ConversationTeamSettings:  # noqa: ANN001

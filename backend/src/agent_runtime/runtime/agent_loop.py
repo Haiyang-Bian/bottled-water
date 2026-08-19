@@ -315,7 +315,14 @@ class AgentLoop:
             all_tools = await active_tool_executor.list_tools()
             if self.agent.tools:
                 allowed = set(self.agent.tools)
-                tools = [t for t in all_tools if t.get("function", {}).get("name") in allowed]
+                tools = [
+                    tool
+                    for tool in all_tools
+                    if (
+                        tool.get("function", {}).get("name") in allowed
+                        or str(tool.get("function", {}).get("name") or "").startswith("team.")
+                    )
+                ]
             else:
                 tools = all_tools
             tools = self._filter_tools_for_task(task, tools)

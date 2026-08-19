@@ -19,6 +19,7 @@ from agent_runtime.core.protocol import SCHEDULER_SUMMARY
 from agent_runtime.core.types import Event as RuntimeEvent
 from app.events import WebSocketSink
 from app.persistence.runtime_journal import SQLRunJournal
+from app.persistence.team_journal import SQLTeamJournal
 from db.models import (
     Conversation,
     ConversationParticipant,
@@ -79,6 +80,7 @@ class ConversationRunManager:
         self._queued_inputs: dict[str, list[dict[str, Any]]] = {}
         self._pending_preview_message_ids: dict[str, list[str]] = {}
         self._generation_thinking_enabled: dict[str, bool] = {}
+        self._live_user_message_ids: dict[str, set[str]] = {}
         self._session_factory = session_factory or AsyncSessionLocal
 
     @classmethod
@@ -192,6 +194,7 @@ class ConversationRunManager:
             self._pending_preview_message_ids.pop(generation_id, None)
             self._generation_thinking_enabled.pop(generation_id, None)
             self._active_user_message_ids.pop(conversation_id, None)
+            self._live_user_message_ids.pop(conversation_id, None)
             self._queued_inputs.pop(conversation_id, None)
         await self._publish_conversation_snapshot(conversation_id)
         if recovered_message is not None:
@@ -273,6 +276,9 @@ class ConversationRunManager:
             context_metadata["mentioned_agent_ids"] = context_metadata.get(
                 "mention_target_agent_ids", []
             )
+            if binding.scheduling_strategy == "collaborative":
+                context_metadata["collaboration_enabled"] = True
+                context_metadata.update(binding.team_settings or {})
             handle = await binding.engine.start(
                 RunRequest(
                     run_id=generation_id,
@@ -443,7 +449,34 @@ class ConversationRunManager:
 
             task = self._running_tasks.get(conversation_id)
             if task and not task.done():
-                logger.info("User input queued", conversation_id=conversation_id, content_preview=content[:50])
+                binding = self._bindings[conversation_id]
+                live_enabled = bool((binding.team_settings or {}).get("live_user_input", True))
+                handle = self._active_handles.get(conversation_id)
+                if binding.scheduling_strategy == "collaborative" and live_enabled and handle:
+                    try:
+                        await handle.post_message(
+                            runtime_content or content,
+                            target_agent_ids=tuple(_mention_target_agent_ids(agent_mentions)),
+                        )
+                    except Exception:
+                        logger.info(
+                            "Live user input raced with Run completion; input queued",
+                            conversation_id=conversation_id,
+                        )
+                    else:
+                        if user_message_key:
+                            self._live_user_message_ids.setdefault(conversation_id, set()).add(
+                                user_message_key
+                            )
+                        logger.info(
+                            "User input injected into active collaborative Run",
+                            conversation_id=conversation_id,
+                            content_preview=content[:50],
+                        )
+                        return
+                logger.info(
+                    "User input queued", conversation_id=conversation_id, content_preview=content[:50]
+                )
                 self._queued_inputs.setdefault(conversation_id, []).append(
                     {
                         "content": content,
@@ -486,6 +519,7 @@ class ConversationRunManager:
         if task and not task.done():
             self._queued_inputs.pop(conversation_id, None)
             self._active_user_message_ids.pop(conversation_id, None)
+            self._live_user_message_ids.pop(conversation_id, None)
             handle = self._active_handles.get(conversation_id)
             if handle:
                 await handle.cancel("user_cancelled")
@@ -537,6 +571,9 @@ class ConversationRunManager:
         journal = SQLRunJournal(self._session_factory)
         await self._catch_up_conversation_projections(conversation_id, journal)
         recovered_ids = await journal.recover_process_lost(conversation_id)
+        team_journal = SQLTeamJournal(self._session_factory)
+        for recovered_run_id in recovered_ids:
+            await team_journal.interrupt_run(recovered_run_id)
         active_run_id = str(conversation.active_run_id or "")
         if not recovered_ids and active_run_id:
             try:
@@ -568,6 +605,7 @@ class ConversationRunManager:
         self._pending_preview_message_ids.pop(generation_id, None)
         self._generation_thinking_enabled.pop(generation_id, None)
         self._active_user_message_ids.pop(conversation_id, None)
+        self._live_user_message_ids.pop(conversation_id, None)
         self._queued_inputs.pop(conversation_id, None)
         logger.info(
             "Recovered abandoned generation",
@@ -602,6 +640,7 @@ class ConversationRunManager:
             return
         self._generation_ids.pop(conversation_id, None)
         self._active_user_message_ids.pop(conversation_id, None)
+        self._live_user_message_ids.pop(conversation_id, None)
         next_input = self._dequeue_next_input(conversation_id)
         try:
             asyncio.create_task(
@@ -633,6 +672,7 @@ class ConversationRunManager:
             self._generation_thinking_enabled.pop(generation_id, None)
         self._queued_inputs.pop(conversation_id, None)
         self._active_user_message_ids.pop(conversation_id, None)
+        self._live_user_message_ids.pop(conversation_id, None)
         self._locks.pop(conversation_id, None)
 
         if binding:
@@ -688,6 +728,8 @@ class ConversationRunManager:
     ) -> bool:
         active_user_message_id = self._active_user_message_ids.get(conversation_id)
         if active_user_message_id == user_message_id:
+            return True
+        if user_message_id in self._live_user_message_ids.get(conversation_id, set()):
             return True
         if self._queued_user_message_exists(conversation_id, user_message_id):
             return True

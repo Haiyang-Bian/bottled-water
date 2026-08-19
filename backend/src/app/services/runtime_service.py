@@ -20,8 +20,10 @@ from agent_runtime import (
     RunRequest,
     AgentContextBuildRequest,
     AgentContextBuildResult,
+    CollaborativeTeamPolicy,
     ToolCall,
     RuntimeEngine,
+    RuntimeLimits,
     SingleAgentPolicy,
     WorkflowPolicy,
 )
@@ -31,9 +33,10 @@ from agent_runtime.workflow.replanner import sanitize_workflow
 from model_provider import create_provider
 from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatResponse, StreamChunk
 
-from db.models import Agent, Artifact, Conversation, Message, User
+from db.models import Agent, Artifact, Conversation, ConversationTeamSettings, Message, User
 from db.session import AsyncSessionLocal
 from app.persistence.runtime_journal import SQLRunJournal
+from app.persistence.team_journal import SQLTeamJournal
 from app.persistence.runtime_store import SQLContextStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
@@ -57,6 +60,7 @@ class RuntimeBinding:
     agents: tuple[AgentConfig, ...]
     policy_factory: Callable[[], Any]
     scheduling_strategy: str
+    team_settings: dict[str, Any] | None = None
 
     def create_policy(self):
         return self.policy_factory()
@@ -259,6 +263,29 @@ class OrchestratorService:
             for agent in agents
         )
         strategy = resolve_scheduling_strategy(conversation, scheduling_strategy)
+        stored_team_settings = await db.get(ConversationTeamSettings, str(conversation.id))
+        team_settings = {
+            "summary_agent_id": (
+                str(stored_team_settings.summary_agent_id)
+                if stored_team_settings and stored_team_settings.summary_agent_id
+                else None
+            ),
+            "live_user_input": (
+                bool(stored_team_settings.live_user_input) if stored_team_settings else True
+            ),
+            "max_collaboration_messages": (
+                stored_team_settings.max_messages if stored_team_settings else 64
+            ),
+            "max_agent_turns": (
+                stored_team_settings.max_agent_turns if stored_team_settings else 12
+            ),
+            "max_open_threads": (
+                stored_team_settings.max_open_threads if stored_team_settings else 24
+            ),
+            "max_team_message_chars": (
+                stored_team_settings.max_message_chars if stored_team_settings else 8_000
+            ),
+        }
         if strategy == "workflow":
             from agent_runtime.workflow.replanner import _fallback_workflow
 
@@ -288,6 +315,9 @@ class OrchestratorService:
                 return WorkflowPolicy(workflow=workflow, agents=agent_configs, input="")
 
             policy_agents = policy_factory().agents
+        elif strategy == "collaborative" and len(agent_configs) > 1:
+            policy_factory = CollaborativeTeamPolicy
+            policy_agents = agent_configs
         elif len(agent_configs) == 1:
             policy_factory = SingleAgentPolicy
             policy_agents = agent_configs
@@ -316,12 +346,20 @@ class OrchestratorService:
             ),
             context_store=SQLContextStore(session_factory),
             run_journal=SQLRunJournal(session_factory),
+            team_journal=SQLTeamJournal(session_factory),
+            limits=RuntimeLimits(
+                max_collaboration_messages=team_settings["max_collaboration_messages"],
+                max_agent_turns=team_settings["max_agent_turns"],
+                max_open_threads=team_settings["max_open_threads"],
+                max_team_message_chars=team_settings["max_team_message_chars"],
+            ),
         )
         return RuntimeBinding(
             engine=engine,
             agents=policy_agents,
             policy_factory=policy_factory,
             scheduling_strategy=strategy,
+            team_settings=team_settings,
         )
 
     @staticmethod
