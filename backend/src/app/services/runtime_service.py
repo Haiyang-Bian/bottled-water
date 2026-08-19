@@ -37,6 +37,7 @@ from db.models import Agent, Artifact, Conversation, ConversationTeamSettings, M
 from db.session import AsyncSessionLocal
 from app.persistence.runtime_journal import SQLRunJournal
 from app.persistence.team_journal import SQLTeamJournal
+from app.services.execution_roots import SQLExecutionRootPort
 from app.persistence.runtime_store import SQLContextStore
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
@@ -432,6 +433,9 @@ class _ToolExecutorAdapter(ToolExecutor):
         self.user_id = str(user.id)
         self.conversation_id = str(conversation.id)
         self.agent_ids = set(agents_by_id or {agent.id: agent})
+        self.execution_root_port = (
+            SQLExecutionRootPort(AsyncSessionLocal) if isinstance(db, AsyncSession) else None
+        )
         self._test_db_override = None if isinstance(db, AsyncSession) else db
         self._test_agent = agent
         self._test_user = user
@@ -443,6 +447,7 @@ class _ToolExecutorAdapter(ToolExecutor):
         clone.user_id = self.user_id
         clone.conversation_id = self.conversation_id
         clone.agent_ids = self.agent_ids
+        clone.execution_root_port = self.execution_root_port
         clone._test_db_override = self._test_db_override
         clone._test_agent = self._test_agent
         clone._test_user = self._test_user
@@ -461,6 +466,12 @@ class _ToolExecutorAdapter(ToolExecutor):
 
     async def execute(self, tool_call: ToolCall) -> Any:
         from app.services.agents.async_tool_loop import execute_tool_by_name
+        execution_root = (
+            await self.execution_root_port.resolve(self.conversation_id, self.agent_id)
+            if self.execution_root_port is not None
+            else None
+        )
+        arguments = {**tool_call.parameters, "agent_id": self.agent_id}
         if self._test_db_override is not None:
             result = await execute_tool_by_name(
                 self._test_db_override,
@@ -468,7 +479,8 @@ class _ToolExecutorAdapter(ToolExecutor):
                 user=self._test_user,
                 conversation=self._test_conversation,
                 tool_name=tool_call.tool_name,
-                arguments=tool_call.parameters,
+                arguments=arguments,
+                execution_root=execution_root,
             )
             await self._publish_artifact_messages(self._test_db_override, result)
             return result
@@ -484,7 +496,8 @@ class _ToolExecutorAdapter(ToolExecutor):
                 user=user,
                 conversation=conversation,
                 tool_name=tool_call.tool_name,
-                arguments=tool_call.parameters,
+                arguments=arguments,
+                execution_root=execution_root,
             )
             await self._publish_artifact_messages(db, result)
             return result

@@ -12,6 +12,7 @@ from app.services.tools.custom import invoke_custom_tool
 from app.services.tools.permissions import canonical_tool_name, check_user_tool_permissions
 from app.services.tools.runs import finish_tool_invocation, start_tool_invocation
 from app.services.tools.schema import validate_tool_arguments
+from app.services.tools.execution_root import TrustedExecutionRoot
 
 
 def invoke_tool(
@@ -26,6 +27,9 @@ def invoke_tool(
     original_tool_name = str(tool_id_or_name)
     tool_id_or_name = canonical_tool_name(tool_id_or_name)
     arguments = _legacy_alias_arguments(original_tool_name, tool_id_or_name, arguments)
+    execution_root = arguments.pop("_trusted_execution_root", None)
+    if not isinstance(execution_root, TrustedExecutionRoot):
+        execution_root = None
     conversation_id = str(arguments.get("conversation_id") or "") or None
     tool = get_tool_definition(db, user, tool_id_or_name)
     validate_tool_arguments(tool.input_schema, arguments, tool_name=tool.name)
@@ -40,7 +44,10 @@ def invoke_tool(
         conversation_id=conversation_id,
     )
     try:
-        result = _dispatch_tool(db, user, tool, arguments, conversation_id)
+        dispatch_arguments = dict(arguments)
+        if execution_root is not None:
+            dispatch_arguments["_trusted_execution_root"] = execution_root
+        result = _dispatch_tool(db, user, tool, dispatch_arguments, conversation_id)
         status = result.get("status") or result.get("result", {}).get("status") or "succeeded"
         finish_tool_invocation(invocation, started, status=status, result=result)
     except Exception as exc:
