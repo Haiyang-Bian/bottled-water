@@ -346,3 +346,154 @@ async def test_agent_message_budget_has_stable_failure_reason():
 
     assert result.state is RunState.FAILED
     assert result.reason_code == "collaboration_message_budget_exhausted"
+
+
+class RequestsAnotherTurnExecutor:
+    async def execute(self, request, *, emit, cancellation, lease):
+        if request.agent.id == "author" and not request.inbox:
+            await request.team_messenger.send_message(
+                sender_agent_id="author",
+                recipient_agent_ids=("reviewer",),
+                content="Please take another turn.",
+            )
+        return _result(request, "done")
+
+
+async def test_agent_turn_budget_has_stable_failure_reason():
+    engine = RuntimeEngine(
+        agent_executor=RequestsAnotherTurnExecutor(),
+        limits=RuntimeLimits(max_agent_turns=1),
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="turn-budget-run",
+            context_scope_id="team-conversation",
+            input="Discuss.",
+            agents=(_agent("author"), _agent("reviewer")),
+            policy=CollaborativeTeamPolicy(),
+            metadata={"collaboration_enabled": True},
+        )
+    )
+
+    result = await handle.result()
+
+    assert result.state is RunState.FAILED
+    assert result.reason_code == "agent_turn_budget_exhausted"
+
+
+class OpensPastThreadBudgetExecutor:
+    async def execute(self, request, *, emit, cancellation, lease):
+        if request.agent.id == "author":
+            await request.team_messenger.send_message(
+                sender_agent_id="author",
+                recipient_agent_ids=("reviewer",),
+                content="First question.",
+                expects_reply=True,
+            )
+            await request.team_messenger.send_message(
+                sender_agent_id="author",
+                recipient_agent_ids=("reviewer",),
+                content="Second independent question.",
+                expects_reply=True,
+            )
+        return _result(request, "done")
+
+
+async def test_open_thread_budget_is_rejected_as_protocol_failure():
+    engine = RuntimeEngine(
+        agent_executor=OpensPastThreadBudgetExecutor(),
+        limits=RuntimeLimits(max_open_threads=1),
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="thread-budget-run",
+            context_scope_id="team-conversation",
+            input="Discuss.",
+            agents=(_agent("author"), _agent("reviewer")),
+            policy=CollaborativeTeamPolicy(),
+            metadata={"collaboration_enabled": True},
+        )
+    )
+
+    result = await handle.result()
+
+    assert result.state is RunState.FAILED
+    assert result.reason_code == "collaboration_protocol_error"
+
+
+class SendsOversizedMessageExecutor:
+    async def execute(self, request, *, emit, cancellation, lease):
+        if request.agent.id == "author":
+            await request.team_messenger.send_message(
+                sender_agent_id="author",
+                recipient_agent_ids=("reviewer",),
+                content="too long",
+            )
+        return _result(request, "done")
+
+
+async def test_message_size_limit_is_rejected_as_protocol_failure():
+    engine = RuntimeEngine(
+        agent_executor=SendsOversizedMessageExecutor(),
+        limits=RuntimeLimits(max_team_message_chars=4),
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="message-size-run",
+            context_scope_id="team-conversation",
+            input="Discuss.",
+            agents=(_agent("author"), _agent("reviewer")),
+            policy=CollaborativeTeamPolicy(),
+            metadata={"collaboration_enabled": True},
+        )
+    )
+
+    result = await handle.result()
+
+    assert result.state is RunState.FAILED
+    assert result.reason_code == "collaboration_protocol_error"
+
+
+class PendingMessageExecutor:
+    def __init__(self) -> None:
+        self.sent = asyncio.Event()
+
+    async def execute(self, request, *, emit, cancellation, lease):
+        if request.agent.id == "author":
+            await request.team_messenger.send_message(
+                sender_agent_id="author",
+                recipient_agent_ids=("reviewer",),
+                content="This must not leak into a later Run.",
+            )
+            self.sent.set()
+        await cancellation.wait()
+        return _result(request, "cancelled")
+
+
+async def test_cancel_marks_unconsumed_messages_interrupted():
+    executor = PendingMessageExecutor()
+    run_journal = InMemoryRunJournal()
+    team_journal = InMemoryTeamJournal(run_journal)
+    engine = RuntimeEngine(
+        agent_executor=executor,
+        run_journal=run_journal,
+        team_journal=team_journal,
+    )
+    handle = await engine.start(
+        RunRequest(
+            run_id="cancel-team-run",
+            context_scope_id="team-conversation",
+            input="Discuss.",
+            agents=(_agent("author"), _agent("reviewer")),
+            policy=CollaborativeTeamPolicy(),
+            metadata={"collaboration_enabled": True},
+        )
+    )
+    await executor.sent.wait()
+
+    result = await handle.cancel("user_cancelled")
+    messages = await team_journal.read_messages("team-conversation")
+
+    assert result.state is RunState.CANCELLED
+    assert len(messages.items) == 1
+    assert messages.items[0].status == "interrupted"
