@@ -333,6 +333,10 @@ def test_runtime_limits_have_safe_defaults_and_reject_zero():
         max_total_tokens=500_000,
         max_no_progress=4,
         cancellation_grace_seconds=5,
+        max_collaboration_messages=64,
+        max_agent_turns=12,
+        max_open_threads=24,
+        max_team_message_chars=8_000,
     )
     with pytest.raises(ValueError):
         RuntimeLimits(max_decisions=0)

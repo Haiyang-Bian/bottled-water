@@ -17,6 +17,8 @@ from .run_types import (
     RunResult,
     RunSnapshot,
     SchedulingProposal,
+    TeamMessage,
+    TeamMessagePage,
 )
 
 
@@ -42,6 +44,45 @@ class RunJournal(Protocol):
     async def read_events(
         self, run_id: str, *, after_sequence: int = 0, limit: int = 200
     ) -> EventPage: ...
+
+
+class TeamJournal(Protocol):
+    """Atomic storage for collaboration messages and their Runtime events."""
+
+    async def append_message(
+        self, message: TeamMessage, event: EventEnvelope
+    ) -> tuple[TeamMessage, EventEnvelope]: ...
+
+    async def mark_consumed(
+        self, message_id: str, agent_id: str, event: EventEnvelope
+    ) -> tuple[TeamMessage, EventEnvelope]: ...
+
+    async def resolve_thread(
+        self, thread_id: str, resolved_by: str, event: EventEnvelope
+    ) -> EventEnvelope: ...
+
+    async def interrupt_run(self, run_id: str) -> int: ...
+
+    async def read_messages(
+        self, context_scope_id: str, *, after_sequence: int = 0, limit: int = 200
+    ) -> TeamMessagePage: ...
+
+
+class TeamMessenger(Protocol):
+    async def send_message(
+        self,
+        *,
+        sender_agent_id: str,
+        content: str,
+        recipient_agent_ids: tuple[str, ...] = (),
+        thread_id: str | None = None,
+        reply_to_message_id: str | None = None,
+        expects_reply: bool = False,
+    ) -> TeamMessage: ...
+
+    async def resolve_thread(
+        self, *, agent_id: str, thread_id: str, conclusion: str
+    ) -> None: ...
 
 
 class SchedulerPolicy(Protocol):
@@ -74,3 +115,7 @@ class RunHandleProtocol(Protocol):
     async def result(self) -> RunResult: ...
 
     async def cancel(self, reason: str = "user_cancelled") -> RunResult: ...
+
+    async def post_message(
+        self, content: str, *, target_agent_ids: tuple[str, ...] = ()
+    ) -> TeamMessage: ...

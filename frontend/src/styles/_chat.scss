@@ -886,3 +886,26 @@
     transform: scale(1);
   }
 }
+.team-activity {
+  margin: 0 20px 4px;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #e5e7eb);
+}
+
+.team-activity-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.team-activity-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+}
+
+.team-activity-item:first-child {
+  border-top: 0;
+}
+
+.team-activity-content {
+  margin: 6px 0 0 !important;
+  white-space: pre-wrap;
+}

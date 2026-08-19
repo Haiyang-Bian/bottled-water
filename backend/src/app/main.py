@@ -16,6 +16,7 @@ from app.core.logging_config import configure_logging
 from app.core.response import fail, ok
 from app.services.runtime.generation_records import reconcile_terminal_run_records
 from app.persistence.runtime_journal import SQLRunJournal
+from app.persistence.team_journal import SQLTeamJournal
 from app.services.admin_bootstrap import bootstrap_admin_from_settings
 from app.services.desktop_identity import ensure_desktop_user
 from app.services.system_seed import ensure_system_data
@@ -35,6 +36,9 @@ async def lifespan(_app: FastAPI):
         await bootstrap_admin_from_settings(db, settings)
         try:
             recovered_run_ids = await SQLRunJournal().recover_process_lost()
+            team_journal = SQLTeamJournal()
+            for recovered_run_id in recovered_run_ids:
+                await team_journal.interrupt_run(recovered_run_id)
             recovered = await reconcile_terminal_run_records(db, recovered_run_ids)
             if recovered:
                 logger.info("Recovered abandoned generations", count=len(recovered))

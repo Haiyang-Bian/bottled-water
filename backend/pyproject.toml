@@ -62,6 +62,8 @@ markers = [
     "agents: agent behavior and orchestration tests",
     "runtime: scheduling, event bus, and runtime infrastructure tests",
     "desktop: packaged desktop runtime and sidecar tests",
+    "collaboration: peer messaging and collaborative scheduling tests",
+    "worktrees: repository isolation and safe Git collaboration tests",
 ]
 
 log_cli = true

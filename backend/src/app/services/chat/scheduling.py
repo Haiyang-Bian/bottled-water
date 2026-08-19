@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-SUPPORTED_SCHEDULING_STRATEGIES = {"workflow", "tech_lead", "single_agent"}
+SUPPORTED_SCHEDULING_STRATEGIES = {"workflow", "tech_lead", "single_agent", "collaborative"}
 DEFAULT_SCHEDULING_STRATEGY = "tech_lead"
 
 
@@ -87,7 +87,7 @@ def persist_scheduling_strategy(conversation: Any, strategy: str) -> bool:
     if normalized == "workflow":
         changed = changed or not bool(extra.get("workflow_enabled"))
         extra["workflow_enabled"] = True
-    elif normalized == "tech_lead":
+    elif normalized in {"tech_lead", "collaborative"}:
         changed = changed or bool(extra.get("workflow_enabled"))
         extra["workflow_enabled"] = False
     else:

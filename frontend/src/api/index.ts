@@ -31,6 +31,7 @@ export {
   deleteConversation,
   addParticipants,
   removeParticipant,
+  teamMessages,
 } from "./conversation";
 
 export {

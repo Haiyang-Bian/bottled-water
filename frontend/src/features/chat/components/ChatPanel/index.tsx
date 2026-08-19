@@ -28,6 +28,7 @@ import type { UploadProps } from "antd";
 import { api } from "@/api";
 import { MessageBubble } from "@/features/chat/components/MessageBubble";
 import { RuntimeDecisionStrip } from "@/features/chat/components/ChatPanel/RuntimeDecisionStrip";
+import { TeamActivity } from "@/features/chat/components/ChatPanel/TeamActivity";
 import {
   displayNodeName,
   displayNodePath,
@@ -721,6 +722,7 @@ export function ChatPanel({
   return (
     <Content className="chat-panel">
       <RuntimeDecisionStrip conversation={active} />
+      <TeamActivity conversation={active} />
       <div ref={messageListRef} className="message-list">
         {loading ? (
           <Spin />

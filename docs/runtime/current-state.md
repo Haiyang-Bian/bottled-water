@@ -1,6 +1,6 @@
 # Runtime 当前实现对照
 
-> 快照日期：2026-08-13。本文只描述当前分支中可由源码和测试验证的状态，不构成产品能力声明。
+> 快照日期：2026-08-19。本文只描述当前分支中可由源码和测试验证的状态，不构成产品能力声明。
 
 状态仅使用：`已实现`、`部分实现`、`未实现`、`遗留路径`。
 
@@ -11,7 +11,11 @@
 | Run 拥有 Actor Task 与 Mailbox | [`AgentActor`](../../backend/src/agent_runtime/runtime/agent_actor.py) 按 Run 创建，控制提案经 [`Mailbox`](../../backend/src/agent_runtime/runtime/mailbox.py) 投递 | 已实现 | Actor 控制仍是协作式；阻塞本地代码无法获得操作系统级抢占 |
 | wall/idle/决策/Token/无进展预算 | [`RunWatchdog`](../../backend/src/agent_runtime/runtime/run_watchdog.py) 使用单调时钟，Kernel 统一失败收敛 | 已实现 | 暂未引入费用预算或租户级配额 |
 | Provider 用量与流式硬上限 | [`AgentLoopExecutor`](../../backend/src/agent_runtime/runtime/agent_executor.py) 汇总 usage；[`streaming.py`](../../backend/src/model_provider/core/streaming.py) 主动关闭超限流 | 已实现 | Provider 未返回 usage 时只能估算，精度取决于 tokenizer |
-| 单 Agent、Workflow、Team Lead 共用 Policy 接口 | [`policies.py`](../../backend/src/agent_runtime/strategies/policies.py) 实现三类 `SchedulerPolicy`；产品规则位于 [`AgentHubTeamLeadPolicy`](../../backend/src/app/services/runtime/policies.py) | 已实现 | Workflow 遍历器内部仍保留可变游标，尚未做到事件回放重建 |
+| 单 Agent、Workflow、Team Lead、平权团队共用 Policy 接口 | [`policies.py`](../../backend/src/agent_runtime/strategies/policies.py) 与 [`CollaborativeTeamPolicy`](../../backend/src/agent_runtime/strategies/collaborative.py) 实现同一 `SchedulerPolicy`；产品规则位于应用层 | 已实现 | Workflow 遍历器内部仍保留可变游标，尚未做到事件回放重建 |
+| Agent 私信、广播、回复与讨论线程 | [`TeamMessenger`](../../backend/src/agent_runtime/core/ports.py)、[`RunKernel`](../../backend/src/agent_runtime/runtime/engine.py) 和 [`TeamJournal`](../../backend/src/agent_runtime/runtime/team_collaboration.py) 提供主动共享、目标收件箱与显式结论 | 已实现 | V1 仅限同一 Conversation；外部 CLI Agent 仍只保留 Port 接入边界 |
+| 团队消息持久化和用户审计 | [`SQLTeamJournal`](../../backend/src/app/persistence/team_journal.py) 原子保存加密消息与 Runtime Event；团队消息 API 和前端团队动态按序补拉 | 已实现 | 尚无跨进程实时广播；团队动态当前是只读审计视图 |
+| 团队预算与非正常中断 | Kernel 限制 64 条 Agent 消息、每 Agent 12 轮、24 个开放线程和单条 8,000 字符；取消、失败和进程丢失将待处理消息标记为 `interrupted` | 已实现 | 技术预算可由 Conversation 设置调整，但尚无租户级总配额 |
+| 平权职责与最终汇总 | Kernel 不保存角色枚举；`summary_agent_id` 仅获得一次脱敏团队记录和最终汇总调用 | 已实现 | 提示词质量和工具授权由 AgentHub 配置负责，不属于 Kernel 判定 |
 | 版本化 Blackboard 与跨 Run Context CAS | [`VersionedBlackboard`](../../backend/src/agent_runtime/context/scope_store.py) 和 [`SQLContextStore`](../../backend/src/app/persistence/runtime_store.py) 检查期望版本 | 已实现 | ContextState 当前按 Conversation 建模，尚未抽象其他 Scope 类型 |
 | 结构化长期 AgentMemory | `AgentLoopExecutor` 只提交摘要、完成任务和阻塞项；[`runtime_context_states`](../../backend/src/db/models/runtime.py) 持久化结构化值 | 已实现 | facts 与 output_refs 需要更多 Adapter 生产调用；不支持中途 PrivateContext 检查点 |
 | 取消传播和迟到写隔离 | [`CancellationScope`、`RunLease`](../../backend/src/agent_runtime/runtime/cancellation.py) 与 [`adapter_isolation.py`](../../backend/src/agent_runtime/runtime/adapter_isolation.py) | 部分实现 | Model/Tool Adapter 尚未全部声明可终止边界；纯同步阻塞实现仍需子进程隔离 |
@@ -36,3 +40,4 @@
 2. 增加日志压缩、保留策略和跨进程实时广播；现阶段不自动删除 Journal。
 3. 引入 Run 检查点和可恢复 PrivateContext；在此之前保持 `process_lost` 失败语义。
 4. 继续将 AgentLoop 中的产物、全栈和部署逻辑迁往 AgentHub Policy/Tool。
+5. 为 Agent 提供 Conversation 绑定仓库、独立执行根和安全 Git 协作工具。

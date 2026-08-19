@@ -36,6 +36,10 @@ class RuntimeLimits:
     max_total_tokens: int = 500_000
     max_no_progress: int = 4
     cancellation_grace_seconds: float = 5.0
+    max_collaboration_messages: int = 64
+    max_agent_turns: int = 12
+    max_open_threads: int = 24
+    max_team_message_chars: int = 8_000
 
     def __post_init__(self) -> None:
         values = {
@@ -45,6 +49,10 @@ class RuntimeLimits:
             "max_total_tokens": self.max_total_tokens,
             "max_no_progress": self.max_no_progress,
             "cancellation_grace_seconds": self.cancellation_grace_seconds,
+            "max_collaboration_messages": self.max_collaboration_messages,
+            "max_agent_turns": self.max_agent_turns,
+            "max_open_threads": self.max_open_threads,
+            "max_team_message_chars": self.max_team_message_chars,
         }
         invalid = [name for name, value in values.items() if value <= 0]
         if invalid:
@@ -129,6 +137,49 @@ class EventPage:
 
 
 @dataclass(frozen=True)
+class TeamMessage:
+    """One auditable message explicitly shared inside a team Conversation."""
+
+    run_id: str
+    context_scope_id: str
+    sender_type: str
+    sender_id: str
+    content: str
+    recipient_agent_ids: tuple[str, ...] = ()
+    channel: str = "broadcast"
+    thread_id: str | None = None
+    reply_to_message_id: str | None = None
+    expects_reply: bool = False
+    sequence: int = 0
+    status: str = "pending"
+    consumed_by: tuple[str, ...] = ()
+    message_id: str = field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = field(default_factory=utc_now)
+    resolved_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class TeamMessagePage:
+    items: tuple[TeamMessage, ...]
+    next_sequence: int
+    last_sequence: int
+
+
+@dataclass(frozen=True)
+class CollaborationSnapshot:
+    """Read-only scheduling view of the current collaboration protocol state."""
+
+    unread_by_agent: dict[str, tuple[TeamMessage, ...]] = field(default_factory=dict)
+    open_thread_ids: tuple[str, ...] = ()
+    agent_turn_counts: dict[str, int] = field(default_factory=dict)
+    message_count: int = 0
+    message_budget_remaining: int = 0
+    summary_agent_id: str | None = None
+    summary_scheduled: bool = False
+    summary_completed: bool = False
+
+
+@dataclass(frozen=True)
 class SchedulingProposal:
     action: str
     target_agent_ids: tuple[str, ...] = ()
@@ -148,6 +199,7 @@ class PolicySnapshot:
     reports: tuple[AgentReport, ...] = ()
     decision_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    collaboration: CollaborationSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +229,8 @@ class AgentExecutionRequest:
     input: str
     context: ContextSnapshot
     token_budget_remaining: int
+    inbox: tuple[TeamMessage, ...] = ()
+    team_messenger: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

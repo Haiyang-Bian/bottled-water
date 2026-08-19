@@ -1,5 +1,18 @@
 import { useEffect, useMemo } from "react";
-import { App as AntApp, Button, Drawer, Form, Input, Select, Space, Tag, Typography } from "antd";
+import {
+  App as AntApp,
+  Button,
+  Divider,
+  Drawer,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
 import { mergeConversationCategories } from "@/lib/conversation";
 import type { Agent, Conversation } from "@/types";
 
@@ -51,13 +64,27 @@ export function ConversationSettingsDrawer({
       conversation_number: active?.conversation_number || active?.group_number || "",
       folder: active?.folder || active?.category || "Default",
       remark: active?.remark || "",
+      scheduling_strategy: active?.scheduling_strategy || (isGroup ? "collaborative" : "single_agent"),
+      summary_agent_id: active?.team_settings?.summary_agent_id || undefined,
+      live_user_input: active?.team_settings?.live_user_input ?? true,
+      max_collaboration_messages: active?.team_settings?.max_collaboration_messages ?? 64,
+      max_agent_turns: active?.team_settings?.max_agent_turns ?? 12,
+      max_open_threads: active?.team_settings?.max_open_threads ?? 24,
+      max_team_message_chars: active?.team_settings?.max_team_message_chars ?? 8000,
     });
-  }, [active, form, open]);
+  }, [active, form, isGroup, open]);
 
   const save = async (values: {
     title: string;
     folder: string;
     remark?: string;
+    scheduling_strategy?: string;
+    summary_agent_id?: string;
+    live_user_input?: boolean;
+    max_collaboration_messages?: number;
+    max_agent_turns?: number;
+    max_open_threads?: number;
+    max_team_message_chars?: number;
   }) => {
     if (!active) return;
     await onSaveConversation(active, {
@@ -66,6 +93,20 @@ export function ConversationSettingsDrawer({
       category: values.folder,
       remark: values.remark || "",
     });
+    if (isGroup) {
+      await onSaveConversation(active, {
+        scheduling_strategy: values.scheduling_strategy || "collaborative",
+        workflow_enabled: false,
+        team_settings: {
+          summary_agent_id: values.summary_agent_id || null,
+          live_user_input: values.live_user_input ?? true,
+          max_collaboration_messages: values.max_collaboration_messages ?? 64,
+          max_agent_turns: values.max_agent_turns ?? 12,
+          max_open_threads: values.max_open_threads ?? 24,
+          max_team_message_chars: values.max_team_message_chars ?? 8000,
+        },
+      });
+    }
     message.success(isGroup ? "群聊信息已保存" : "会话信息已保存");
   };
 
@@ -93,20 +134,62 @@ export function ConversationSettingsDrawer({
         </Form.Item>
 
         {isGroup && (
-          <div className="conversation-settings-members">
-            <Text strong>当前 Agent</Text>
-            <Space size={[6, 6]} wrap className="conversation-settings-members-list">
-              {activeAgents.length ? (
-                activeAgents.map((agent) => (
-                  <Tag key={agent.id} color="blue">
-                    {agent.name}
-                  </Tag>
-                ))
-              ) : (
-                <Text type="secondary">暂无 Agent 成员</Text>
-              )}
+          <>
+            <div className="conversation-settings-members">
+              <Text strong>当前 Agent</Text>
+              <Space size={[6, 6]} wrap className="conversation-settings-members-list">
+                {activeAgents.length ? (
+                  activeAgents.map((agent) => (
+                    <Tag key={agent.id} color="blue">
+                      {agent.name}
+                    </Tag>
+                  ))
+                ) : (
+                  <Text type="secondary">暂无 Agent 成员</Text>
+                )}
+              </Space>
+            </div>
+            <Divider orientation="left">团队协作</Divider>
+            <Form.Item name="scheduling_strategy" label="调度方式">
+              <Select
+                options={[
+                  { label: "平权消息协作", value: "collaborative" },
+                  { label: "旧技术负责人策略", value: "tech_lead" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="summary_agent_id" label="最终汇总 Agent">
+              <Select
+                allowClear
+                placeholder="不指定时直接收敛"
+                options={activeAgents.map((agent) => ({
+                  label: agent.name,
+                  value: agent.id,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="live_user_input"
+              label="运行中实时插话"
+              valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
+            <Space size="middle" wrap align="start">
+              <Form.Item name="max_collaboration_messages" label="Agent 消息上限">
+                <InputNumber min={1} max={512} />
+              </Form.Item>
+              <Form.Item name="max_agent_turns" label="每 Agent 轮次">
+                <InputNumber min={1} max={100} />
+              </Form.Item>
+              <Form.Item name="max_open_threads" label="开放线程上限">
+                <InputNumber min={1} max={128} />
+              </Form.Item>
+              <Form.Item name="max_team_message_chars" label="单条字符上限">
+                <InputNumber min={100} max={32000} step={100} />
+              </Form.Item>
             </Space>
-          </div>
+          </>
         )}
 
         <Space>

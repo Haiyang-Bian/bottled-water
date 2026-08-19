@@ -5,16 +5,25 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from model_provider.core.streaming import OutputTokenLimitExceeded
 
 from ..context.scope_store import InMemoryContextStore, VersionedBlackboard
-from ..core.ports import AgentExecutor, ContextConflictError, ContextStore, RunEventSink, RunJournal
+from ..core.ports import (
+    AgentExecutor,
+    ContextConflictError,
+    ContextStore,
+    RunEventSink,
+    RunJournal,
+    TeamJournal,
+)
 from ..core.run_types import (
     AgentExecutionRequest,
     AgentExecutionResult,
     AgentMemory,
+    CollaborationSnapshot,
     ContextDelta,
     ContextSnapshot,
     EventEnvelope,
@@ -24,6 +33,7 @@ from ..core.run_types import (
     RunSnapshot,
     RunState,
     RuntimeLimits,
+    TeamMessage,
     Usage,
     utc_now,
 )
@@ -32,6 +42,12 @@ from .adapter_isolation import AdapterNotCancellableError, AdapterTimeoutError
 from .agent_actor import AgentActor
 from .run_journal import EventJournalError, EventSequenceConflictError, InMemoryRunJournal
 from .run_watchdog import RunWatchdog
+from .team_collaboration import (
+    AgentTurnBudgetExceeded,
+    CollaborationMessageBudgetExceeded,
+    CollaborationProtocolError,
+    InMemoryTeamJournal,
+)
 
 
 class RuntimeEngine:
@@ -43,12 +59,16 @@ class RuntimeEngine:
         agent_executor: AgentExecutor,
         context_store: ContextStore | None = None,
         run_journal: RunJournal | None = None,
+        team_journal: TeamJournal | None = None,
         event_sink: RunEventSink | None = None,
         limits: RuntimeLimits | None = None,
     ) -> None:
         self.agent_executor = agent_executor
         self.context_store = context_store or InMemoryContextStore()
         self.run_journal = run_journal or InMemoryRunJournal()
+        self.team_journal = team_journal
+        if self.team_journal is None and isinstance(self.run_journal, InMemoryRunJournal):
+            self.team_journal = InMemoryTeamJournal(self.run_journal)
         self.event_sink = event_sink
         self.limits = limits or RuntimeLimits()
         self._active: dict[str, RunKernel] = {}
@@ -68,6 +88,7 @@ class RuntimeEngine:
             agent_executor=self.agent_executor,
             context_store=self.context_store,
             run_journal=self.run_journal,
+            team_journal=self.team_journal,
             event_sink=self.event_sink,
             limits=self.limits,
             on_terminal=self._active.pop,
@@ -106,6 +127,11 @@ class RunHandle:
     async def cancel(self, reason: str = "user_cancelled") -> RunResult:
         return await self._kernel.cancel(reason)
 
+    async def post_message(
+        self, content: str, *, target_agent_ids: tuple[str, ...] = ()
+    ) -> TeamMessage:
+        return await self._kernel.post_message(content, target_agent_ids=target_agent_ids)
+
     def snapshot(self) -> RunSnapshot:
         return self._kernel.snapshot()
 
@@ -120,6 +146,7 @@ class RunKernel:
         agent_executor: AgentExecutor,
         context_store: ContextStore,
         run_journal: RunJournal,
+        team_journal: TeamJournal | None,
         event_sink: RunEventSink | None,
         limits: RuntimeLimits,
         on_terminal=None,
@@ -128,6 +155,7 @@ class RunKernel:
         self.agent_executor = agent_executor
         self.context_store = context_store
         self.run_journal = run_journal
+        self.team_journal = team_journal
         self.event_sink = event_sink
         self.limits = limits
         self.state = RunState.CREATED
@@ -160,6 +188,22 @@ class RunKernel:
         self._outputs: list[str] = []
         self._last_event: EventEnvelope | None = None
         self._forced_failure_reason: str | None = None
+        self._collaboration_enabled = bool(request.metadata.get("collaboration_enabled"))
+        self._team_messages: dict[str, TeamMessage] = {}
+        self._team_unread: dict[str, list[str]] = {
+            agent.id: [] for agent in request.agents
+        }
+        self._team_open_threads: set[str] = set()
+        self._agent_turn_counts: dict[str, int] = {
+            agent.id: 0 for agent in request.agents
+        }
+        self._collaboration_message_count = 0
+        self._collaboration_failure_reason: str | None = None
+        self._summary_agent_id = str(request.metadata.get("summary_agent_id") or "") or None
+        self._summary_scheduled = False
+        self._summary_completed = False
+        self._summary_output = ""
+        self._accepting_team_messages = self._collaboration_enabled
         self._on_terminal = on_terminal
         self._watchdog = RunWatchdog(limits, self._fail_from_watchdog)
 
@@ -224,6 +268,294 @@ class RunKernel:
             finished_at=self.finished_at,
         )
 
+    async def post_message(
+        self, content: str, *, target_agent_ids: tuple[str, ...] = ()
+    ) -> TeamMessage:
+        """Inject user input into this Run for delivery at the next safe checkpoint."""
+
+        try:
+            return await self._send_team_message(
+                sender_type="user",
+                sender_id="user",
+                content=content,
+                recipient_agent_ids=target_agent_ids,
+                expects_reply=False,
+            )
+        except CollaborationProtocolError as exc:
+            await self._record_collaboration_rejection("user:user", str(exc))
+            raise
+
+    async def send_message(
+        self,
+        *,
+        sender_agent_id: str,
+        content: str,
+        recipient_agent_ids: tuple[str, ...] = (),
+        thread_id: str | None = None,
+        reply_to_message_id: str | None = None,
+        expects_reply: bool = False,
+    ) -> TeamMessage:
+        """TeamMessenger implementation exposed only to the executing Agent."""
+
+        try:
+            return await self._send_team_message(
+                sender_type="agent",
+                sender_id=sender_agent_id,
+                content=content,
+                recipient_agent_ids=recipient_agent_ids,
+                thread_id=thread_id,
+                reply_to_message_id=reply_to_message_id,
+                expects_reply=expects_reply,
+            )
+        except CollaborationMessageBudgetExceeded:
+            self._collaboration_failure_reason = "collaboration_message_budget_exhausted"
+            await self._record_collaboration_rejection(
+                f"agent:{sender_agent_id}", "collaboration message budget exhausted"
+            )
+            raise
+        except CollaborationProtocolError as exc:
+            self._collaboration_failure_reason = "collaboration_protocol_error"
+            await self._record_collaboration_rejection(f"agent:{sender_agent_id}", str(exc))
+            raise
+
+    async def resolve_thread(
+        self, *, agent_id: str, thread_id: str, conclusion: str
+    ) -> None:
+        if not self._collaboration_enabled or self.team_journal is None:
+            raise CollaborationProtocolError("Team collaboration is not enabled")
+        if agent_id not in self._team_unread:
+            self._collaboration_failure_reason = "collaboration_protocol_error"
+            raise CollaborationProtocolError(f"Unknown team agent: {agent_id}")
+        if not thread_id or not conclusion.strip():
+            self._collaboration_failure_reason = "collaboration_protocol_error"
+            raise CollaborationProtocolError("thread_id and conclusion are required")
+        async with self._sequence_lock:
+            if thread_id not in self._team_open_threads:
+                self._collaboration_failure_reason = "collaboration_protocol_error"
+                raise CollaborationProtocolError(f"Thread is not open: {thread_id}")
+            event = EventEnvelope(
+                run_id=self.request.run_id,
+                context_scope_id=self.request.context_scope_id,
+                sequence=self.sequence + 1,
+                type="collaboration.thread_resolved",
+                source=f"agent:{agent_id}",
+                payload={"thread_id": thread_id, "conclusion": conclusion.strip()},
+            )
+            try:
+                persisted_event = await self.team_journal.resolve_thread(
+                    thread_id, agent_id, event
+                )
+            except CollaborationProtocolError:
+                raise
+            except Exception as exc:
+                self._collaboration_failure_reason = "event_store_error"
+                raise EventJournalError("Failed to resolve collaboration thread") from exc
+            self._team_open_threads.discard(thread_id)
+            for message_id, message in tuple(self._team_messages.items()):
+                if message.thread_id == thread_id:
+                    self._team_messages[message_id] = replace(
+                        message,
+                        status="resolved",
+                        resolved_at=persisted_event.occurred_at,
+                    )
+            await self._accept_committed_team_event(persisted_event)
+        await self._publish_committed_event(persisted_event)
+
+    async def _send_team_message(
+        self,
+        *,
+        sender_type: str,
+        sender_id: str,
+        content: str,
+        recipient_agent_ids: tuple[str, ...],
+        thread_id: str | None = None,
+        reply_to_message_id: str | None = None,
+        expects_reply: bool = False,
+    ) -> TeamMessage:
+        if not self._collaboration_enabled or self.team_journal is None:
+            raise CollaborationProtocolError("Team collaboration is not enabled")
+        if self.state is not RunState.RUNNING or not self._accepting_team_messages:
+            raise CollaborationProtocolError("Run is not accepting collaboration messages")
+        text = str(content or "").strip()
+        if not text:
+            raise CollaborationProtocolError("Team message content is required")
+        if len(text) > self.limits.max_team_message_chars:
+            raise CollaborationProtocolError(
+                f"Team message exceeds {self.limits.max_team_message_chars} characters"
+            )
+
+        known = set(self._team_unread)
+        if sender_type == "agent" and sender_id not in known:
+            raise CollaborationProtocolError(f"Unknown sending agent: {sender_id}")
+        requested = tuple(dict.fromkeys(str(item) for item in recipient_agent_ids if str(item)))
+        if any(item not in known for item in requested):
+            raise CollaborationProtocolError("Team message targets an unknown Agent")
+        if sender_type == "agent" and sender_id in requested:
+            raise CollaborationProtocolError("An Agent cannot send a team message to itself")
+        recipients = requested or tuple(
+            agent_id for agent_id in self._team_unread if agent_id != sender_id
+        )
+        if not recipients:
+            raise CollaborationProtocolError("Team message has no recipient")
+
+        async with self._sequence_lock:
+            if sender_type == "agent" and (
+                self._collaboration_message_count >= self.limits.max_collaboration_messages
+            ):
+                raise CollaborationMessageBudgetExceeded(
+                    "Agent collaboration message budget exhausted"
+                )
+            if reply_to_message_id:
+                replied_to = self._team_messages.get(reply_to_message_id)
+                if replied_to is None:
+                    raise CollaborationProtocolError(
+                        f"Unknown replied team message: {reply_to_message_id}"
+                    )
+                thread_id = thread_id or replied_to.thread_id or replied_to.message_id
+
+            message = TeamMessage(
+                run_id=self.request.run_id,
+                context_scope_id=self.request.context_scope_id,
+                sender_type=sender_type,
+                sender_id=sender_id,
+                content=text,
+                recipient_agent_ids=recipients,
+                channel="direct" if requested else "broadcast",
+                thread_id=thread_id,
+                reply_to_message_id=reply_to_message_id,
+                expects_reply=expects_reply,
+            )
+            if expects_reply and not message.thread_id:
+                message = replace(message, thread_id=message.message_id)
+            creates_thread = bool(
+                message.thread_id and message.thread_id not in self._team_open_threads
+            )
+            if creates_thread and len(self._team_open_threads) >= self.limits.max_open_threads:
+                raise CollaborationProtocolError("Open collaboration thread budget exhausted")
+
+            event = EventEnvelope(
+                run_id=self.request.run_id,
+                context_scope_id=self.request.context_scope_id,
+                sequence=self.sequence + 1,
+                type="collaboration.message_created",
+                source=f"{sender_type}:{sender_id}",
+                payload={
+                    "sender_type": sender_type,
+                    "sender_id": sender_id,
+                    "recipient_agent_ids": list(recipients),
+                    "channel": message.channel,
+                    "thread_id": message.thread_id,
+                    "reply_to_message_id": reply_to_message_id,
+                    "content": text,
+                    "expects_reply": expects_reply,
+                    "status": message.status,
+                },
+            )
+            try:
+                persisted, persisted_event = await self.team_journal.append_message(
+                    message, event
+                )
+            except CollaborationProtocolError:
+                raise
+            except Exception as exc:
+                self._collaboration_failure_reason = "event_store_error"
+                raise EventJournalError("Failed to persist team message") from exc
+            self._team_messages[persisted.message_id] = persisted
+            for recipient in recipients:
+                self._team_unread[recipient].append(persisted.message_id)
+            if creates_thread and persisted.thread_id:
+                self._team_open_threads.add(persisted.thread_id)
+            if sender_type == "agent":
+                self._collaboration_message_count += 1
+            self._watchdog.record_progress()
+            await self._accept_committed_team_event(persisted_event)
+        await self._publish_committed_event(persisted_event)
+        return persisted
+
+    async def _consume_team_inbox(self, agent_id: str) -> tuple[TeamMessage, ...]:
+        if self.team_journal is None:
+            return ()
+        consumed: list[TeamMessage] = []
+        while self._team_unread.get(agent_id):
+            message_id = self._team_unread[agent_id][0]
+            async with self._sequence_lock:
+                event = EventEnvelope(
+                    run_id=self.request.run_id,
+                    context_scope_id=self.request.context_scope_id,
+                    sequence=self.sequence + 1,
+                    type="collaboration.message_consumed",
+                    source="kernel",
+                    target=agent_id,
+                    payload={"message_id": message_id, "agent_id": agent_id},
+                )
+                try:
+                    updated, persisted_event = await self.team_journal.mark_consumed(
+                        message_id, agent_id, event
+                    )
+                except Exception as exc:
+                    self._collaboration_failure_reason = "event_store_error"
+                    raise EventJournalError("Failed to consume team message") from exc
+                self._team_messages[message_id] = updated
+                self._team_unread[agent_id].pop(0)
+                consumed.append(updated)
+                await self._accept_committed_team_event(persisted_event)
+            await self._publish_committed_event(persisted_event)
+        return tuple(consumed)
+
+    def _collaboration_snapshot(self) -> CollaborationSnapshot:
+        return CollaborationSnapshot(
+            unread_by_agent={
+                agent_id: tuple(
+                    self._team_messages[message_id]
+                    for message_id in message_ids
+                    if message_id in self._team_messages
+                )
+                for agent_id, message_ids in self._team_unread.items()
+            },
+            open_thread_ids=tuple(sorted(self._team_open_threads)),
+            agent_turn_counts=dict(self._agent_turn_counts),
+            message_count=self._collaboration_message_count,
+            message_budget_remaining=max(
+                0,
+                self.limits.max_collaboration_messages - self._collaboration_message_count,
+            ),
+            summary_agent_id=self._summary_agent_id,
+            summary_scheduled=self._summary_scheduled,
+            summary_completed=self._summary_completed,
+        )
+
+    async def _prepare_collaboration_complete(self) -> bool:
+        async with self._sequence_lock:
+            if any(self._team_unread.values()):
+                return False
+            self._accepting_team_messages = False
+            return True
+
+    async def _accept_committed_team_event(self, event: EventEnvelope) -> None:
+        self.sequence = event.sequence
+        self._live_events[event.sequence] = event
+        self._last_event = event
+        await self._notify_event_readers()
+
+    async def _publish_committed_event(self, event: EventEnvelope) -> None:
+        if self.event_sink is not None:
+            try:
+                await self.event_sink.emit(event)
+            except Exception:
+                pass
+
+    async def _record_collaboration_rejection(self, source: str, reason: str) -> None:
+        if not self._journal_created or self.state.is_terminal:
+            return
+        try:
+            await self._emit(
+                "collaboration.rejected",
+                {"reason": reason[:500]},
+                source=source,
+            )
+        except Exception:
+            pass
+
     async def cancel(self, reason: str) -> RunResult:
         if self.state.is_terminal:
             return await self.result_future
@@ -285,6 +617,12 @@ class RunKernel:
             self._journal_created = True
             self._journal_ready.set()
             self.state = RunState.RUNNING
+            if self._collaboration_enabled:
+                known_agent_ids = {agent.id for agent in self.request.agents}
+                if self.team_journal is None:
+                    raise CollaborationProtocolError("Collaborative Run requires a TeamJournal")
+                if self._summary_agent_id and self._summary_agent_id not in known_agent_ids:
+                    raise CollaborationProtocolError("summary_agent_id is not a Run member")
             self._start_actors()
             self._watchdog_task = asyncio.create_task(
                 self._watchdog.run(), name=f"runtime-watchdog:{self.request.run_id}"
@@ -333,15 +671,18 @@ class RunKernel:
                     if budget_reason is not None:
                         await self._abort(budget_reason)
                         return
+                    if self._collaboration_enabled and not await self._prepare_collaboration_complete():
+                        continue
                     await self._stop_actors()
                     await self._commit_context()
-                    await self._finish(RunState.COMPLETED, "completed", "\n\n".join(self._outputs))
+                    output = self._summary_output or "\n\n".join(self._outputs)
+                    await self._finish(RunState.COMPLETED, "completed", output)
                     return
                 if proposal.action in {"assign", "parallel"}:
                     targets = proposal.target_agent_ids
                     if proposal.action == "assign":
                         targets = targets[:1]
-                    await self._execute_targets(targets, proposal.task)
+                    await self._execute_targets(targets, proposal.task, proposal.metadata)
                     continue
                 if proposal.action == "wait":
                     self.no_progress_count += 1
@@ -361,6 +702,12 @@ class RunKernel:
                 state,
                 reason,
             )
+        except AgentTurnBudgetExceeded:
+            await self._abort("agent_turn_budget_exhausted")
+        except CollaborationMessageBudgetExceeded:
+            await self._abort("collaboration_message_budget_exhausted")
+        except CollaborationProtocolError:
+            await self._abort("collaboration_protocol_error")
         except ContextConflictError:
             await self._abort("context_conflict")
         except AdapterTimeoutError:
@@ -386,6 +733,7 @@ class RunKernel:
             blackboard=value,
             agent_memories=dict(self._memories),
         )
+        collaboration = self._collaboration_snapshot() if self._collaboration_enabled else None
         return PolicySnapshot(
             run_id=self.request.run_id,
             context_scope_id=self.request.context_scope_id,
@@ -395,9 +743,12 @@ class RunKernel:
             reports=tuple(self._reports),
             decision_count=self.decision_count,
             metadata=deepcopy(self.request.metadata),
+            collaboration=collaboration,
         )
 
-    async def _execute_targets(self, targets: tuple[str, ...], task: str) -> None:
+    async def _execute_targets(
+        self, targets: tuple[str, ...], task: str, proposal_metadata: dict[str, Any] | None = None
+    ) -> None:
         known = {agent.id: agent for agent in self.request.agents}
         allowed = {
             str(agent_id)
@@ -410,21 +761,45 @@ class RunKernel:
         ):
             await self._abort("policy_error")
             return
-        requests = [
-            AgentExecutionRequest(
-                run_id=self.request.run_id,
-                context_scope_id=self.request.context_scope_id,
-                agent=known[target],
-                task=task or self.request.input,
-                input=self.request.input,
-                context=(await self._policy_snapshot()).context,
-                token_budget_remaining=max(
-                    0, self.limits.max_total_tokens - self.usage.total_tokens
-                ),
-                metadata=deepcopy(self.request.metadata),
+        proposal_metadata = dict(proposal_metadata or {})
+        is_summary = bool(proposal_metadata.get("collaboration_summary"))
+        if is_summary:
+            if self._summary_scheduled or targets != (self._summary_agent_id,):
+                await self._abort("collaboration_protocol_error")
+                return
+            self._summary_scheduled = True
+        requests: list[AgentExecutionRequest] = []
+        for target in targets:
+            if self._collaboration_enabled:
+                if self._agent_turn_counts[target] >= self.limits.max_agent_turns:
+                    raise AgentTurnBudgetExceeded(target)
+                self._agent_turn_counts[target] += 1
+            inbox = ()
+            if self._collaboration_enabled:
+                inbox = (
+                    tuple(sorted(self._team_messages.values(), key=lambda item: item.sequence))
+                    if is_summary
+                    else await self._consume_team_inbox(target)
+                )
+            metadata = {**deepcopy(self.request.metadata), **deepcopy(proposal_metadata)}
+            if is_summary:
+                metadata["open_collaboration_thread_ids"] = sorted(self._team_open_threads)
+            requests.append(
+                AgentExecutionRequest(
+                    run_id=self.request.run_id,
+                    context_scope_id=self.request.context_scope_id,
+                    agent=known[target],
+                    task=task or self.request.input,
+                    input=self.request.input,
+                    context=(await self._policy_snapshot()).context,
+                    token_budget_remaining=max(
+                        0, self.limits.max_total_tokens - self.usage.total_tokens
+                    ),
+                    inbox=inbox,
+                    team_messenger=None if is_summary else (self if self._collaboration_enabled else None),
+                    metadata=metadata,
+                )
             )
-            for target in targets
-        ]
         for target in targets:
             await self._emit(
                 "control.assign",
@@ -446,9 +821,13 @@ class RunKernel:
         finally:
             self._managed_tasks.difference_update(tasks)
         for result in results:
-            await self._accept_agent_result(result)
+            await self._accept_agent_result(result, is_summary=is_summary)
+        if self._collaboration_failure_reason:
+            await self._abort(self._collaboration_failure_reason)
 
-    async def _accept_agent_result(self, result: AgentExecutionResult) -> None:
+    async def _accept_agent_result(
+        self, result: AgentExecutionResult, *, is_summary: bool = False
+    ) -> None:
         self.lease.require_valid()
         self.usage.add(result.usage)
         budget_reason = self._watchdog.check_tokens(self.usage.total_tokens)
@@ -458,6 +837,10 @@ class RunKernel:
         self._reports.append(result.report)
         if result.output:
             self._outputs.append(result.output)
+            if is_summary:
+                self._summary_output = result.output
+        if is_summary:
+            self._summary_completed = True
         if result.memory is not None:
             self._memories[result.agent_id] = result.memory
         if result.blackboard_update:
@@ -649,6 +1032,13 @@ class RunKernel:
         async with self._finish_lock:
             if self.state.is_terminal:
                 return False
+            self._accepting_team_messages = False
+            if self._collaboration_enabled and self.team_journal is not None:
+                if state is not RunState.COMPLETED:
+                    try:
+                        await self.team_journal.interrupt_run(self.request.run_id)
+                    except Exception:
+                        pass
             self.finished_at = utc_now()
             result = RunResult(
                 run_id=self.request.run_id,

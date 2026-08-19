@@ -31,7 +31,7 @@ export interface WorkbenchDrawersProps {
     title?: string;
     agentIds: string[];
     group?: boolean;
-    masterEnabled: boolean;
+    summaryAgentId?: string;
     folder: string;
   }) => Promise<void>;
 

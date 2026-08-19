@@ -26,6 +26,7 @@ from db.models import (
     Agent,
     Conversation,
     ConversationParticipant,
+    ConversationTeamSettings,
     Message,
     Task,
     User,
@@ -183,17 +184,34 @@ async def _create(db: AsyncSession, user: User, payload: dict) -> Conversation:
         "新的多 Agent 协作群" if len(selected) > 1 else f"{selected[0].name} · 单聊"
     )
     is_group = chat_type == "group" or len(selected) > 1
+    if is_group and len(selected) < 2:
+        raise ValidationAppError("协作群聊须选择2-8个Agent")
     workflow_enabled = (
         bool(payload.get("workflow_enabled"))
         if payload.get("workflow_enabled") is not None
         else False
     )
     requested_strategy = normalize_scheduling_strategy(payload.get("scheduling_strategy"))
-    scheduling_strategy = (
-        "single_agent"
-        if not is_group
-        else ("workflow" if workflow_enabled and requested_strategy == "workflow" else "tech_lead")
-    )
+    if not is_group:
+        scheduling_strategy = "single_agent"
+    elif workflow_enabled and requested_strategy == "workflow":
+        scheduling_strategy = "workflow"
+    elif requested_strategy == "tech_lead":
+        scheduling_strategy = "tech_lead"
+    else:
+        scheduling_strategy = "collaborative"
+    summary_agent_id = str(payload.get("summary_agent_id") or "") or None
+    selected_ids = {str(agent.id) for agent in selected}
+    if summary_agent_id and summary_agent_id not in selected_ids:
+        raise ValidationAppError("汇总Agent必须是当前群聊成员")
+    team_settings_data = {
+        "summary_agent_id": summary_agent_id,
+        "live_user_input": bool(payload.get("live_user_input", True)),
+        "max_collaboration_messages": int(payload.get("max_collaboration_messages") or 64),
+        "max_agent_turns": int(payload.get("max_agent_turns") or 12),
+        "max_open_threads": int(payload.get("max_open_threads") or 24),
+        "max_team_message_chars": int(payload.get("max_team_message_chars") or 8_000),
+    }
     conversation_number = generate_conversation_number()
     conversation = Conversation(
         creator_id=user.id,
@@ -210,6 +228,7 @@ async def _create(db: AsyncSession, user: User, payload: dict) -> Conversation:
             "remark": payload.get("remark") or "",
             "scheduling_strategy": scheduling_strategy,
             "workflow_enabled": workflow_enabled and scheduling_strategy == "workflow",
+            "team_settings": team_settings_data if is_group else None,
         },
         last_message_preview="",
         last_message_sender="",
@@ -219,6 +238,18 @@ async def _create(db: AsyncSession, user: User, payload: dict) -> Conversation:
     )
     db.add(conversation)
     await db.flush()
+    if is_group:
+        db.add(
+            ConversationTeamSettings(
+                conversation_id=conversation.id,
+                summary_agent_id=summary_agent_id,
+                live_user_input=team_settings_data["live_user_input"],
+                max_messages=team_settings_data["max_collaboration_messages"],
+                max_agent_turns=team_settings_data["max_agent_turns"],
+                max_open_threads=team_settings_data["max_open_threads"],
+                max_message_chars=team_settings_data["max_team_message_chars"],
+            )
+        )
     for agent in selected:
         db.add(
             ConversationParticipant(
@@ -846,7 +877,19 @@ async def _patch(db: AsyncSession, user: User, conversation_id: str, payload: di
             action = "pin" if payload["pinned"] else "unpin"
         elif payload.get("archived") is not None:
             action = "archive" if payload["archived"] else "unarchive"
-        elif any(payload.get(k) is not None for k in ("scheduling_strategy", "workflow_enabled")):
+        elif any(
+            payload.get(k) is not None
+            for k in (
+                "scheduling_strategy",
+                "workflow_enabled",
+                "summary_agent_id",
+                "live_user_input",
+                "max_collaboration_messages",
+                "max_agent_turns",
+                "max_open_threads",
+                "max_team_message_chars",
+            )
+        ):
             action = "runtime"
         elif any(payload.get(k) is not None for k in ("title", "description", "remark", "category", "folder")):
             action = "rename"
@@ -886,10 +929,47 @@ async def _patch(db: AsyncSession, user: User, conversation_id: str, payload: di
             strategy = "single_agent"
         elif requested_strategy == "workflow" and bool(payload.get("workflow_enabled")):
             strategy = "workflow"
+        elif requested_strategy in {"collaborative", "tech_lead"}:
+            strategy = requested_strategy
         else:
-            strategy = "tech_lead"
+            strategy = str(extra.get("scheduling_strategy") or "collaborative")
         extra["scheduling_strategy"] = strategy
         extra["workflow_enabled"] = bool(payload.get("workflow_enabled")) and strategy == "workflow"
+        if conversation.chat_type == "group":
+            settings = await db.get(ConversationTeamSettings, conversation.id)
+            if settings is None:
+                settings = ConversationTeamSettings(conversation_id=conversation.id)
+                db.add(settings)
+            member_ids = {
+                str(item.agent_id)
+                for item in _active_participants(conversation)
+                if item.agent_id
+            }
+            if "summary_agent_id" in payload:
+                summary_agent_id = str(payload.get("summary_agent_id") or "") or None
+                if summary_agent_id and summary_agent_id not in member_ids:
+                    raise ValidationAppError("汇总Agent必须是当前群聊成员")
+                settings.summary_agent_id = summary_agent_id
+            if payload.get("live_user_input") is not None:
+                settings.live_user_input = bool(payload["live_user_input"])
+            mappings = {
+                "max_collaboration_messages": "max_messages",
+                "max_agent_turns": "max_agent_turns",
+                "max_open_threads": "max_open_threads",
+                "max_team_message_chars": "max_message_chars",
+            }
+            for source, target in mappings.items():
+                if payload.get(source) is not None:
+                    setattr(settings, target, int(payload[source]))
+            await db.flush()
+            extra["team_settings"] = {
+                "summary_agent_id": settings.summary_agent_id,
+                "live_user_input": settings.live_user_input,
+                "max_collaboration_messages": settings.max_messages,
+                "max_agent_turns": settings.max_agent_turns,
+                "max_open_threads": settings.max_open_threads,
+                "max_team_message_chars": settings.max_message_chars,
+            }
         conversation.extra = extra
     else:
         raise ValidationAppError("不支持的操作类型")
@@ -1224,7 +1304,9 @@ async def update_conversation(
     user: User = Depends(get_current_user),
 ):
     return ok(
-        conversation_to_dict(await _patch(db, user, conversation_id, payload.model_dump())),
+        conversation_to_dict(
+            await _patch(db, user, conversation_id, payload.model_dump(exclude_unset=True))
+        ),
         "操作成功",
     )
 
@@ -1544,7 +1626,9 @@ async def compat_update_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return conversation_to_dict(await _patch(db, user, conversation_id, payload.model_dump()))
+    return conversation_to_dict(
+        await _patch(db, user, conversation_id, payload.model_dump(exclude_unset=True))
+    )
 
 
 @compat_router.delete("/conversations/{conversation_id}", response_model=dict)

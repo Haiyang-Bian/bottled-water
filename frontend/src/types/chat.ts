@@ -52,9 +52,41 @@ export interface Conversation {
   workflow_runtime?: WorkflowRun;
   generation_status?: "idle" | "running" | "failed" | "cancelled" | string;
   active_run_id?: string | null;
-  scheduling_strategy?: "workflow" | "tech_lead" | "single_agent" | string;
+  scheduling_strategy?: "workflow" | "tech_lead" | "single_agent" | "collaborative" | string;
   workflow_enabled?: boolean;
+  team_settings?: TeamSettings | null;
+  team_activity?: TeamMessage[];
+  team_last_sequence?: number;
   runtime?: ConversationRuntime;
+}
+
+export interface TeamSettings {
+  summary_agent_id?: string | null;
+  live_user_input: boolean;
+  max_collaboration_messages: number;
+  max_agent_turns: number;
+  max_open_threads: number;
+  max_team_message_chars: number;
+}
+
+export interface TeamMessage {
+  message_id: string;
+  run_id: string;
+  conversation_id: string;
+  sequence: number;
+  sender_type: "agent" | "user" | string;
+  sender_id: string;
+  recipient_agent_ids: string[];
+  channel: "direct" | "broadcast" | string;
+  thread_id?: string | null;
+  reply_to_message_id?: string | null;
+  content: string;
+  expects_reply: boolean;
+  status: "pending" | "consumed" | "resolved" | "interrupted" | string;
+  consumed_by: string[];
+  created_at: string;
+  resolved_at?: string | null;
+  replayed?: boolean;
 }
 
 export interface ConversationRuntimeAgentRun {

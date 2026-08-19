@@ -248,6 +248,7 @@ def conversation_to_dict(conversation: Conversation) -> dict[str, Any]:
         "active_run_id": conversation.active_run_id,
         "scheduling_strategy": conversation.extra.get("scheduling_strategy") if isinstance(conversation.extra, dict) else None,
         "workflow_enabled": bool(conversation.extra.get("workflow_enabled")) if isinstance(conversation.extra, dict) else False,
+        "team_settings": conversation.extra.get("team_settings") if isinstance(conversation.extra, dict) else None,
         "activity_score": conversation.activity_score,
         "message_count": conversation.message_count,
         "archived": conversation.status == "archived",

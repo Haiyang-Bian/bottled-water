@@ -52,6 +52,12 @@
     "desktop:unit": [
       "tests/test_desktop_entry.py"
     ],
+    "collaboration:unit": [
+      "tests/test_agent_runtime/test_team_collaboration.py"
+    ],
+    "collaboration:integration": [
+      "tests/test_team_collaboration_store.py"
+    ],
     "providers:live": [
       "tests/model_provider/test_ark_provider.py",
       "tests/model_provider/test_deepseek_live.py"
@@ -76,7 +82,8 @@
       "tests/message-store-isolation.test.ts",
       "tests/message-stream.test.ts",
       "tests/preview-document.test.ts",
-      "tests/running-conversations.test.ts"
+      "tests/running-conversations.test.ts",
+      "tests/team-collaboration.test.ts"
     ],
     "desktop:unit": [
       "tests/desktop-runtime.test.ts",
@@ -85,7 +92,9 @@
     "chat:component": [
       "tests/chat-send-queue.test.tsx",
       "tests/message-thinking.test.tsx",
-      "tests/streaming-internal-filter.test.tsx"
+      "tests/streaming-internal-filter.test.tsx",
+      "tests/create-conversation-modal.test.tsx",
+      "tests/team-activity.test.tsx"
     ],
     "workflow:unit": [
       "tests/workflow-utils.test.ts"
