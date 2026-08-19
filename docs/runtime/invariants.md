@@ -56,6 +56,16 @@
 4. 纯读取操作 **MAY** 在线程中继续，但租约失效后其结果 **MUST NOT** 提交。
 5. Actor **MUST** 在模型、工具和事件提交边界提供协作式检查点；这不构成强抢占承诺。
 
+## 仓库与执行隔离
+
+1. 绑定仓库后，文件、终端、沙箱、外部 Agent 和 Git Adapter **MUST** 从可信 `ExecutionRootPort` 获取当前 Agent 的工作树；模型提供的 cwd 或绝对路径 **MUST NOT** 成为权限来源。
+2. Agent **MUST NOT** 读取或修改其他 Agent 工作树；相对路径包含越界段或解析后离开执行根时 **MUST** 被拒绝。
+3. managed 工作树 **MUST** 位于 AgentHub 数据目录；adopted 工作树 **MUST** 属于同一 Git common dir，且路径和分支 **MUST** 唯一绑定。
+4. `git.integrate` **MUST** 只合并同一 Conversation 成员的分支到调用者自己的分支；目标工作树 **MUST** 在合并前保持干净。
+5. 合并冲突 **MUST** 执行安全的 merge abort、验证目标 HEAD 与工作区恢复，并留下可审计摘要；不得把冲突状态遗留给后续工具调用。
+6. Agent Git 工具 **MUST NOT** push、reset、rebase、改写历史或直接修改用户当前工作树。可选用户批准 **MUST** 使用模型不能伪造的能力值。
+7. 释放工作树前 **MUST** 拒绝脏状态和相对基准尚未集成的提交；归档 Conversation **MUST NOT** 隐式删除工作树。
+
 ## 背压与故障隔离
 
 1. Mailbox **MUST** 有容量边界和明确的满队列策略；控制事件不得静默丢弃。
