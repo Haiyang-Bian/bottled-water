@@ -12,6 +12,7 @@ from app.schemas.common import ApiResponse
 from app.schemas.requests import (
     BindConversationRepositoryRequest,
     CreateAgentWorktreeRequest,
+    IntegrateAgentWorktreeRequest,
 )
 from app.services.worktrees import (
     bind_repository,
@@ -25,6 +26,12 @@ from app.services.worktrees import (
 )
 from db import get_db
 from db.models import AgentWorktree, User
+from app.services.tools.execution_root import TrustedExecutionRoot
+from app.services.tools.git_collaboration import (
+    TrustedIntegrationApproval,
+    invoke_git_tool,
+)
+from pathlib import Path
 
 
 router = APIRouter(tags=["conversation-repositories"])
@@ -88,6 +95,7 @@ async def bind_conversation_repository(
         conversation_id=conversation_id,
         repository_path=payload.repository_path,
         base_commit=payload.base_commit,
+        require_user_approval=payload.require_user_approval,
     )
     return ok(await _repository_view(db, conversation_id), "Repository bound")
 
@@ -134,3 +142,38 @@ async def remove_agent_worktree(
     worktree = await get_worktree(db, conversation_id, worktree_id)
     await release_worktree(db, repository=repository, worktree=worktree)
     return ok(await _repository_view(db, conversation_id), "Agent worktree released")
+
+
+@router.post(
+    "/conversations/{conversation_id}/worktrees/{worktree_id}/integrate",
+    response_model=ApiResponse[dict],
+)
+async def approve_agent_worktree_integration(
+    conversation_id: str,
+    worktree_id: str,
+    payload: IntegrateAgentWorktreeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    conversation = await _get(db, user, conversation_id)
+    _ensure_can_manage(conversation, user)
+    target = await get_worktree(db, conversation_id, worktree_id)
+    result = await db.run_sync(
+        lambda session: invoke_git_tool(
+            session,
+            user,
+            "git.integrate",
+            {
+                "conversation_id": conversation_id,
+                "agent_id": target.agent_id,
+                "source_agent_id": payload.source_agent_id,
+                "_trusted_execution_root": TrustedExecutionRoot(Path(target.path)),
+                "_trusted_integration_approval": TrustedIntegrationApproval(user.id),
+            },
+        )
+    )
+    await db.commit()
+    return ok(
+        {"integration": result, **(await _repository_view(db, conversation_id))},
+        "Integration completed" if result.get("status") == "succeeded" else "Integration checked",
+    )

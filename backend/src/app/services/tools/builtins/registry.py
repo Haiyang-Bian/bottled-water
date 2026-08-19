@@ -430,6 +430,66 @@ BUILTIN_TOOLS: dict[str, BuiltinTool] = {
             }
         ),
     ),
+    "git.status": BuiltinTool(
+        "git.status",
+        "Git 状态",
+        "git",
+        "读取当前 Agent 独立工作树的分支、HEAD 和变更摘要。",
+        ("file:read",),
+        _schema({}),
+        _schema(
+            {
+                "branch": {"type": "string"},
+                "head_commit": {"type": "string"},
+                "dirty": {"type": "boolean"},
+                "summary": {"type": "string"},
+            }
+        ),
+        ("git", "worktree", "status"),
+    ),
+    "git.diff": BuiltinTool(
+        "git.diff",
+        "Git 差异",
+        "git",
+        "读取当前 Agent 工作树内的未提交或已暂存差异。",
+        ("file:read",),
+        _schema({"staged": {"type": "boolean"}, "path": {"type": "string"}}),
+        _schema({"patch": {"type": "string"}, "truncated": {"type": "boolean"}}),
+        ("git", "worktree", "diff"),
+    ),
+    "git.commit": BuiltinTool(
+        "git.commit",
+        "Git 提交",
+        "git",
+        "在当前 Agent 独立分支创建普通提交；不支持 amend、rebase 或历史改写。",
+        ("file:read", "file:write"),
+        _schema(
+            {
+                "message": {"type": "string", "maxLength": 200},
+                "paths": {"type": "array", "items": {"type": "string"}},
+            },
+            ["message"],
+        ),
+        _schema({"branch": {"type": "string"}, "head_commit": {"type": "string"}}),
+        ("git", "worktree", "commit"),
+    ),
+    "git.integrate": BuiltinTool(
+        "git.integrate",
+        "Git 协作合并",
+        "git",
+        "把同一 Conversation 中另一 Agent 的分支安全合并到调用者自己的分支。",
+        ("file:read", "file:write"),
+        _schema({"source_agent_id": {"type": "string"}}, ["source_agent_id"]),
+        _schema(
+            {
+                "status": {"type": "string"},
+                "head_commit": {"type": "string"},
+                "conflict_files": {"type": "array"},
+                "merge_aborted": {"type": "boolean"},
+            }
+        ),
+        ("git", "worktree", "merge", "collaboration"),
+    ),
     "external_agent.invoke": BuiltinTool(
         "external_agent.invoke",
         "调用外部智能体",

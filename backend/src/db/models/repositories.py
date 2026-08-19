@@ -17,6 +17,7 @@ class ConversationRepository(Base, TimestampMixin):
     repository_path: Mapped[str] = mapped_column(EncryptedText)
     git_common_dir: Mapped[str] = mapped_column(EncryptedText)
     base_commit: Mapped[str] = mapped_column(String(64))
+    require_user_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(24), default="active", index=True)
 
 

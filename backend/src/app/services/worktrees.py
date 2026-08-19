@@ -105,6 +105,7 @@ async def bind_repository(
     conversation_id: str,
     repository_path: str,
     base_commit: str | None = None,
+    require_user_approval: bool = False,
 ) -> ConversationRepository:
     location = await inspect_git_location(repository_path)
     base = (
@@ -129,6 +130,7 @@ async def bind_repository(
         existing.repository_path = str(location.root)
         existing.git_common_dir = str(location.common_dir)
         existing.base_commit = base
+        existing.require_user_approval = require_user_approval
         existing.status = "active"
         await db.commit()
         await db.refresh(existing)
@@ -139,6 +141,7 @@ async def bind_repository(
         repository_path=str(location.root),
         git_common_dir=str(location.common_dir),
         base_commit=base,
+        require_user_approval=require_user_approval,
         status="active",
     )
     db.add(repository)
@@ -398,6 +401,7 @@ def repository_to_dict(repository: ConversationRepository) -> dict:
         "conversation_id": repository.conversation_id,
         "repository_path": repository.repository_path,
         "base_commit": repository.base_commit,
+        "require_user_approval": repository.require_user_approval,
         "status": repository.status,
         "created_at": repository.created_at.isoformat(),
         "updated_at": repository.updated_at.isoformat(),

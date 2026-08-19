@@ -27,6 +27,9 @@ def upgrade() -> None:
         sa.Column("repository_path", sa.Text(), nullable=False),
         sa.Column("git_common_dir", sa.Text(), nullable=False),
         sa.Column("base_commit", sa.String(length=64), nullable=False),
+        sa.Column(
+            "require_user_approval", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
         sa.Column("status", sa.String(length=24), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
