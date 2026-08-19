@@ -71,6 +71,17 @@ class UpdateConversationRequest(_RuntimeModeRemovedMixin, BaseModel):
     max_team_message_chars: int | None = Field(default=None, ge=100, le=32_000)
 
 
+class BindConversationRepositoryRequest(BaseModel):
+    repository_path: str = Field(min_length=1, max_length=4096)
+    base_commit: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class CreateAgentWorktreeRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=64)
+    mode: Literal["managed", "adopted"] = "managed"
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
 class SendMessageRequest(BaseModel):
     client_message_id: str
     content_type: str = "text"
