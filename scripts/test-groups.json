@@ -71,13 +71,16 @@
       "tests/model-settings-deepseek.test.tsx"
     ],
     "chat:unit": [
-      "tests/desktop-runtime.test.ts",
       "tests/message-cleaning.test.ts",
       "tests/message-filter.test.ts",
       "tests/message-store-isolation.test.ts",
       "tests/message-stream.test.ts",
       "tests/preview-document.test.ts",
       "tests/running-conversations.test.ts"
+    ],
+    "desktop:unit": [
+      "tests/desktop-runtime.test.ts",
+      "tests/desktop-single-user.test.tsx"
     ],
     "chat:component": [
       "tests/chat-send-queue.test.tsx",

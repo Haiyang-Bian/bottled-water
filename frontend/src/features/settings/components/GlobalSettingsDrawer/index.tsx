@@ -24,6 +24,7 @@ import { api } from "@/api";
 import type { User } from "@/types";
 import { ExternalAgentsPanel } from "../ExternalAgentsPanel";
 import { ModelSettings } from "../ModelSettings";
+import { isDesktopRuntime } from "@/config/desktopRuntime";
 
 const { Text } = Typography;
 
@@ -158,36 +159,38 @@ export function GlobalSettingsDrawer({
                   </Button>
                 </Form>
               </Card>
-              <Card title={copy.password}>
-                <Form
-                  form={passwordForm}
-                  layout="vertical"
-                  onFinish={async (values) => {
-                    await api.changePassword({
-                      current_password: values.current_password,
-                      new_password: values.new_password,
-                    });
-                    passwordForm.resetFields();
-                    message.success(copy.passwordUpdated);
-                  }}
-                >
-                  <Form.Item
-                    name="current_password"
-                    label={copy.currentPassword}
-                    rules={[{ required: true }]}
+              {!isDesktopRuntime() && (
+                <Card title={copy.password}>
+                  <Form
+                    form={passwordForm}
+                    layout="vertical"
+                    onFinish={async (values) => {
+                      await api.changePassword({
+                        current_password: values.current_password,
+                        new_password: values.new_password,
+                      });
+                      passwordForm.resetFields();
+                      message.success(copy.passwordUpdated);
+                    }}
                   >
-                    <Input.Password />
-                  </Form.Item>
-                  <Form.Item
-                    name="new_password"
-                    label={copy.newPassword}
-                    rules={[{ required: true, min: 6 }]}
-                  >
-                    <Input.Password />
-                  </Form.Item>
-                  <Button htmlType="submit">{copy.updatePassword}</Button>
-                </Form>
-              </Card>
+                    <Form.Item
+                      name="current_password"
+                      label={copy.currentPassword}
+                      rules={[{ required: true }]}
+                    >
+                      <Input.Password />
+                    </Form.Item>
+                    <Form.Item
+                      name="new_password"
+                      label={copy.newPassword}
+                      rules={[{ required: true, min: 6 }]}
+                    >
+                      <Input.Password />
+                    </Form.Item>
+                    <Button htmlType="submit">{copy.updatePassword}</Button>
+                  </Form>
+                </Card>
+              )}
             </div>
           ),
         },

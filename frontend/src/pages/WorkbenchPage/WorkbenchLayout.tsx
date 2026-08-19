@@ -20,6 +20,7 @@ import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { ConversationSidebar } from "@/features/chat/components/ConversationSidebar";
 import type { Agent, Conversation, User, Workspace } from "@/types";
+import { isDesktopRuntime } from "@/config/desktopRuntime";
 
 export interface WorkbenchLayoutProps {
   currentUser: User;
@@ -229,7 +230,7 @@ export function WorkbenchLayout(props: WorkbenchLayoutProps) {
                 文档
               </Button>
             </Link>
-            <Button onClick={onLogout}>退出</Button>
+            {!isDesktopRuntime() && <Button onClick={onLogout}>退出</Button>}
           </Space>
         </div>
         <div className="main-content">{children}</div>

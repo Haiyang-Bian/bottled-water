@@ -1,5 +1,6 @@
 import { getAuthToken } from "./client";
 import {
+  desktopSessionToken,
   normalizeBackendUrls,
   websocketBaseUrl,
 } from "@/config/desktopRuntime";
@@ -57,7 +58,11 @@ class ConversationWS {
 
       this.closed = false;
       const token = getAuthToken();
-      const url = `${websocketBaseUrl()}/ws/conversations/${this.conversationId}?token=${token}`;
+      const desktopSession = desktopSessionToken();
+      const authQuery = desktopSession
+        ? `desktop_session=${encodeURIComponent(desktopSession)}`
+        : `token=${encodeURIComponent(token ?? "")}`;
+      const url = `${websocketBaseUrl()}/ws/conversations/${this.conversationId}?${authQuery}`;
 
       try {
         this.ws = new WebSocket(url);

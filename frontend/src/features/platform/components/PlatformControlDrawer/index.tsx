@@ -19,6 +19,7 @@ import { ToolsPanel } from "../../tabs/ToolsPanel";
 import { SkillsPanel } from "../../tabs/SkillsPanel";
 import { SecurityPanel } from "../../tabs/SecurityPanel";
 import { SandboxPanel } from "../../tabs/SandboxPanel";
+import { isDesktopRuntime } from "@/config/desktopRuntime";
 
 const { Text } = Typography;
 
@@ -126,7 +127,11 @@ export function PlatformControlDrawer({
       label: "沙箱/远程",
       children: <SandboxPanel activeWorkspace={activeWorkspace} />,
     },
-  ].filter((item) => !["workflow", "models"].includes(String(item.key)));
+  ].filter(
+    (item) =>
+      !["workflow", "models"].includes(String(item.key)) &&
+      !(isDesktopRuntime() && item.key === "security"),
+  );
 
   const content = (
     <>

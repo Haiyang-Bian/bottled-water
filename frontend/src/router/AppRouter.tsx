@@ -7,23 +7,33 @@ import { LoginRoute } from "./LoginRoute";
 import { WorkbenchRoute } from "./WorkbenchRoute";
 import { DocsPage } from "@/pages/DocsPage";
 import { ProductReleasePage } from "@/pages/ProductReleasePage";
+import { isDesktopRuntime } from "@/config/desktopRuntime";
 
 export function AppRouter() {
   const [user, setUser] = useState<User>();
   const [authReady, setAuthReady] = useState(false);
+  const [desktopAuthError, setDesktopAuthError] = useState<string>();
+  const desktopMode = isDesktopRuntime();
 
   useEffect(() => {
     const token = window.localStorage.getItem("agenthub_token");
-    if (!token) {
+    if (!token && !desktopMode) {
       setAuthReady(true);
       return;
     }
     api
       .me()
       .then(setUser)
-      .catch(() => window.localStorage.removeItem("agenthub_token"))
+      .catch((error) => {
+        window.localStorage.removeItem("agenthub_token");
+        if (desktopMode) {
+          setDesktopAuthError(
+            error instanceof Error ? error.message : "本机身份初始化失败",
+          );
+        }
+      })
       .finally(() => setAuthReady(true));
-  }, []);
+  }, [desktopMode]);
 
   if (!authReady) {
     return (
@@ -35,10 +45,26 @@ export function AppRouter() {
     );
   }
 
+  if (desktopMode && desktopAuthError) {
+    return (
+      <AntApp>
+        <main className="desktop-bootstrap desktop-bootstrap--error">
+          <strong>本机身份初始化失败</strong>
+          <span>{desktopAuthError}</span>
+        </main>
+      </AntApp>
+    );
+  }
+
   return (
     <AntApp>
       <Routes>
-        <Route path="/" element={<ProductReleasePage />} />
+        <Route
+          path="/"
+          element={
+            desktopMode ? <Navigate to="/app" replace /> : <ProductReleasePage />
+          }
+        />
         <Route path="/release" element={<ProductReleasePage />} />
         <Route
           path="/login"

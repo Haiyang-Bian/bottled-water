@@ -1,4 +1,5 @@
 const DESKTOP_PORT_PARAMETER = "desktopApiPort";
+const DESKTOP_SESSION_PARAMETER = "desktopSession";
 
 export function resolveDesktopApiOrigin(search = window.location.search): string | null {
   const rawPort = new URLSearchParams(search).get(DESKTOP_PORT_PARAMETER);
@@ -24,6 +25,13 @@ export function websocketBaseUrl(
 
 export function isDesktopRuntime(search = window.location.search): boolean {
   return resolveDesktopApiOrigin(search) !== null;
+}
+
+export function desktopSessionToken(
+  search = window.location.search,
+): string | null {
+  const token = new URLSearchParams(search).get(DESKTOP_SESSION_PARAMETER);
+  return token && /^[a-f0-9]{64}$/i.test(token) ? token : null;
 }
 
 export function resolveBackendUrl(

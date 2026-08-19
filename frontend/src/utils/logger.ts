@@ -4,6 +4,11 @@
  * 页面关闭时通过 sendBeacon 发送剩余日志，避免丢失。
  * 队列上限 200 条，超限丢弃最早的。
  */
+import {
+  apiBaseUrl,
+  desktopSessionToken,
+} from "@/config/desktopRuntime";
+
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 interface LogEntry {
@@ -78,8 +83,12 @@ class Logger {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
+    const desktopSession = desktopSessionToken();
+    if (desktopSession) {
+      headers["X-AgentHub-Desktop-Session"] = desktopSession;
+    }
     try {
-      await fetch("/api/v1/logs", {
+      await fetch(`${apiBaseUrl()}/logs`, {
         method: "POST",
         headers,
         body: JSON.stringify({ logs: batch }),
@@ -97,9 +106,13 @@ class Logger {
   sendBeacon() {
     if (this.queue.length === 0) return;
     const token = this.getToken();
-    const url = token
-      ? `/api/v1/logs?token=${encodeURIComponent(token)}`
-      : "/api/v1/logs";
+    const desktopSession = desktopSessionToken();
+    const query = desktopSession
+      ? `desktop_session=${encodeURIComponent(desktopSession)}`
+      : token
+        ? `token=${encodeURIComponent(token)}`
+        : "";
+    const url = `${apiBaseUrl()}/logs${query ? `?${query}` : ""}`;
     const blob = new Blob([JSON.stringify({ logs: this.queue })], {
       type: "application/json",
     });
