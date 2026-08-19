@@ -909,3 +909,29 @@
   margin: 6px 0 0 !important;
   white-space: pre-wrap;
 }
+
+.repository-worktrees {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.repository-worktrees-header {
+  justify-content: space-between;
+}
+
+.repository-path-input,
+.repository-binding-options {
+  width: 100%;
+}
+
+.repository-binding-options > .ant-input {
+  width: min(320px, 100%);
+}
+
+.worktree-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

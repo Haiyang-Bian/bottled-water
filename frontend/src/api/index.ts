@@ -32,6 +32,11 @@ export {
   addParticipants,
   removeParticipant,
   teamMessages,
+  conversationRepository,
+  bindConversationRepository,
+  createAgentWorktree,
+  releaseAgentWorktree,
+  integrateAgentWorktree,
 } from "./conversation";
 
 export {
