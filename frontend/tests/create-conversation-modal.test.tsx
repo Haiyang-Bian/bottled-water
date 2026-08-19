@@ -63,7 +63,7 @@ describe("CreateConversationModal", () => {
     });
   });
 
-  it("defaults a group chat to only the Daily Chat Agent", async () => {
+  it("defaults a group chat to two peers without assigning a hierarchy", async () => {
     const onCreate = vi.fn();
 
     render(
@@ -83,16 +83,17 @@ describe("CreateConversationModal", () => {
       />,
     );
 
-    await screen.findByText(/Daily Chat Agent/);
-    expect(screen.queryByText(/Master Agent/)).toBeNull();
-    expect(screen.queryByText(/Frontend Worker/)).toBeNull();
+    await screen.findByText(/Master Agent/);
+    expect(screen.getByText(/Master Agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Frontend Worker/)).toBeInTheDocument();
+    expect(screen.queryByText(/Daily Chat Agent/)).toBeNull();
 
     fireEvent.click(screen.getByTestId("create-conversation-confirm"));
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          agentIds: ["daily-agent"],
+          agentIds: ["master", "frontend"],
           group: true,
           folder: "Default",
         }),

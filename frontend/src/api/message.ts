@@ -336,6 +336,12 @@ function dispatchStreamEvent(
     case "user.input_queued":
       handlers.onRuntimeEvent?.(event, data as Record<string, unknown>);
       break;
+    case "collaboration.message_created":
+    case "collaboration.message_consumed":
+    case "collaboration.thread_resolved":
+    case "collaboration.rejected":
+      handlers.onRuntimeEvent?.(event, data as Record<string, unknown>);
+      break;
   }
 }
 

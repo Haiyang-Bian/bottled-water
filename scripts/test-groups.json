@@ -82,7 +82,8 @@
       "tests/message-store-isolation.test.ts",
       "tests/message-stream.test.ts",
       "tests/preview-document.test.ts",
-      "tests/running-conversations.test.ts"
+      "tests/running-conversations.test.ts",
+      "tests/team-collaboration.test.ts"
     ],
     "desktop:unit": [
       "tests/desktop-runtime.test.ts",
@@ -91,7 +92,9 @@
     "chat:component": [
       "tests/chat-send-queue.test.tsx",
       "tests/message-thinking.test.tsx",
-      "tests/streaming-internal-filter.test.tsx"
+      "tests/streaming-internal-filter.test.tsx",
+      "tests/create-conversation-modal.test.tsx",
+      "tests/team-activity.test.tsx"
     ],
     "workflow:unit": [
       "tests/workflow-utils.test.ts"

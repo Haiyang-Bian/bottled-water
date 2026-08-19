@@ -73,7 +73,7 @@ export type MessageBody = {
   reply_to_message_id?: string;
   quotedMessageId?: string;
   thinking_enabled?: boolean;
-  scheduling_strategy?: "workflow" | "tech_lead" | "single_agent";
+  scheduling_strategy?: "workflow" | "tech_lead" | "single_agent" | "collaborative";
   regenerate_message_id?: string;
   model_config_id?: string;
 };

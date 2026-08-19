@@ -6,6 +6,7 @@ import {
 } from "@/store";
 import { makeMessage } from "@/lib";
 import { applyRuntimeEvent } from "@/lib/runtimeEvents";
+import { applyTeamCollaborationEvent } from "@/lib/teamCollaboration";
 import {
   clearConversationThinkingMode,
   setConversationThinkingMode,
@@ -286,9 +287,11 @@ function createStreamHandlers(
       }
       const current = store.conversations.find((item) => item.id === conversationId);
       if (current) {
+        const runtimePatch = applyRuntimeEvent(current, event, payload);
+        const teamPatch = applyTeamCollaborationEvent(current, event, payload);
         store.updateConversation(
           conversationId,
-          applyRuntimeEvent(current, event, payload),
+          { ...runtimePatch, ...teamPatch },
         );
       }
       if (isTerminalRuntimeEvent(event)) {

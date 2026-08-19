@@ -50,16 +50,17 @@ export function useWorkbenchActions(
     title?: string;
     agentIds: string[];
     group?: boolean;
-    masterEnabled: boolean;
+    summaryAgentId?: string;
     folder: string;
   }) => {
     const created = await api.createConversationWithAgents({
       chat_type: payload.group ? "group" : "single",
       title: payload.title,
       participant_agent_ids: payload.agentIds,
-      master_enabled: payload.masterEnabled,
-      scheduling_strategy: payload.group ? "tech_lead" : "single_agent",
+      master_enabled: false,
+      scheduling_strategy: payload.group ? "collaborative" : "single_agent",
       workflow_enabled: false,
+      summary_agent_id: payload.summaryAgentId,
       folder: payload.folder,
       category: payload.folder,
       workspace_id: activeWorkspaceId,

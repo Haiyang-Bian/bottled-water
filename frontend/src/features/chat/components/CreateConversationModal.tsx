@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Checkbox, Form, Input, Modal, Select } from "antd";
+import { Form, Input, Modal, Select } from "antd";
 import { normalizeConversationCategory } from "@/lib/conversation";
 import type { Agent } from "@/types";
 
@@ -10,12 +10,12 @@ const COPY = {
   singlePlaceholder: "\u5355\u804a\u4f1a\u8bdd",
   folder: "\u5206\u7c7b/\u6587\u4ef6\u5939",
   folderPlaceholder: "\u9009\u62e9\u5de6\u4fa7\u5206\u7c7b",
-  chooseGroupAgent: "\u9009\u62e9 1-8 \u4e2a Agent",
+  chooseGroupAgent: "\u9009\u62e9 2-8 \u4e2a Agent",
   chooseSingleAgent: "\u9009\u62e9 1 \u4e2a Agent",
-  groupAgentRequired: "\u9700\u8981\u9009\u62e9 1-8 \u4e2a Agent",
+  groupAgentRequired: "\u9700\u8981\u9009\u62e9 2-8 \u4e2a Agent",
   singleAgentRequired: "\u5355\u804a\u9700\u8981\u9009\u62e9 1 \u4e2a Agent",
   agentPlaceholder: "\u4ece Agent \u901a\u8baf\u5f55\u9009\u62e9",
-  autoOrganize: "\u81ea\u52a8\u7ec4\u7ec7\u591a Agent \u534f\u4f5c",
+  summaryAgent: "\u6700\u7ec8\u6c47\u603b Agent\uff08\u53ef\u9009\uff09",
   dailyChat: "\u65e5\u5e38\u804a\u5929",
 };
 
@@ -36,7 +36,7 @@ export function CreateConversationModal({
     title?: string;
     agentIds: string[];
     group?: boolean;
-    masterEnabled: boolean;
+    summaryAgentId?: string;
     folder: string;
   }) => void;
 }) {
@@ -70,11 +70,10 @@ export function CreateConversationModal({
     if (onlineAgents.length === 0) return;
     initializedRef.current = true;
 
-    const defaultAgentIds = pickDefaultAgentIds(onlineAgents, maxAgentCount);
+    const defaultAgentIds = pickDefaultAgentIds(onlineAgents, maxAgentCount, group);
     selectedAgentIdsRef.current = defaultAgentIds;
     form.setFieldsValue({
       agentIds: defaultAgentIds,
-      masterEnabled: group,
       folder: "Default",
     });
   }, [open, onlineAgents, form, group, maxAgentCount]);
@@ -90,7 +89,7 @@ export function CreateConversationModal({
       title: values.title,
       agentIds: latestAgentIds,
       group,
-      masterEnabled: values.masterEnabled ?? group,
+      summaryAgentId: values.summaryAgentId || undefined,
       folder: normalizeConversationCategory(values.folder),
     });
     selectedAgentIdsRef.current = [];
@@ -109,7 +108,7 @@ export function CreateConversationModal({
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ masterEnabled: group, folder: "Default" }}
+        initialValues={{ folder: "Default" }}
       >
         <Form.Item name="title" label={COPY.conversationName}>
           <Input placeholder={group ? COPY.groupPlaceholder : COPY.singlePlaceholder} />
@@ -124,7 +123,7 @@ export function CreateConversationModal({
             {
               validator: async (_, value?: string[]) => {
                 const count = value?.length ?? 0;
-                if (group && (count < 1 || count > maxAgentCount)) {
+                if (group && (count < 2 || count > maxAgentCount)) {
                   throw new Error(COPY.groupAgentRequired);
                 }
                 if (!group && count !== 1) {
@@ -153,8 +152,26 @@ export function CreateConversationModal({
           />
         </Form.Item>
         {group && (
-          <Form.Item name="masterEnabled" valuePropName="checked">
-            <Checkbox>{COPY.autoOrganize}</Checkbox>
+          <Form.Item
+            name="summaryAgentId"
+            label={COPY.summaryAgent}
+            dependencies={["agentIds"]}
+            rules={[
+              {
+                validator: async (_, value?: string) => {
+                  const selected = form.getFieldValue("agentIds") || [];
+                  if (value && !selected.includes(value)) {
+                    throw new Error("\u6c47\u603b Agent \u5fc5\u987b\u662f\u5df2\u9009\u7fa4\u804a\u6210\u5458");
+                  }
+                },
+              },
+            ]}
+          >
+            <Select
+              allowClear
+              placeholder="\u4e0d\u6307\u5b9a\u65f6\uff0c\u56e2\u961f\u7ed3\u675f\u540e\u76f4\u63a5\u6536\u655b"
+              options={onlineAgents.map((agent) => ({ label: agent.name, value: agent.id }))}
+            />
           </Form.Item>
         )}
       </Form>
@@ -162,11 +179,18 @@ export function CreateConversationModal({
   );
 }
 
-function pickDefaultAgentIds(agents: Agent[], maxAgentCount: number): string[] {
+function pickDefaultAgentIds(
+  agents: Agent[],
+  maxAgentCount: number,
+  group: boolean,
+): string[] {
+  if (group) {
+    return agents.slice(0, Math.min(2, maxAgentCount)).map((agent) => agent.id);
+  }
   const dailyAgent = agents.find((agent) => {
     const lowerName = agent.name.toLowerCase();
     return lowerName.includes("daily chat") || agent.name.includes(COPY.dailyChat);
   });
   const fallback = dailyAgent ?? agents[0];
-  return fallback ? [fallback.id].slice(0, maxAgentCount) : [];
+  return fallback ? [fallback.id] : [];
 }
