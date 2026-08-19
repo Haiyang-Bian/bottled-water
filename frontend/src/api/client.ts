@@ -1,5 +1,9 @@
 import { logger } from "@/utils/logger";
-import { apiBaseUrl, normalizeBackendUrls } from "@/config/desktopRuntime";
+import {
+  apiBaseUrl,
+  desktopSessionToken,
+  normalizeBackendUrls,
+} from "@/config/desktopRuntime";
 import { logPreview, sanitizeLogValue } from "./logRedaction";
 
 export const API_BASE = apiBaseUrl();
@@ -73,6 +77,7 @@ export async function request<T>(
   controller?: AbortController,
 ): Promise<T> {
   const token = getAuthToken();
+  const desktopSession = desktopSessionToken();
   const isForm = init?.body instanceof FormData;
 
   if (!controller) {
@@ -85,6 +90,9 @@ export async function request<T>(
     headers: {
       ...(isForm ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(desktopSession
+        ? { "X-AgentHub-Desktop-Session": desktopSession }
+        : {}),
       ...(init?.headers ?? {}),
     },
   };
@@ -160,6 +168,7 @@ export async function sse(
   }
 
   const token = getAuthToken();
+  const desktopSession = desktopSessionToken();
 
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -167,6 +176,9 @@ export async function sse(
     signal: controller?.signal,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(desktopSession
+        ? { "X-AgentHub-Desktop-Session": desktopSession }
+        : {}),
       "Content-Type": "application/json", // ← 你发送的 body 格式
       Accept: "text/event-stream", // ← 告诉后端：我要 SSE 流
     },
@@ -196,8 +208,14 @@ export async function requestFile(path: string): Promise<{
   filename?: string;
 }> {
   const token = getAuthToken();
+  const desktopSession = desktopSessionToken();
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(desktopSession
+        ? { "X-AgentHub-Desktop-Session": desktopSession }
+        : {}),
+    },
   });
 
   if (!response.ok) {

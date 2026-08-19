@@ -126,12 +126,19 @@ fn stop_backend(app: &AppHandle) {
     drop(job);
 }
 
-fn start_backend(app: &AppHandle, port: u16, data_dir: &PathBuf) -> Result<(), String> {
+fn start_backend(
+    app: &AppHandle,
+    port: u16,
+    data_dir: &PathBuf,
+    session_token: &str,
+) -> Result<(), String> {
     let arguments = vec![
         "--data-dir".to_string(),
         data_dir.to_string_lossy().into_owned(),
         "--port".to_string(),
         port.to_string(),
+        "--session-token".to_string(),
+        session_token.to_string(),
     ];
     let sidecar = app
         .shell()
@@ -199,9 +206,14 @@ pub fn run() {
         .setup(|app| {
             let port = available_port()?;
             let data_dir = desktop_data_dir(app.handle())?;
-            start_backend(app.handle(), port, &data_dir)?;
+            let session_token = format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            );
+            start_backend(app.handle(), port, &data_dir, &session_token)?;
 
-            let url = format!("index.html?desktopApiPort={port}");
+            let url = format!("index.html?desktopApiPort={port}&desktopSession={session_token}");
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url.into()))
                 .title("AgentHub")
                 .inner_size(1280.0, 860.0)

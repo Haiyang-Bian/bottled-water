@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.errors import ForbiddenError, ValidationAppError
 from app.core.response import ok
 from app.deps import get_current_user
@@ -13,10 +14,15 @@ from db.models import AuditLog, Permission, Role, RolePermission, User, UserRole
 from app.schemas.common import ApiResponse
 from app.services.access_control import permissions_for_user, require_permission, roles_for_user
 from app.services.audit import write_audit_log
+from app.services.desktop_identity import require_user_management_enabled
 from app.services.serialization import iso
 
 
 router = APIRouter(tags=["security-ops"])
+
+
+def user_management_enabled(settings: Settings = Depends(get_settings)) -> None:
+    require_user_management_enabled(settings)
 
 
 async def _role_to_dict(db: AsyncSession, role: Role) -> dict:
@@ -146,6 +152,7 @@ async def create_role(
     payload: CreateRoleRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _user_management: None = Depends(user_management_enabled),
 ):
     await require_permission(db, user, "security:manage")
     code = str(payload.code or "").strip().upper()
@@ -183,6 +190,7 @@ async def update_role_permissions(
     payload: UpdateRolePermissionsRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _user_management: None = Depends(user_management_enabled),
 ):
     await require_permission(db, user, "security:manage")
     role = await db.get(Role, role_id)
@@ -224,6 +232,7 @@ async def update_role_permissions(
 async def list_security_users(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _user_management: None = Depends(user_management_enabled),
 ):
     await require_permission(db, user, "user:manage")
     users = (
@@ -270,6 +279,7 @@ async def update_user_role(
     payload: UpdateUserRoleRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _user_management: None = Depends(user_management_enabled),
 ):
     await require_permission(db, user, "user:manage")
     target = await db.get(User, target_user_id)
@@ -405,6 +415,7 @@ async def audit_stats(
 async def admin_guard(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _user_management: None = Depends(user_management_enabled),
 ):
     await require_permission(db, user, "user:manage")
     return ok({"allowed": True})
