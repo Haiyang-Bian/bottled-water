@@ -35,6 +35,7 @@ from .runtime.agent_executor import AgentLoopExecutor
 from .runtime.cancellation import CancellationScope, RunLease
 from .core.run_types import (
     AgentMemory,
+    CollaborationSnapshot,
     ContextDelta,
     ContextSnapshot,
     EventEnvelope,
@@ -45,10 +46,12 @@ from .core.run_types import (
     RunState,
     RuntimeLimits,
     SchedulingProposal,
+    TeamMessage,
+    TeamMessagePage,
     Usage,
 )
 from .strategies.policies import SingleAgentPolicy, TeamLeadPolicy, WorkflowPolicy
-from .core.ports import SchedulerPolicy
+from .core.ports import SchedulerPolicy, TeamJournal, TeamMessenger
 from .context.blackboard import BlackboardManager
 from .context.agent_ctx import AgentContextManager, AgentContext
 from .tools.registry import ToolRegistry
@@ -87,6 +90,9 @@ __all__ = [
     "RuntimeLimits",
     "EventEnvelope",
     "EventPage",
+    "TeamMessage",
+    "TeamMessagePage",
+    "CollaborationSnapshot",
     "ContextSnapshot",
     "ContextDelta",
     "AgentMemory",
@@ -96,6 +102,8 @@ __all__ = [
     "RunLease",
     # 调度策略
     "SchedulerPolicy",
+    "TeamJournal",
+    "TeamMessenger",
     "SingleAgentPolicy",
     "WorkflowPolicy",
     "TeamLeadPolicy",

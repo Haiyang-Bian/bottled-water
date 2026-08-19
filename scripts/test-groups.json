@@ -52,6 +52,12 @@
     "desktop:unit": [
       "tests/test_desktop_entry.py"
     ],
+    "collaboration:unit": [
+      "tests/test_agent_runtime/test_team_collaboration.py"
+    ],
+    "collaboration:integration": [
+      "tests/test_team_collaboration_store.py"
+    ],
     "providers:live": [
       "tests/model_provider/test_ark_provider.py",
       "tests/model_provider/test_deepseek_live.py"
