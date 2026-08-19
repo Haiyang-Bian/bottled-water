@@ -40,6 +40,7 @@ flowchart LR
     P -->|"SchedulingProposal"| W["Watchdog + Kernel Validation"]
     W -->|"Control Event"| M["Agent Mailbox"]
     M --> A["AgentActor"]
+    A <-->|"TeamMessage"| T["TeamJournal"]
     A <--> X["Model / Tool Ports"]
     A --> E["EventEnvelope"]
     R --> E
@@ -70,6 +71,14 @@ flowchart LR
 | 长期 Agent 记忆 | ContextScope `AgentMemory` | 摘要、任务、阻塞项、事实、产物引用 |
 | 推理草稿和临时工具帧 | 当前 Adapter 调用 | 不进入跨 Run ContextState |
 
+## 团队协作域
+
+一个群聊 `Conversation` 是一个协作域，一个活跃 `Run` 可以并行驱动多个平权 `AgentActor`。Kernel 不理解 Leader、Reviewer 或 Integrator；这些职责来自 Agent 系统提示词、用户配置和工具权限。`summary_agent_id` 只是没有待处理消息后唯一一次最终汇总的投递目标，不获得调度、终态或资源控制权。
+
+Agent 只能通过 `TeamMessenger` 主动公开消息。私信仅进入目标 Agent 下一轮的 `AgentExecutionRequest.inbox`，广播进入除发送者外所有成员的收件箱；完整提示词、私有推理和临时工具帧始终隔离。消息发送不等待对方模型调用，`expects_reply` 只创建开放线程并让 Policy 在下一安全检查点优先调度收件人。
+
+`TeamJournal` 为 Conversation 分配单调团队序号，并将 `TeamMessage` 与对应的 Run Event 原子提交。Runtime 事件仍保持各 Run 内的独立序号。Run 取消、失败或进程丢失时，尚未消费的团队消息转为 `interrupted`，不得被下一 Run 隐式续用。详细协议见[平权协作语义](./collaboration.md)。
+
 ## Event Log 与重放
 
 每个新 Run 使用 Journal version 1。Kernel 在序号锁内分配 `sequence`，调用 `RunJournal.append_event()` 成功后，才唤醒 `RunHandle` 订阅者并投递实时 Sink。同一 `event_id` 的相同重试是幂等操作；同一 Run/sequence 的不同内容是显式冲突。`RunHandle.events(after_sequence=...)` 和 HTTP 查询均使用独立游标分页读取，不依赖单消费者内存队列。
@@ -80,4 +89,4 @@ Journal 载荷先递归脱敏再通过 `ContentJSON` 加密保存，最终输出
 
 ## 非目标
 
-社区、积分、市场、Office/HTML 产物规则、全栈交付模板、特定云部署、生产沙箱和 UI 扩张均不属于 Kernel。它们只能位于 Policy、Tool、Adapter 或参考应用。
+社区、积分、市场、Office/HTML 产物规则、全栈交付模板、特定云部署、生产沙箱、团队角色枚举和 UI 扩张均不属于 Kernel。它们只能位于 Policy、Tool、Adapter 或参考应用。

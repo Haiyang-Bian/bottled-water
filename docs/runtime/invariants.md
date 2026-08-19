@@ -37,6 +37,17 @@
 4. Model 用量 **SHOULD** 优先采用 Provider usage；缺失时 **MUST** 标记为估算。流式输出耗尽剩余预算时 **MUST** 主动关流。
 5. 稳定失败原因 **MUST** 包括 `wall_time_exceeded`、`idle_timeout`、`decision_budget_exhausted`、`token_budget_exhausted`、`no_progress`、`policy_error`、`context_conflict`、`adapter_timeout`、`event_store_error`、`event_sequence_conflict`、`runtime_shutdown` 和 `internal_error`。
 
+## 团队通信与隐私
+
+1. Kernel **MUST NOT** 通过 Leader、Reviewer、Integrator 等角色授予额外生命周期权限；职责 **MUST** 来自提示词、配置和工具授权。
+2. Agent **MUST** 只看到发给自己的私信、广播以及明确提供的脱敏团队记录；其他 Agent 的私有上下文、推理和工具草稿 **MUST NOT** 被复制到其上下文。
+3. TeamMessage **MUST** 先与对应 Runtime Event 原子持久化，再通知客户端或唤醒目标 Agent；Conversation 级消息序号 **MUST** 单调递增。
+4. 发送消息 **MUST** 非阻塞；`expects_reply` **MUST NOT** 变成占用 Actor 的同步等待。目标 Agent 只在下一安全检查点获得新收件箱。
+5. 回复 **MUST** 保留 `thread_id` 与 `reply_to_message_id`；关闭讨论 **MUST** 产生带结论的显式 `thread_resolved` 事件。
+6. Kernel **MUST** 限制团队消息数、每 Agent 轮次、开放线程数和单条消息长度，并以稳定 reason code 收敛协议失败。
+7. Run 非正常结束时未消费消息 **MUST** 标记为 `interrupted`；下一 Run **MUST NOT** 自动执行这些遗留消息。
+8. `summary_agent_id` **MAY** 获得一次脱敏团队记录用于最终汇总，但 **MUST NOT** 获得额外状态修改、取消或终态权限。
+
 ## 取消、租约与 Adapter
 
 1. `RunHandle.cancel()` **MUST** 幂等、传播 `CancellationScope`，并等待唯一终态。
