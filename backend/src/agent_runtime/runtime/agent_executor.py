@@ -7,6 +7,7 @@ from typing import Any
 from ..core.run_types import AgentExecutionResult, AgentMemory, Usage
 from ..core.types import Event
 from .agent_loop import AgentLoop
+from .team_tools import TeamToolExecutor
 
 
 class AgentLoopExecutor:
@@ -47,14 +48,32 @@ class AgentLoopExecutor:
             cancellation.raise_if_cancelled()
             lease.require_valid()
 
+        tool_executor = self.tool_executor
+        task = request.task
+        metadata = dict(request.metadata)
+        if request.inbox:
+            inbox_text = "\n".join(
+                f"- [{message.message_id}] {message.sender_type}:{message.sender_id}: {message.content}"
+                for message in request.inbox
+            )
+            task = f"{task}\n\n团队收件箱（仅包含主动发送给你的消息）：\n{inbox_text}"
+            visible = str(metadata.get("visible_content") or request.input)
+            metadata["visible_content"] = f"{visible}\n\n团队收件箱：\n{inbox_text}"
+        if request.team_messenger is not None:
+            tool_executor = TeamToolExecutor(
+                self.tool_executor,
+                request.team_messenger,
+                request.agent.id,
+            )
+
         result = await loop.run(
-            request.task,
+            task,
             request.context.blackboard,
-            tool_executor=self.tool_executor,
+            tool_executor=tool_executor,
             emit_event=emit_legacy,
             checkpoint=checkpoint,
             context_provider=self.context_provider,
-            context_metadata=request.metadata,
+            context_metadata=metadata,
         )
         report = result["status_report"]
         output = str(result.get("work_product") or "")

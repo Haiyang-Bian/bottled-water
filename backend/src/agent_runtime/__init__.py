@@ -51,6 +51,7 @@ from .core.run_types import (
     Usage,
 )
 from .strategies.policies import SingleAgentPolicy, TeamLeadPolicy, WorkflowPolicy
+from .strategies.collaborative import CollaborativeTeamPolicy
 from .core.ports import SchedulerPolicy, TeamJournal, TeamMessenger
 from .context.blackboard import BlackboardManager
 from .context.agent_ctx import AgentContextManager, AgentContext
@@ -107,6 +108,7 @@ __all__ = [
     "SingleAgentPolicy",
     "WorkflowPolicy",
     "TeamLeadPolicy",
+    "CollaborativeTeamPolicy",
     # 上下文管理
     "BlackboardManager",
     "AgentContextManager",
