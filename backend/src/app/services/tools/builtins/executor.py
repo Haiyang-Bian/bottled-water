@@ -20,6 +20,7 @@ from app.services.tools.builtins.external_agent import invoke_external_agent_too
 from app.services.tools.builtins.file import invoke_file_tool
 from app.services.tools.builtins.sandbox.executor import run_sandbox_command, run_test_command
 from app.services.tools.builtins.terminal import invoke_terminal_tool
+from app.services.tools.git_collaboration import invoke_git_tool
 
 
 def invoke_builtin_tool(db: Session, user: User, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -31,6 +32,8 @@ def invoke_builtin_tool(db: Session, user: User, name: str, arguments: dict[str,
         return invoke_external_agent_tool(db, user, name, arguments)
     if name.startswith("terminal."):
         return invoke_terminal_tool(db, user, name, arguments)
+    if name.startswith("git."):
+        return invoke_git_tool(db, user, name, arguments)
     if name == "db.inspect":
         inspector = inspect(db.get_bind())
         return {

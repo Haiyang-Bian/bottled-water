@@ -1,5 +1,9 @@
-import { get, post, patch, del } from "./client";
-import type { Conversation, TeamMessage } from "@/types";
+import { get, post, patch, del, request } from "./client";
+import type {
+  Conversation,
+  ConversationRepositoryState,
+  TeamMessage,
+} from "@/types";
 
 export async function conversations(workspaceId?: string): Promise<Conversation[]> {
   const query = workspaceId
@@ -89,6 +93,58 @@ export async function teamMessages(
 ): Promise<TeamMessagePage> {
   return await get<TeamMessagePage>(
     `/conversations/${encodeURIComponent(conversationId)}/team/messages?after_sequence=${afterSequence}&limit=${limit}`,
+  );
+}
+
+export async function conversationRepository(
+  conversationId: string,
+): Promise<ConversationRepositoryState> {
+  return await get<ConversationRepositoryState>(
+    `/conversations/${encodeURIComponent(conversationId)}/repository`,
+  );
+}
+
+export async function bindConversationRepository(
+  conversationId: string,
+  payload: {
+    repository_path: string;
+    base_commit?: string;
+    require_user_approval?: boolean;
+  },
+): Promise<ConversationRepositoryState> {
+  return await request<ConversationRepositoryState>(
+    `/conversations/${encodeURIComponent(conversationId)}/repository`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function createAgentWorktree(
+  conversationId: string,
+  payload: { agent_id: string; mode: "managed" | "adopted"; path?: string },
+): Promise<ConversationRepositoryState> {
+  return await post<ConversationRepositoryState>(
+    `/conversations/${encodeURIComponent(conversationId)}/worktrees`,
+    payload,
+  );
+}
+
+export async function releaseAgentWorktree(
+  conversationId: string,
+  worktreeId: string,
+): Promise<ConversationRepositoryState> {
+  return await del<ConversationRepositoryState>(
+    `/conversations/${encodeURIComponent(conversationId)}/worktrees/${encodeURIComponent(worktreeId)}`,
+  );
+}
+
+export async function integrateAgentWorktree(
+  conversationId: string,
+  targetWorktreeId: string,
+  sourceAgentId: string,
+): Promise<ConversationRepositoryState> {
+  return await post<ConversationRepositoryState>(
+    `/conversations/${encodeURIComponent(conversationId)}/worktrees/${encodeURIComponent(targetWorktreeId)}/integrate`,
+    { source_agent_id: sourceAgentId },
   );
 }
 

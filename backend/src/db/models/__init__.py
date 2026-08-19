@@ -31,6 +31,7 @@ from .runtime import (
     RuntimeRun,
     RuntimeTeamMessage,
 )
+from .repositories import AgentWorktree, ConversationRepository
 
 __all__ = [
     "Base",
@@ -83,4 +84,6 @@ __all__ = [
     "RuntimeEventConsumer",
     "ConversationTeamSettings",
     "RuntimeTeamMessage",
+    "ConversationRepository",
+    "AgentWorktree",
 ]

@@ -89,6 +89,40 @@ export interface TeamMessage {
   replayed?: boolean;
 }
 
+export interface ConversationRepositoryBinding {
+  id: string;
+  conversation_id: string;
+  repository_path: string;
+  base_commit: string;
+  require_user_approval: boolean;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentWorktree {
+  id: string;
+  conversation_id: string;
+  agent_id: string;
+  path: string;
+  branch: string;
+  base_commit: string;
+  head_commit: string;
+  mode: "managed" | "adopted";
+  status: string;
+  dirty: boolean;
+  merge_status: string;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationRepositoryState {
+  repository: ConversationRepositoryBinding | null;
+  worktrees: AgentWorktree[];
+  integration?: Record<string, unknown>;
+}
+
 export interface ConversationRuntimeAgentRun {
   agent_id: string;
   agent_name?: string;

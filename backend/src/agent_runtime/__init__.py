@@ -52,7 +52,7 @@ from .core.run_types import (
 )
 from .strategies.policies import SingleAgentPolicy, TeamLeadPolicy, WorkflowPolicy
 from .strategies.collaborative import CollaborativeTeamPolicy
-from .core.ports import SchedulerPolicy, TeamJournal, TeamMessenger
+from .core.ports import ExecutionRootPort, SchedulerPolicy, TeamJournal, TeamMessenger
 from .context.blackboard import BlackboardManager
 from .context.agent_ctx import AgentContextManager, AgentContext
 from .tools.registry import ToolRegistry
@@ -105,6 +105,7 @@ __all__ = [
     "SchedulerPolicy",
     "TeamJournal",
     "TeamMessenger",
+    "ExecutionRootPort",
     "SingleAgentPolicy",
     "WorkflowPolicy",
     "TeamLeadPolicy",

@@ -15,6 +15,7 @@ import {
 } from "antd";
 import { mergeConversationCategories } from "@/lib/conversation";
 import type { Agent, Conversation } from "@/types";
+import { RepositoryWorktreesSection } from "./RepositoryWorktreesSection";
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -189,6 +190,12 @@ export function ConversationSettingsDrawer({
                 <InputNumber min={100} max={32000} step={100} />
               </Form.Item>
             </Space>
+            {active && (
+              <>
+                <Divider orientation="left">代码协作</Divider>
+                <RepositoryWorktreesSection conversation={active} agents={agents} />
+              </>
+            )}
           </>
         )}
 

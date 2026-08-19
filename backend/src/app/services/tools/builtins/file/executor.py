@@ -18,6 +18,7 @@ from app.services.workspaces.filesystem import (
     scoped_dir,
     workspace_id_from_args,
 )
+from app.services.tools.execution_root import trusted_execution_path
 
 
 def invoke_file_tool(db: Session, user: User, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +127,9 @@ def _invoke_file_asset_tool(
 
 
 def _safe_tool_path(db: Session, arguments: dict[str, Any]) -> Path:
+    trusted = trusted_execution_path(arguments, str(arguments.get("path") or ""))
+    if trusted is not None:
+        return trusted
     root = scoped_dir(
         workspace_id_from_args(db, arguments),
         "sandbox",

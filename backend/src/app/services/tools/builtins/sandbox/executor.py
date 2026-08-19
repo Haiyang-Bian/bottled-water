@@ -24,6 +24,7 @@ from app.services.workspaces.filesystem import (
     scoped_dir,
     workspace_id_from_args,
 )
+from app.services.tools.execution_root import trusted_execution_root
 
 
 def run_sandbox_command(db: Session, user: User, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -68,7 +69,7 @@ def _session_and_cwd(
     workspace_id = workspace_id_from_args(db, arguments)
     database_workspace_id = database_workspace_id_from_args(db, arguments)
     session = _resolve_session(db, user, arguments, workspace_id, database_workspace_id, default_name)
-    root = scoped_dir(
+    root = trusted_execution_root(arguments) or scoped_dir(
         workspace_id,
         "sandbox",
         conversation_id=str(arguments.get("conversation_id") or "") or None,

@@ -4,6 +4,7 @@
   "description": "Minimal permissions for the AgentHub desktop window.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open"
   ]
 }

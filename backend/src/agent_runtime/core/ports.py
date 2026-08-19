@@ -85,6 +85,12 @@ class TeamMessenger(Protocol):
     ) -> None: ...
 
 
+class ExecutionRootPort(Protocol):
+    """Resolve the server-trusted filesystem root for one Agent execution."""
+
+    async def resolve(self, context_scope_id: str, agent_id: str) -> str | None: ...
+
+
 class SchedulerPolicy(Protocol):
     async def propose(
         self, snapshot: PolicySnapshot, trigger: EventEnvelope | None

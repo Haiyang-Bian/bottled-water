@@ -119,4 +119,17 @@ class TeamToolExecutor:
                 result=None,
                 error=f"Tool not found: {tool_call.tool_name}",
             )
-        return await self.base.execute(tool_call)
+        result = await self.base.execute(tool_call)
+        if tool_call.tool_name == "git.integrate" and isinstance(result, dict):
+            payload = result.get("output")
+            if isinstance(payload, dict) and payload.get("status") == "conflict":
+                source_agent_id = str(payload.get("source_agent_id") or "")
+                message = await self.messenger.send_message(
+                    sender_agent_id=self.agent_id,
+                    recipient_agent_ids=(source_agent_id,) if source_agent_id else (),
+                    content=str(payload.get("discussion_message") or "Git integration conflicted."),
+                    expects_reply=True,
+                )
+                payload["team_message_id"] = message.message_id
+                payload["team_sequence"] = message.sequence
+        return result

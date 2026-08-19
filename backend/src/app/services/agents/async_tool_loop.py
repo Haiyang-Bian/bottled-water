@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import inspect
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -40,6 +41,7 @@ from app.services.tools.builtins.registry import BUILTIN_TOOLS, active_builtin_t
 from app.services.tools.catalog import sync_builtin_tool_definitions
 from app.services.tools.executor import invoke_tool as invoke_tool_sync
 from app.services.tools.permissions import canonical_tool_name
+from app.services.tools.execution_root import TrustedExecutionRoot
 
 
 def _is_async_session(db: Any) -> bool:
@@ -403,11 +405,19 @@ async def execute_tool_by_name(
     conversation: Conversation,
     tool_name: str,
     arguments: dict[str, Any],
+    execution_root: str | None = None,
 ) -> dict[str, Any]:
     """根据 tool_name 路由到内置工具/Skill/MCP 执行器。"""
 
     original_tool_name = tool_name
     tool_name = canonical_tool_name(tool_name)
+    arguments = {
+        **arguments,
+        "agent_id": str(agent.id),
+        "_trusted_execution_root": (
+            TrustedExecutionRoot(Path(execution_root)) if execution_root else None
+        ),
+    }
     if original_tool_name != tool_name:
         arguments = {**arguments, "_legacy_tool_name": original_tool_name}
 

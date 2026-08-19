@@ -53,5 +53,5 @@ class ToolExecutorAdapter(ToolExecutor):
             user=self.user,
             conversation=self.conversation,
             tool_name=tool_call.tool_name,
-            arguments=tool_call.parameters,
+            arguments={**tool_call.parameters, "agent_id": str(self.agent.id)},
         )

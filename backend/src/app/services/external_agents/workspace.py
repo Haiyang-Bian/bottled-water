@@ -15,6 +15,7 @@ from app.services.workspaces.filesystem import (
     workspace_id_from_args,
     workspace_root,
 )
+from app.services.tools.execution_root import trusted_execution_root
 
 
 def external_agent_cwd(
@@ -27,10 +28,13 @@ def external_agent_cwd(
     conversation_id = str(arguments.get("conversation_id") or "") or None
     agent_id = str(arguments.get("agent_id") or "") or None
     requested = str(arguments.get("cwd") or arguments.get("workdir") or "").strip()
+    execution_root = trusted_execution_root(arguments)
 
     if requested:
-        root = workspace_root(workspace_id)
+        root = execution_root or workspace_root(workspace_id)
         cwd = resolve_workspace_path(root, requested, allow_empty=True)
+    elif execution_root is not None:
+        cwd = execution_root
     else:
         cwd = scoped_dir(
             workspace_id,
@@ -40,7 +44,7 @@ def external_agent_cwd(
         ) / safe_segment(provider)
         cwd.mkdir(parents=True, exist_ok=True)
 
-    root = workspace_root(workspace_id).resolve()
+    root = (execution_root or workspace_root(workspace_id)).resolve()
     resolved = cwd.resolve()
     if resolved != root and root not in resolved.parents:
         raise ValidationAppError("external agent cwd escapes workspace")

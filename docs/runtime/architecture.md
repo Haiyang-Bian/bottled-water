@@ -42,6 +42,7 @@ flowchart LR
     M --> A["AgentActor"]
     A <-->|"TeamMessage"| T["TeamJournal"]
     A <--> X["Model / Tool Ports"]
+    X -->|"ExecutionRootPort"| G["Agent Worktree"]
     A --> E["EventEnvelope"]
     R --> E
     E -->|"append first"| J["RunJournal"]
@@ -78,6 +79,12 @@ flowchart LR
 Agent 只能通过 `TeamMessenger` 主动公开消息。私信仅进入目标 Agent 下一轮的 `AgentExecutionRequest.inbox`，广播进入除发送者外所有成员的收件箱；完整提示词、私有推理和临时工具帧始终隔离。消息发送不等待对方模型调用，`expects_reply` 只创建开放线程并让 Policy 在下一安全检查点优先调度收件人。
 
 `TeamJournal` 为 Conversation 分配单调团队序号，并将 `TeamMessage` 与对应的 Run Event 原子提交。Runtime 事件仍保持各 Run 内的独立序号。Run 取消、失败或进程丢失时，尚未消费的团队消息转为 `interrupted`，不得被下一 Run 隐式续用。详细协议见[平权协作语义](./collaboration.md)。
+
+## 工作树执行边界
+
+一个团队 Conversation 可以绑定一个 Git 仓库与基准提交。AgentHub Adapter 为每个 Agent 解析可信的 `ExecutionRootPort`，文件、终端、沙箱、外部 CLI Agent 和 Git 工具只能在该 Agent 的工作树中执行。模型参数不是路径权限来源，不能用绝对路径或 `..` 越过执行根。
+
+managed 工作树由 AgentHub 在应用数据目录创建，adopted 工作树必须是同一 Git common dir 中已注册的独立工作树。工作树跨 Run 复用，Conversation 归档不隐式删除。`git.integrate` 只把同一 Conversation 成员的分支合并到调用者自己的干净分支；冲突会安全 abort，并通过团队消息交还 Agent 继续讨论。Kernel 不判断谁应当集成，详细契约见[工作树与 Git 协作](./worktrees.md)。
 
 ## Event Log 与重放
 

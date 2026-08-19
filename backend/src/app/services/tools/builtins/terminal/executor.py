@@ -30,6 +30,7 @@ from app.services.workspaces.filesystem import (
     scoped_dir,
     workspace_id_from_args,
 )
+from app.services.tools.execution_root import trusted_execution_root
 
 
 MAX_TERMINAL_TIMEOUT_SECONDS = 900
@@ -170,7 +171,7 @@ def _session_and_cwd(
     database_workspace_id = database_workspace_id_from_args(db, arguments)
     session = _resolve_sandbox_session(db, user, arguments, database_workspace_id)
     workspace_id = _filesystem_workspace_id(db, arguments, session)
-    root = scoped_dir(
+    root = trusted_execution_root(arguments) or scoped_dir(
         workspace_id,
         "sandbox",
         conversation_id=str(arguments.get("conversation_id") or "") or None,
