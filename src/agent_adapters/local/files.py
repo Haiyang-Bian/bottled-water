@@ -5,6 +5,7 @@ import fnmatch
 import hashlib
 import os
 import asyncio
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -116,7 +117,9 @@ class LocalFiles:
 
     async def edit(self, path, old_text, new_text, expected_hash):
         target = resolve_resource(self.workspace, path)
-        _, text, _ = self._read(target)
+        data, text, _ = self._read(target)
+        if digest(data) != expected_hash:
+            raise OperationError("file_conflict", "Read the current file and provide its sha256")
         if not old_text or text.count(old_text) != 1:
             raise OperationError("ambiguous_edit", "old_text must match exactly once")
         return self._replace(target, text.replace(old_text, new_text, 1), expected_hash)
@@ -145,18 +148,18 @@ class LocalFiles:
         directory = resolve_resource(self.workspace, path, directory=True)
         results = []
         seen = 0
+        output_bytes = 0
         async for item in self._walk(directory):
             name = item.relative_to(directory).as_posix()
             if fnmatch.fnmatch(name, pattern):
                 if seen >= offset:
+                    size = len(json.dumps(name, ensure_ascii=False).encode("utf-8")) + 2
+                    if len(results) == limit or output_bytes + size > OUTPUT_LIMIT - 1024:
+                        return {"files": results, "next_offset": seen, "truncated": True}
                     results.append(name)
+                    output_bytes += size
                 seen += 1
-                if len(results) > limit:
-                    break
-        return {
-            "files": results[:limit],
-            "next_offset": offset + limit if len(results) > limit else None,
-        }
+        return {"files": results, "next_offset": None, "truncated": False}
 
     async def search(self, query, path=".", pattern="*", offset=0, limit=100):
         if not query or offset < 0 or not 1 <= limit <= 1000:
@@ -164,6 +167,7 @@ class LocalFiles:
         directory = resolve_resource(self.workspace, path, directory=True)
         results = []
         seen = 0
+        output_bytes = 0
         async for item in self._walk(directory):
             name = item.relative_to(directory).as_posix()
             if not fnmatch.fnmatch(name, pattern):
@@ -175,8 +179,16 @@ class LocalFiles:
             for number, line in enumerate(text.splitlines(), 1):
                 if query in line:
                     if seen >= offset:
-                        results.append({"path": name, "line": number, "text": line[:1000]})
+                        row = {
+                            "path": name,
+                            "line": number,
+                            "text": line[:1000],
+                            "line_truncated": len(line) > 1000,
+                        }
+                        size = len(json.dumps(row, ensure_ascii=False).encode("utf-8")) + 2
+                        if len(results) == limit or output_bytes + size > OUTPUT_LIMIT - 1024:
+                            return {"matches": results, "next_offset": seen, "truncated": True}
+                        results.append(row)
+                        output_bytes += size
                     seen += 1
-                    if len(results) > limit:
-                        return {"matches": results[:limit], "next_offset": offset + limit}
-        return {"matches": results, "next_offset": None}
+        return {"matches": results, "next_offset": None, "truncated": False}

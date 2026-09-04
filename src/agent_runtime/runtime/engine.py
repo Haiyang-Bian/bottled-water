@@ -104,9 +104,7 @@ class RuntimeEngine:
         kernels = tuple(self._active.values())
         if not kernels:
             return ()
-        results = await asyncio.gather(
-            *(kernel.fail("runtime_shutdown") for kernel in kernels)
-        )
+        results = await asyncio.gather(*(kernel.fail("runtime_shutdown") for kernel in kernels))
         return tuple(results)
 
 
@@ -190,13 +188,9 @@ class RunKernel:
         self._forced_failure_reason: str | None = None
         self._collaboration_enabled = bool(request.metadata.get("collaboration_enabled"))
         self._team_messages: dict[str, TeamMessage] = {}
-        self._team_unread: dict[str, list[str]] = {
-            agent.id: [] for agent in request.agents
-        }
+        self._team_unread: dict[str, list[str]] = {agent.id: [] for agent in request.agents}
         self._team_open_threads: set[str] = set()
-        self._agent_turn_counts: dict[str, int] = {
-            agent.id: 0 for agent in request.agents
-        }
+        self._agent_turn_counts: dict[str, int] = {agent.id: 0 for agent in request.agents}
         self._collaboration_message_count = 0
         self._collaboration_failure_reason: str | None = None
         self._summary_agent_id = str(request.metadata.get("summary_agent_id") or "") or None
@@ -318,9 +312,7 @@ class RunKernel:
             await self._record_collaboration_rejection(f"agent:{sender_agent_id}", str(exc))
             raise
 
-    async def resolve_thread(
-        self, *, agent_id: str, thread_id: str, conclusion: str
-    ) -> None:
+    async def resolve_thread(self, *, agent_id: str, thread_id: str, conclusion: str) -> None:
         if not self._collaboration_enabled or self.team_journal is None:
             raise CollaborationProtocolError("Team collaboration is not enabled")
         if agent_id not in self._team_unread:
@@ -342,9 +334,7 @@ class RunKernel:
                 payload={"thread_id": thread_id, "conclusion": conclusion.strip()},
             )
             try:
-                persisted_event = await self.team_journal.resolve_thread(
-                    thread_id, agent_id, event
-                )
+                persisted_event = await self.team_journal.resolve_thread(thread_id, agent_id, event)
             except CollaborationProtocolError:
                 raise
             except Exception as exc:
@@ -452,9 +442,7 @@ class RunKernel:
                 },
             )
             try:
-                persisted, persisted_event = await self.team_journal.append_message(
-                    message, event
-                )
+                persisted, persisted_event = await self.team_journal.append_message(message, event)
             except CollaborationProtocolError:
                 raise
             except Exception as exc:
@@ -576,7 +564,10 @@ class RunKernel:
                 await self._finish(RunState.FAILED, "event_store_error")
                 return await self.result_future
             await asyncio.gather(
-                *(actor.request_cancel(self.cancellation.reason or "user_cancelled") for actor in self._actors.values()),
+                *(
+                    actor.request_cancel(self.cancellation.reason or "user_cancelled")
+                    for actor in self._actors.values()
+                ),
                 return_exceptions=True,
             )
             async with self._sequence_lock:
@@ -679,7 +670,10 @@ class RunKernel:
                     if budget_reason is not None:
                         await self._abort(budget_reason)
                         return
-                    if self._collaboration_enabled and not await self._prepare_collaboration_complete():
+                    if (
+                        self._collaboration_enabled
+                        and not await self._prepare_collaboration_complete()
+                    ):
                         continue
                     await self._stop_actors()
                     await self._commit_context()
@@ -722,9 +716,11 @@ class RunKernel:
             await self._abort("adapter_timeout")
         except AdapterNotCancellableError:
             await self._abort("adapter_not_cancellable")
-        except OutputTokenLimitExceeded:
+        except OutputTokenLimitExceeded as exc:
+            self.usage.add(Usage(**(exc.usage or {"estimated": True})))
             await self._abort("token_budget_exhausted")
-        except ModelInvocationError:
+        except ModelInvocationError as exc:
+            self.usage.add(Usage(**(exc.usage or {"estimated": True})))
             await self._abort("model_error")
         except EventSequenceConflictError:
             await self._abort("event_sequence_conflict")
@@ -761,8 +757,7 @@ class RunKernel:
     ) -> None:
         known = {agent.id: agent for agent in self.request.agents}
         allowed = {
-            str(agent_id)
-            for agent_id in self.request.metadata.get("allowed_agent_ids", known)
+            str(agent_id) for agent_id in self.request.metadata.get("allowed_agent_ids", known)
         }
         if (
             not targets
@@ -806,7 +801,9 @@ class RunKernel:
                         0, self.limits.max_total_tokens - self.usage.total_tokens
                     ),
                     inbox=inbox,
-                    team_messenger=None if is_summary else (self if self._collaboration_enabled else None),
+                    team_messenger=None
+                    if is_summary
+                    else (self if self._collaboration_enabled else None),
                     metadata=metadata,
                 )
             )
@@ -898,9 +895,7 @@ class RunKernel:
                 messages=(
                     *self._context.messages,
                     {"role": "user", "content": self.request.input},
-                    *(
-                        ({"role": "assistant", "content": output} for output in self._outputs)
-                    ),
+                    *(({"role": "assistant", "content": output} for output in self._outputs)),
                 ),
                 agent_memories=dict(self._memories),
             ),

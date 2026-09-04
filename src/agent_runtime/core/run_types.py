@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -54,9 +55,19 @@ class RuntimeLimits:
             "max_open_threads": self.max_open_threads,
             "max_team_message_chars": self.max_team_message_chars,
         }
-        invalid = [name for name, value in values.items() if value <= 0]
+        invalid = [
+            name
+            for name, value in values.items()
+            if isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            or (name.startswith("max_") and not isinstance(value, int))
+        ]
         if invalid:
-            raise ValueError(f"Runtime limits must be positive: {', '.join(invalid)}")
+            raise ValueError(
+                f"Runtime limits must be finite positive numbers (integer budgets): {', '.join(invalid)}"
+            )
 
 
 @dataclass

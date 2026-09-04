@@ -164,6 +164,7 @@ class AgentLoop:
     ):
         self.extension = extension_factory(agent_config)
         self.context_snapshot = None
+        self.context_diagnostics = {}
         self.agent = agent_config
         self.model = model_provider
         self.use_streaming = use_streaming
@@ -288,6 +289,10 @@ class AgentLoop:
             context_provider=context_provider,
             context_metadata=context_metadata,
         )
+        if self.context_diagnostics:
+            await _emit(
+                "agent.context_built", {"agent_id": self.agent.id, **self.context_diagnostics}
+            )
 
         # 获取可用工具（按 AgentConfig.tools 过滤）
         tools = []
@@ -345,6 +350,8 @@ class AgentLoop:
                         max_tokens=remaining_tokens,
                     )
                 self._record_usage(response, system_prompt, messages)
+                if response.finish_reason == "length":
+                    raise OutputTokenLimitExceeded("token_budget_exhausted")
             except OutputTokenLimitExceeded:
                 raise
             except Exception as e:
@@ -389,6 +396,7 @@ class AgentLoop:
                     "agent_message_id": stream_message_id,
                     "tool_count": len(tool_calls),
                     "tools": [tc.get("function", {}).get("name", "unknown") for tc in tool_calls],
+                    "calls": tool_calls,
                     **self._stream_context_payload(context_metadata),
                 },
             )
@@ -482,6 +490,7 @@ class AgentLoop:
                 await _emit(
                     "agent.tool_result",
                     {
+                        "call_id": tool_call.call_id,
                         "agent_id": self.agent.id,
                         "agent_message_id": stream_message_id,
                         "tool": tool_name,
@@ -569,6 +578,8 @@ class AgentLoop:
                         max_tokens=self._remaining_token_budget(),
                     )
                 self._record_usage(summary_response, system_prompt, summary_messages)
+                if summary_response.finish_reason == "length":
+                    raise OutputTokenLimitExceeded("token_budget_exhausted")
                 final_content = summary_response.content or ""
                 await self._run_checkpoint(
                     checkpoint,
@@ -913,8 +924,22 @@ class AgentLoop:
                 if inspect.isawaitable(result):
                     result = await result
                 if isinstance(result, AgentContextBuildResult) and result.messages:
+                    self.context_diagnostics = {
+                        key: value
+                        for key, value in result.diagnostics.items()
+                        if key
+                        in {
+                            "history_messages",
+                            "dropped_messages",
+                            "dropped_turns",
+                            "history_chars",
+                            "current_request_over_budget",
+                        }
+                    }
                     return self._normalize_context_messages(result, system_prompt)
             except Exception as exc:
+                if not getattr(context_provider, "fallback_on_error", True):
+                    raise
                 logger.warning(
                     "Agent context provider failed; falling back to runtime context",
                     agent_id=self.agent.id,

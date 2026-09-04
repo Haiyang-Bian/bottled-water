@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from agent_contracts.errors import ModelInvocationError, OutputTokenLimitExceeded
 
 from agent_runtime.core.run_types import AgentExecutionResult, AgentMemory, Usage
 from agent_runtime.core.types import Event
@@ -74,15 +75,24 @@ class AgentLoopExecutor:
                 request.agent.id,
             )
 
-        result = await loop.run(
-            task,
-            request.context.blackboard,
-            tool_executor=tool_executor,
-            emit_event=emit_legacy,
-            checkpoint=checkpoint,
-            context_provider=self.context_provider,
-            context_metadata=metadata,
-        )
+        try:
+            result = await loop.run(
+                task,
+                request.context.blackboard,
+                tool_executor=tool_executor,
+                emit_event=emit_legacy,
+                checkpoint=checkpoint,
+                context_provider=self.context_provider,
+                context_metadata=metadata,
+            )
+        except (ModelInvocationError, OutputTokenLimitExceeded) as exc:
+            exc.usage = {
+                **loop.usage,
+                "estimated": loop.usage_estimated
+                or isinstance(exc, ModelInvocationError)
+                or not any(loop.usage.values()),
+            }
+            raise
         report = result["status_report"]
         output = str(result.get("work_product") or "")
         return AgentExecutionResult(

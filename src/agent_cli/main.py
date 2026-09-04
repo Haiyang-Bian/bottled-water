@@ -71,6 +71,8 @@ def initialize(args, home):
     config.setdefault("profiles", {})[args.profile] = asdict(profile)
     config["default_profile"] = args.profile
     save_config(home, config)
+    for name in ("credentials", "locks", "logs", "tmp"):
+        (home / name).mkdir(parents=True, exist_ok=True)
     print(f"Configured {args.profile}: {home / 'config.toml'}", file=sys.stderr)
     return 0
 

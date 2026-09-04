@@ -28,6 +28,11 @@ class Profile:
     max_history_chars: int = 64000
 
     def __post_init__(self):
+        if not all(
+            isinstance(value, str)
+            for value in (self.provider, self.model, self.credential_ref, self.base_url)
+        ):
+            raise ConfigurationError("Profile model and connection fields must be strings")
         if self.provider not in {"openai_compatible", "deepseek"}:
             raise ConfigurationError("Supported CLI providers: openai_compatible, deepseek")
         if not self.model or not self.credential_ref:
@@ -46,10 +51,15 @@ class Profile:
                     "base_url must be an HTTP(S) URL without embedded credentials"
                 )
         if any(
-            not math.isfinite(value) or value <= 0
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
             for value in (self.max_tokens, self.timeout_seconds, self.max_history_chars)
         ):
             raise ConfigurationError("Profile limits must be positive")
+        if not isinstance(self.max_tokens, int) or not isinstance(self.max_history_chars, int):
+            raise ConfigurationError("Token and history limits must be integers")
 
 
 def load_config(directory):

@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 import threading
+import time
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -109,6 +111,31 @@ def cli_fixture(tmp_path):
                     delta = {
                         "content": 'Directory not authorized.\n```status_report\n{"state":"failed","will":"blocked"}\n```'
                     }
+            elif scenario.startswith("SLOW") and step == 0:
+                python = sys.executable.replace("'", "''")
+                workload = str(Path(__file__).parent / "helpers" / "process_tree.py").replace(
+                    "'", "''"
+                )
+                delta = call(
+                    "Execute a non-interactive",
+                    {
+                        "script": f"& '{python}' '{workload}'",
+                        "timeout": 90,
+                    },
+                )
+            elif scenario == "SECRET":
+                if step == 0:
+                    delta = call(
+                        "Execute a non-interactive",
+                        {
+                            "script": "Write-Output 'fixture-key-not-a-real-credential'",
+                        },
+                    )
+                else:
+                    delta = {
+                        "content": "fixture-key-not-a-real-credential finished",
+                        "reasoning_content": "private-reasoning-must-not-persist",
+                    }
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
@@ -131,7 +158,9 @@ def cli_fixture(tmp_path):
                     {
                         "index": 0,
                         "delta": {},
-                        "finish_reason": "tool_calls" if "tool_calls" in delta else "stop",
+                        "finish_reason": "length"
+                        if scenario == "TRUNCATED"
+                        else ("tool_calls" if "tool_calls" in delta else "stop"),
                     }
                 ]
             )
@@ -165,6 +194,9 @@ def cli_fixture(tmp_path):
         )
         return result
 
+    run.python = python
+    run.environment = environment
+
     try:
         run(
             "init",
@@ -186,6 +218,27 @@ def cli_fixture(tmp_path):
 
 def records(result):
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+def test_cli_redacts_credentials_and_does_not_persist_private_reasoning(cli_fixture):
+    import sqlite3
+
+    run, project, _, _ = cli_fixture
+    secret = run.environment["AGENTHUB_TEST_KEY"]
+    run("trust", "add", str(project))
+    response = run("--json", "-p", "SECRET")
+    assert secret not in response.stdout + response.stderr
+    assert "private-reasoning-must-not-persist" not in response.stdout + response.stderr
+    assert "[redacted]" in response.stdout
+    assert secret not in run("config", "show").stdout
+    run_id = records(response)[-1]["run_id"]
+    replay = run("replay", run_id).stdout
+    state = Path(run.environment["AGENTHUB_HOME"])
+    with sqlite3.connect(state / "state.sqlite3") as connection:
+        persisted = "\n".join(connection.iterdump())
+    diagnostics = "\n".join(p.read_text(encoding="utf-8") for p in (state / "logs").glob("*.log"))
+    for text in (persisted, replay, diagnostics):
+        assert secret not in text and "private-reasoning-must-not-persist" not in text
 
 
 def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
@@ -215,6 +268,10 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     run("--continue", "--add-dir", str(second), "--json", "-p", "CROSS_ALLOWED")
     failed = records(run("--json", "-p", "FAIL", expected=1))[-1]
     assert failed["state"] == "failed"
+    assert failed["usage"]["estimated"]
+    truncated = records(run("--json", "-p", "TRUNCATED", expected=1))[-1]
+    assert truncated["state"] == "failed" and truncated["reason_code"] == "token_budget_exhausted"
+    assert truncated["usage"]["prompt_tokens"] == 30 and not truncated["usage"]["estimated"]
     assert len(json.loads(run("sessions").stdout)) >= 2
     if os.environ.get("AGENTHUB_TEST_PYTHON"):
         isolated = subprocess.run(
@@ -229,3 +286,82 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
             timeout=20,
         )
         assert isolated.returncode == 0, isolated.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object / SIGINT lifecycle")
+@pytest.mark.parametrize("mode", ["cancel", "crash"])
+def test_cli_process_tree_lock_cancellation_and_crash_recovery(cli_fixture, mode):
+    import win32api
+    import win32event
+    from agent_adapters.storage.sqlite import SQLiteStore
+
+    run, project, _, _ = cli_fixture
+    run("trust", "add", str(project))
+    trigger = project / "interrupt.signal"
+    wrapper = Path(__file__).parent / "helpers" / "cli_signal_host.py"
+    handles = []
+    with (project / "cli.out").open("wb") as stdout, (project / "cli.err").open("wb") as stderr:
+        process = subprocess.Popen(
+            [run.python, "-B", str(wrapper), str(trigger), "--json", "-p", "SLOW_" + mode],
+            cwd=project,
+            env=run.environment,
+            stdout=stdout,
+            stderr=stderr,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        try:
+            deadline = time.monotonic() + 25
+            pids_file = project / "tree-pids.txt"
+            while not pids_file.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert pids_file.exists(), (project / "cli.err").read_text(encoding="utf-8")
+            pids = pids_file.read_text(encoding="ascii").split()
+            handles = [win32api.OpenProcess(0x00100000, False, int(pid)) for pid in pids]
+            session = json.loads(run("sessions").stdout)[0]["id"]
+            run("--resume", session, "--json", "-p", "BUSY", expected=3)
+            # Another session can run while the first owns both its lock and live processes.
+            run("--json", "-p", "OTHER_SESSION")
+            store = SQLiteStore(Path(run.environment["AGENTHUB_HOME"]) / "state.sqlite3")
+            try:
+                row = store.db.execute(
+                    "SELECT id,result FROM runs WHERE scope=?", (session,)
+                ).fetchone()
+                abandoned_run = row["id"]
+                assert row["result"] is None
+            finally:
+                store.close()
+            if mode == "cancel":
+                trigger.write_text("SIGINT", encoding="ascii")
+                assert process.wait(timeout=25) == 130
+            else:
+                process.kill()
+                process.wait(timeout=10)
+            for handle in handles:
+                assert win32event.WaitForSingleObject(handle, 5000) == 0
+            assert pids_file.exists()  # Side effects are retained, not rolled back.
+            run("--resume", session, "--json", "-p", "AFTER_RESTART")
+            events = records(run("replay", abandoned_run))
+            terminal = [
+                e
+                for e in events
+                if e["type"]
+                in {"system.run_completed", "system.run_failed", "system.run_cancelled"}
+            ]
+            assert len(terminal) == 1
+            assert terminal[0]["type"] == (
+                "system.run_cancelled" if mode == "cancel" else "system.run_failed"
+            )
+            if mode == "crash":
+                assert terminal[0]["payload"]["reason_code"] == "process_lost"
+            else:
+                output = [
+                    json.loads(line)
+                    for line in (project / "cli.out").read_text(encoding="utf-8").splitlines()
+                ]
+                assert output[-1]["state"] == "cancelled"
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            for handle in handles:
+                handle.Close()
