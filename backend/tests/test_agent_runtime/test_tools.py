@@ -4,8 +4,8 @@
 
 import pytest
 
-from agent_runtime.tools.registry import ToolRegistry
-from agent_runtime.tools.executor import ToolExecutorImpl
+from agent_subsystems.tools.registry import ToolRegistry
+from agent_subsystems.tools.executor import ToolExecutorImpl
 from agent_runtime.core.types import ToolCall, ToolResult
 
 

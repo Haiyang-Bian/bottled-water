@@ -21,7 +21,7 @@ from app.schemas.requests import (
 from app.services.llm.gateway import test_model_config
 from app.services.model_config_resolver import normalize_provider_type
 from app.services.serialization import model_config_to_dict, model_provider_to_dict, strip_sensitive
-from model_provider import get_builtin_providers
+from app.services.provider_catalog import get_builtin_providers
 
 
 router = APIRouter(tags=["model-management"])
@@ -51,7 +51,7 @@ async def _resolve_provider_by_type(
 ) -> ModelProvider:
     """根据 provider_type 查找或自动创建内置 ModelProvider 记录。"""
     await ensure_model_tables(db)
-    from model_provider import get_builtin_providers
+    from app.services.provider_catalog import get_builtin_providers
 
     # 内置元数据只是模板；每个用户持有自己的 provider 与凭据。
     provider = await db.scalar(

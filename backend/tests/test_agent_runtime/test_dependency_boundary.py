@@ -6,11 +6,12 @@ import ast
 from pathlib import Path
 
 
-RUNTIME_ROOT = Path(__file__).parents[2] / "src" / "agent_runtime"
+RUNTIME_ROOT = Path(__file__).parents[3] / "src" / "agent_runtime"
 FORBIDDEN_ROOTS = {"app", "db"}
 
 
 def test_agent_runtime_does_not_import_agenthub_application_or_database() -> None:
+    assert RUNTIME_ROOT.is_dir()
     violations: list[str] = []
 
     for path in sorted(RUNTIME_ROOT.rglob("*.py")):

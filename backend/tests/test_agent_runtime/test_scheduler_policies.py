@@ -2,19 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_runtime import (
-    AgentConfig,
-    AgentReport,
-    AgentState,
-    AgentWill,
-    RunRequest,
-    RunState,
-    RuntimeEngine,
-    SchedulingProposal,
-    SingleAgentPolicy,
-    TeamLeadPolicy,
-    WorkflowPolicy,
-)
+from agent_runtime import AgentConfig, AgentReport, AgentState, AgentWill, RunRequest, RunState, RuntimeEngine, SchedulingProposal
+from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
+from agent_runtime.strategies.policies import TeamLeadPolicy, WorkflowPolicy
 from agent_runtime.core.run_types import AgentExecutionResult
 from app.services.runtime.policies import AgentHubTeamLeadPolicy
 

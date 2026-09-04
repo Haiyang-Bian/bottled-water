@@ -13,20 +13,13 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app.services.execution_extension import WebExecutionExtension
 
-from agent_runtime import (
-    AgentConfig,
-    AgentLoopExecutor,
-    RunRequest,
-    AgentContextBuildRequest,
-    AgentContextBuildResult,
-    CollaborativeTeamPolicy,
-    ToolCall,
-    RuntimeEngine,
-    RuntimeLimits,
-    SingleAgentPolicy,
-    WorkflowPolicy,
-)
+from agent_runtime import AgentConfig, RunRequest, AgentContextBuildRequest, AgentContextBuildResult, ToolCall, RuntimeEngine, RuntimeLimits
+from agent_subsystems.execution.agent_executor import AgentLoopExecutor
+from agent_runtime.strategies.collaborative import CollaborativeTeamPolicy
+from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
+from agent_runtime.strategies.policies import WorkflowPolicy
 from agent_runtime.core.interfaces import ToolExecutor
 from agent_runtime.core.types import Event as RuntimeEvent
 from agent_runtime.workflow.replanner import sanitize_workflow
@@ -340,6 +333,7 @@ class OrchestratorService:
         )
         engine = RuntimeEngine(
             agent_executor=AgentLoopExecutor(
+                extension_factory=WebExecutionExtension,
                 model_provider=provider,
                 tool_executor=tool_executor,
                 context_provider=_ContextBuilderProvider(session_factory),

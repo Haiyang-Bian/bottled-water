@@ -9,14 +9,8 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from agent_runtime import (
-    AgentConfig,
-    AgentReport,
-    AgentState,
-    AgentWill,
-    RuntimeEngine,
-    SingleAgentPolicy,
-)
+from agent_runtime import AgentConfig, AgentReport, AgentState, AgentWill, RuntimeEngine
+from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 from agent_runtime.core.run_types import AgentExecutionResult
 from agent_runtime.core.types import Event as RuntimeEvent
 from app.services.conversation_run_manager import (

@@ -8,22 +8,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from agent_runtime import (
-    AgentConfig,
-    AgentReport,
-    AgentState,
-    AgentWill,
-    CollaborativeTeamPolicy,
-    EventEnvelope,
-    RunRequest,
-    RunSnapshot,
-    RunState,
-    RuntimeLimits,
-    RuntimeEngine,
-    SchedulingProposal,
-    TeamMessage,
-    Usage,
-)
+from agent_runtime import AgentConfig, AgentReport, AgentState, AgentWill, EventEnvelope, RunRequest, RunSnapshot, RunState, RuntimeLimits, RuntimeEngine, SchedulingProposal, TeamMessage, Usage
+from agent_runtime.strategies.collaborative import CollaborativeTeamPolicy
 from app.persistence.runtime_journal import SQLRunJournal
 from app.persistence.team_journal import SQLTeamJournal
 from app.api.runtime_events import list_team_messages

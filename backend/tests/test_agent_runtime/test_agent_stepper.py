@@ -5,7 +5,7 @@ import pytest
 
 from agent_runtime.core.protocol import CONTROL_CANCEL, CONTROL_PAUSE, CONTROL_RESUME
 from agent_runtime.core.types import AgentConfig, AgentReport, AgentState, AgentWill, Event
-from agent_runtime.runtime.agent_loop import AgentLoop
+from agent_subsystems.execution.agent_loop import AgentLoop
 from agent_runtime.runtime.agent_stepper import AgentStepper
 from agent_runtime.runtime.mailbox import Mailbox
 from model_provider.core.interfaces import ChatResponse, StreamChunk

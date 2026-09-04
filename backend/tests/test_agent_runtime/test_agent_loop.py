@@ -11,7 +11,7 @@ import pytest
 
 from model_provider import ChatResponse, StreamChunk
 from agent_runtime.core.interfaces import AgentContextBuildResult
-from agent_runtime.runtime.agent_loop import AgentLoop, _StatusReportStreamFilter
+from agent_subsystems.execution.agent_loop import AgentLoop, _StatusReportStreamFilter
 from agent_runtime.core.types import AgentConfig, AgentState, AgentWill
 
 import logging

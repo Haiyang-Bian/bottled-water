@@ -4,19 +4,8 @@ import asyncio
 
 import pytest
 
-from agent_runtime import (
-    AgentConfig,
-    AgentReport,
-    AgentState,
-    AgentWill,
-    RunRequest,
-    RunState,
-    RuntimeEngine,
-    RuntimeLimits,
-    SchedulingProposal,
-    Usage,
-    AgentLoopExecutor,
-)
+from agent_runtime import AgentConfig, AgentReport, AgentState, AgentWill, RunRequest, RunState, RuntimeEngine, RuntimeLimits, SchedulingProposal, Usage
+from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_runtime.core.run_types import AgentExecutionResult
 from agent_runtime.runtime.adapter_isolation import (
     AdapterNotCancellableError,
