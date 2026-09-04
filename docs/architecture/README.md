@@ -1,6 +1,6 @@
 # AgentHub 系统架构：内核、子系统与宿主
 
-> 文档状态：目标架构，2026-09-04 建立。源码核对基线为 `06b41ae92370762c52f35c4607c3c08002dd48bf`。本轮只调整文档；下文的模块边界、目录和接口增量不表示拆分已经实现。
+> 文档状态：目标架构与 CLI MVP 迁移现状，2026-09-04。MVP 执行链已迁入根级 `src`；未迁移领域仍按原宿主实现。实测结果及剩余验收见 [CLI 实施记录](./cli-mvp.md)。
 
 AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统。Runtime 是控制运行的内核；模型、上下文、工具、文件与进程、MCP、Skill 等是可组合的子系统；Web、命令行和评测程序负责组织这些能力并呈现结果。
 
@@ -18,7 +18,7 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 | [Runtime 当前实现](../runtime/current-state.md)与[项目状态](../implementation-status.md) | 哪些契约已经实现，哪些还存在差距 | 当前状态 |
 | [File map](../file-map.md) | 现在去哪里修改代码 | 当前路径索引 |
 
-本文扩展原来的 Runtime 分层，不废除已有运行时不变量。描述现状时以源码和对应测试为准；描述目标时以本目录与 Runtime 契约为准。出现冲突必须明确修订契约，不能借移动模块改变终态、隐私或授权语义。后续代码拆分仍应单独评审和分阶段实施。
+本文扩展原来的 Runtime 分层，不废除已有运行时不变量。描述现状时以源码和对应测试为准；描述目标时以本目录与 Runtime 契约为准。出现冲突必须明确修订契约，不能借移动模块改变终态、隐私或授权语义。本次按已批准的 M0–M4 计划分阶段实施；超出 MVP 的拆分继续单独评审。
 
 ## 2. 操作系统类比及其边界
 
@@ -29,7 +29,7 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 | 任务与通信 | `AgentActor`、Mailbox、团队消息 | 协作式执行，显式共享消息；不是线程级或硬件级隔离 |
 | 系统服务 | 模型、上下文、工具、MCP、Skill、工作空间等 | 提供可复用能力，通过公开契约协作 |
 | 驱动 | Provider SDK、文件/进程、数据库、凭据实现 | 适配外部环境，不能取得内核终态控制权 |
-| Shell | 计划中的 CLI | 组装本地能力、输入命令、显示事件和运行结果 |
+| Shell | 本地 CLI | 组装本地能力、输入命令、显示事件和运行结果 |
 | 图形应用 | AgentHub Web 与桌面工作台 | 处理产品身份、会话、界面、读模型和发布流程 |
 | 系统测试程序 | 计划中的 eval harness | 通过公共接口验证同一套内核及子系统 |
 
@@ -40,7 +40,7 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 ```mermaid
 flowchart TB
     UI["Web / Desktop / Mobile 客户端"] --> WEB["AgentHub 宿主：API、身份、会话、投影"]
-    CLI["CLI 宿主（计划）"] --> COMPOSE["各宿主的组合入口"]
+    CLI["CLI 宿主"] --> COMPOSE["各宿主的组合入口"]
     EVAL["Eval 宿主（计划）"] --> COMPOSE
     WEB --> COMPOSE
     COMPOSE --> K["Runtime Kernel"]
@@ -81,7 +81,7 @@ flowchart TB
 
 ### 已有契约继续作为起点
 
-现有定义见 [`core/ports.py`](../../backend/src/agent_runtime/core/ports.py)、[`run_types.py`](../../backend/src/agent_runtime/core/run_types.py)和[公共导出](../../backend/src/agent_runtime/__init__.py)。
+现有定义见 [`core/ports.py`](../../src/agent_runtime/core/ports.py)、[`run_types.py`](../../src/agent_runtime/core/run_types.py)和[公共导出](../../src/agent_runtime/__init__.py)。
 
 | 契约 | 作用 | 所有权 |
 | --- | --- | --- |
@@ -147,19 +147,19 @@ Journal 内部的追加、终态 CAS、团队消息与事件原子性必须保�
 | React 工作台 | 对话、工作流画布、权限配置、运行观察、产物展示 | 已存在；消费 Web 协议，不直接导入 Python Kernel |
 | Tauri 桌面端 | 启动/打包本地后端、单用户身份、桌面系统集成 | 已存在；目前仍宿主完整后端，不代表已拥有独立轻量运行时发行包 |
 | Mobile/PWA/Capacitor | 移动输入、展示和连接同一后端 | 已存在；不是另一个 Python 执行内核 |
-| 本地 CLI | 配置、本地 Scope、命令/交互输入、文本或 JSONL 事件、取消、退出码 | 待实现；当前 `app.cli` 仅管理管理员初始化 |
+| 本地 CLI | 配置、本地 Scope、命令/交互输入、文本或 JSONL 事件、取消、退出码 | 已实现于 `src/agent_cli`；`app.cli` 仍只管理 Web 管理员初始化 |
 | Eval harness | 固定输入、依赖替身、故障注入、真实模型任务和可复现报告 | 待实现为独立宿主；已有 pytest 是重要基线 |
 
-首个 CLI 版本先提供单次运行、事件观察、取消和本地记录；交互 REPL、团队工作树、多能力组合随后逐步加入。它类似编码 Agent 的终端入口，但价值在于验证本项目的执行系统，不以复刻其他产品界面作为验收标准。
+首个 CLI 版本包含交互 REPL、单次运行、持久会话、事件观察和取消；团队工作树及多能力组合以后逐项加入。它类似编码 Agent 的终端入口，但价值在于验证本项目的执行系统，不以复刻其他产品界面作为验收标准。
 
-CLI 的 stdout 在 JSONL 模式仅承载机器可读结果/事件；日志与交互提示走 stderr。区分 Run 成功、失败、取消、配置错误与缺失能力；退出码具体数值在 CLI 接口实现时固定并测试。`replay` 只读取已保存事件，不承诺恢复进程。评测明确区分确定性替身与真实 Provider，禁止用 mock/fallback 结果计入真实成功率。
+CLI 的 stdout 在 JSONL 模式仅承载机器可读结果/事件；日志与交互提示走 stderr。区分 Run 成功、失败、取消、配置错误与缺失能力；退出码为成功 0、运行失败 1、配置/能力/信任错误 2、会话占用 3、取消 130。`replay` 只读取已保存事件，不承诺恢复进程。评测明确区分确定性替身与真实 Provider，禁止用 mock/fallback 结果计入真实成功率。
 
 ## 9. 建议的源码组织
 
-下面是迁移后的模块归属示意，**这些新目录尚未创建，也不是本轮改动清单**。先实现模块边界，再按实际依赖拆出可独立安装的发行单元；不要求每个子系统一个 wheel。
+下面目录已建立。根级发行包 `agenthub-system` 包含共享系统及 CLI；`agenthub-backend` 依赖它并保留 Web 依赖。根级 uv workspace 共用一份锁文件，独立 wheel 安装验证实际依赖隔离。MCP、Skill、Workflow、内容和外部 Agent 的新目录目前只有职责说明。
 
 ```text
-backend/src/
+src/
   agent_contracts/       少量跨领域值类型、授权与资源引用
   agent_runtime/         Kernel 与其公开生命周期 Port
   agent_subsystems/
@@ -177,10 +177,11 @@ backend/src/
   model_provider/        模型接口、能力与可选 Provider 驱动
   agent_adapters/        通用本机资源、存储、凭据实现
   agent_cli/             本地宿主与命令入口
+backend/src/
   app/                   AgentHub API、组合入口、业务与产品适配器
   db/                    AgentHub 专属模型与迁移
 ```
 
-`agent_subsystems` 只是领域命名空间，不得新建一个全能调度中心。传输和驱动可以紧邻对应子系统放置，但必须可选加载，并遵守相同依赖规则。现有 `model_provider` 优先演进；现有仍公开的 Runtime API 在迁移窗口保持兼容，不恢复已经删除的旧 Orchestrator API。
+`agent_subsystems` 只是领域命名空间，不得新建一个全能调度中心。传输和驱动可以紧邻对应子系统放置，但必须可选加载，并遵守相同依赖规则。现有 `model_provider` 优先演进；迁移同时更新宿主与测试的导入，删除旧实现和旧导出，不保留兼容别名。尚未迁移的团队/Workflow 策略仍暂存 `agent_runtime`；这不代表其最终归属为 Kernel。
 
 是否成功拆分，由独立安装、Web/CLI 共用执行链、故障与授权契约测试、事件与上下文一致性来判断。具体步骤见[迁移与验收](./migration.md)。

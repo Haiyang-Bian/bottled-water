@@ -1,6 +1,6 @@
 # 新旧架构差异、问题与迁移验收
 
-> 2026-09-04 源码核对，基线 `06b41ae92370762c52f35c4607c3c08002dd48bf`。本文中的“旧架构”指这次拆分前的当前实现，不指已经移除的历史 Session/Orchestrator。迁移阶段均为计划，本轮只完成架构文档。
+> 2026-09-04 源码核对，基线 `06b41ae92370762c52f35c4607c3c08002dd48bf`。本文中的“旧架构”指这次拆分前的当前实现，不指已经移除的历史 Session/Orchestrator。旧问题保留为拆分前证据；本次已实现的处理见下表和 [CLI 实施记录](./cli-mvp.md)。源码链接已指向迁移后的当前文件。
 
 ## 1. 旧架构的形态与已有基础
 
@@ -42,11 +42,24 @@ flowchart TB
 | 验证 | 内核单测与 Web 集成验证为主 | 契约测试 + Web/CLI 共享链 + eval 场景 | 可以验证完整 harness，而非只有生命周期 |
 | 可恢复性 | 事件补拉、Context 跨 Run；进程丢失失败 | 先保持当前语义；未来单独设计检查点 | 避免把重放包装成崩溃续跑 |
 
-## 3. 已识别问题与源码证据
+## 3. 拆分前的问题与证据（保留基线）
+
+下列 P1–P11 描述拆分前状态，不应将旧耦合描述视为迁移后仍全部存在。
+
+| 问题 | 本次处理 | 剩余事项 |
+| --- | --- | --- |
+| P1 执行与产品耦合 | Loop 迁入 execution；WebExecutionExtension 注入产品规则；Kernel 改用公共错误 | 复杂策略/旧 function_loop 后续收敛 |
+| P2/P3/P6 工具与资源 | 公共 registry/invoker，CLI grants，文件及 Windows 驱动 | Web RBAC、Skill/MCP、常驻终端仍待抽取 |
+| P4 历史缺口 | ContextSnapshot 进入执行器，裁剪保留完整轮次与当前输入 | 自动摘要未引入 |
+| P7 Scope 存储 | CLI SQLite 不依赖 User/Conversation 外键 | Web 表未变动；本地 TeamJournal 不在 MVP |
+| P10 发行 | 根级共享 wheel、可选 CLI 依赖、SDK 延迟导入 | 真实 Provider 验收需显式配置 |
+| P11 恢复 | 会话锁、取消、process_lost、只读 replay | 不恢复崩溃执行点；其他高级恢复待实现 |
+| 新确认：失败误报成功 | FAILED/BLOCKED 提案传入 Kernel failed 终态 | 不以模型文字代替任务结果验证 |
+
 
 ### P1. “包已独立”尚不等于“Kernel 已纯化”
 
-[`agent_loop.py`](../../backend/src/agent_runtime/runtime/agent_loop.py) 同时承担模型/工具循环、产物选择与部署相关判断，并导入 [`common/artifact_heuristics.py`](../../backend/src/common/artifact_heuristics.py)。[`engine.py`](../../backend/src/agent_runtime/runtime/engine.py) 还直接引用 `model_provider.core.streaming.OutputTokenLimitExceeded`。
+[`agent_loop.py`](../../src/agent_subsystems/execution/agent_loop.py) 同时承担模型/工具循环、产物选择与部署相关判断，并导入 [`common/artifact_heuristics.py`](../../backend/src/common/artifact_heuristics.py)。[`engine.py`](../../src/agent_runtime/runtime/engine.py) 还直接引用 `model_provider.core.streaming.OutputTokenLimitExceeded`。
 
 **影响：** 单次产品交付规则改变可能影响通用 Agent 执行；内核仍感知模型包的异常类型。现有 [`test_dependency_boundary.py`](../../backend/tests/test_agent_runtime/test_dependency_boundary.py) 只禁止直接导入 `app`/`db`，不能发现藏在 `common` 中的产品语义或证明最小安装。
 
@@ -66,11 +79,11 @@ flowchart TB
 
 **影响：** 不能仅根据“配置了 permissions”就断言所有路径会拒绝缺失权限；另一个宿主也难以复用一套清晰的能力策略。这不等于已经证明所有工具均能越权，实际入口仍需逐项核对。
 
-**目标处理：** 将身份/RBAC 到 grants 的转换留宿主；通用执行点统一落实授权、schema、资源约束，嵌套调用只能继承或收窄。拒绝应在产生外部副作用之前发生并可审计。行为收紧属于后续独立代码变更，需要兼容性说明和拒绝路径测试。
+**目标处理：** 将身份/RBAC 到 grants 的转换留宿主；通用执行点统一落实授权、schema、资源约束，嵌套调用只能继承或收窄。拒绝应在产生外部副作用之前发生并可审计。行为收紧属于后续独立代码变更，需要更新宿主调用方和拒绝路径测试。
 
 ### P4. 跨 Run 的存储契约与默认执行器消费路径不完整对齐
 
-Kernel 会把 Scope 快照放入执行请求，但 [`AgentLoopExecutor`](../../backend/src/agent_runtime/runtime/agent_executor.py) 调用 loop 时主要传入 `request.context.blackboard`、context provider 和 metadata，并未直接将 `request.context.messages` / `agent_memories` 交给 loop。Web 通过 [`runtime_service.py`](../../backend/src/app/services/runtime_service.py) 的 `_ContextBuilderProvider` 与 SQL [`ContextBuilder`](../../backend/src/app/services/context/builder.py) 补充产品历史。
+Kernel 会把 Scope 快照放入执行请求，但 [`AgentLoopExecutor`](../../src/agent_subsystems/execution/agent_executor.py) 调用 loop 时主要传入 `request.context.blackboard`、context provider 和 metadata，并未直接将 `request.context.messages` / `agent_memories` 交给 loop。Web 通过 [`runtime_service.py`](../../backend/src/app/services/runtime_service.py) 的 `_ContextBuilderProvider` 与 SQL [`ContextBuilder`](../../backend/src/app/services/context/builder.py) 补充产品历史。
 
 **影响：** “ContextStore 可以保存历史”不能证明“默认执行器在脱离 Web 时能正确使用历史”。现有 Web 历史并非因此全部失效；问题是完整能力依赖隐藏在宿主中。
 
@@ -110,7 +123,7 @@ Web 工具派发会进入 Skill Runtime，而 [`skills/runners/script.py`](../..
 
 ### P9. Workflow 的图机制、应用持久化与展示状态存在多处边界
 
-[`agent_runtime/workflow`](../../backend/src/agent_runtime/workflow)、[`strategies`](../../backend/src/agent_runtime/strategies) 与 [`app/services/workflows`](../../backend/src/app/services/workflows) 都包含图、调度或执行相关逻辑；应用 `runtime.py` 还负责 ORM 状态与锁。当前 Workflow 遍历保留可变游标。
+[`agent_runtime/workflow`](../../src/agent_runtime/workflow)、[`strategies`](../../src/agent_runtime/strategies) 与 [`app/services/workflows`](../../backend/src/app/services/workflows) 都包含图、调度或执行相关逻辑；应用 `runtime.py` 还负责 ORM 状态与锁。当前 Workflow 遍历保留可变游标。
 
 **影响：** 不能按现有目录直接宣称只有一个完整通用图执行器，也不能把持久节点状态当成可由事件完全恢复的执行状态。
 
@@ -118,7 +131,7 @@ Web 工具派发会进入 Skill Runtime，而 [`skills/runners/script.py`](../..
 
 ### P10. 发行和验证范围还围绕完整后端
 
-[`backend/pyproject.toml`](../../backend/pyproject.toml) 在同一基础依赖中包含 FastAPI、SQLAlchemy、多个 Provider SDK、Office/PDF/OCR 等；[`model_provider/factory.py`](../../backend/src/model_provider/factory.py) 导入各 Provider。当前 [`app/cli.py`](../../backend/src/app/cli.py) 只有 `create-admin`，桌面 sidecar 也复用完整后端。
+[`backend/pyproject.toml`](../../backend/pyproject.toml) 在同一基础依赖中包含 FastAPI、SQLAlchemy、多个 Provider SDK、Office/PDF/OCR 等；[`model_provider/factory.py`](../../src/model_provider/factory.py) 导入各 Provider。当前 [`app/cli.py`](../../backend/src/app/cli.py) 只有 `create-admin`，桌面 sidecar 也复用完整后端。
 
 **影响：** Kernel 能通过单测与“可在没有 Web/DB/文档依赖的环境运行完整 Agent”之间仍有距离。把现有 API 套一个终端界面不能验证这种独立性。
 
@@ -136,9 +149,9 @@ Web 工具派发会进入 Skill Runtime，而 [`skills/runners/script.py`](../..
 
 此表与[模块目录](./subsystems.md)配合使用。一个旧模块可能同时需要“抽出通用部分”和“保留产品适配”，不能机械整包移动。
 
-| 当前代码域 | 通用目标 | 留在 AgentHub / 兼容层 |
+| 当前代码域 | 通用目标 | 留在 AgentHub 宿主 |
 | --- | --- | --- |
-| `agent_runtime/core`、engine/actor/mailbox/watchdog/cancellation | K 与轻量领域契约 | 已公开 API 迁移期兼容 |
+| `agent_runtime/core`、engine/actor/mailbox/watchdog/cancellation | K 与轻量领域契约 | 调用方随迁移更新，不保留旧导出别名 |
 | `agent_runtime/runtime/agent_loop.py`、agent_executor/status_report | S1 | 产物、全栈、部署提示与交付规则 |
 | `agent_runtime/strategies`、team_tools | S2；消息权威仍 K | 产品 Team Lead 偏好与发布选择 |
 | `agent_runtime/context`、`app/services/context`、knowledge | K 的存储契约 + S4 装配/记忆/检索 | DB 来源、附件权限、workspace/conversation 数据映射 |
@@ -154,30 +167,27 @@ Web 工具派发会进入 Skill Runtime，而 [`skills/runners/script.py`](../..
 | runtime_service、conversation_run_manager、chat/tasks、api/core、db | H1 | 继续作为产品与组合入口，逐步委托通用机制 |
 | frontend、desktop-client、mobile-client、docker/scripts | H4/H5 | 保留客户端和发行职责，不进入 Kernel |
 
-## 5. 分阶段迁移
+## 5. 执行中的 M0–M4 计划
 
-阶段表示依赖关系和可交付切片，不是一次性移动目录的清单。每阶段先建立契约与测试，再用旧入口委托新实现；通过对应验收后提交独立变更。未迁移部分继续使用当前路径。
+| 阶段 | 迁移与开发范围 | 验收 |
+| --- | --- | --- |
+| M0 结构和基线 | 根级目标目录、每域职责、原实现位置 | 记录基线与迁移状态 |
+| M1 共享发行 | Runtime/Provider 迁入 `src`；根级 workspace/锁；调用方同步 | 无 Web 依赖导入 Kernel；Web 可启动 |
+| M2 持久对话 | 公共 Loop/SingleAgentPolicy、配置、DPAPI/env、信任、SQLite、REPL/续聊 | 历史真正进入模型；失败不会转成功 |
+| M3 本机操作 | 文件/hash、PowerShell、Git、目录授权、Job Object 与记录 | 实际修改和测试；取消/超时/崩溃清理 |
+| M4 安装收尾 | 独立 wheel、JSONL/replay/doctor、Web/桌面构建回归、验收记录 | 干净安装；区分替身、真实服务和未验证项目 |
+| 后续 | MCP/Skill/Workflow/内容/外部 Agent 逐项迁移、团队治理、强隔离 | 每项单独建立闭环，不作为 MVP 已实现能力 |
 
-| 阶段 | 具体交付 | 前置 | 必须满足的退出条件 |
-| --- | --- | --- | --- |
-| M0 文档基线 | 本目录、现状链接、问题清单、模块职责 | 当前源码核对 | 明确现状/目标，链接可定位，未移动业务代码；本轮范围 |
-| M1 契约与边界 | 收敛通用错误/规格/执行上下文、直接与传递依赖检查、轻量导入入口 | M0 | Kernel 不依赖产品/厂商实现；公开 API 和现有终态/CAS 测试不退化 |
-| M2 首条本地执行链 | S1 基础 loop + S3 模型 + S4 Scope 装配 + S5 基础调用 + S6 文件/单次进程；最小 CLI 单次入口 | M1 | 不启动 FastAPI、不创建 User/Conversation，也能完成受限文件/进程任务；Web 适配到同一实现 |
-| M3 可组合能力 | 完整工具目录、交互终端、MCP、Skill、凭据/记录 Port 与授权传递 | M2 | MCP/Skill/嵌套工具链可用，取消/拒绝/失败可观测，CLI 不导入 Web 执行器 |
-| M4 持久 CLI 与 eval | 本地 Journal/Context/Team 驱动、游标、下一 Run、团队场景、确定性/真实模型评测 | M2；完整能力验收依赖 M3 | Web 与 CLI 的核心事件/终态/上下文语义一致，冷启动安装与资源清理验收通过 |
-| M5 扩展与发行收敛 | Workflow/内容/外部 Agent 逐项抽取、产品启发式归位、可选依赖打包、旧 facade 退役 | M3/M4 | 节点与产物回归通过；共用实现无分叉；依赖与兼容清单明确 |
-| 后续独立议题 | Sink 背压、跨进程协调、检查点、强隔离驱动 | 各自设计与安全契约 | 单独证明恢复/隔离语义；不作为本轮或首版 CLI 的隐含承诺 |
+REPL 和会话持久化已提前到 M2。本次直接安装共享包验证，不等待全系统搬迁；没有兼容别名，也不同时运行两套有副作用的实现。实时阶段状态及证据见 [CLI 实施记录](./cli-mvp.md)。
 
-M2 就开始用 CLI 检验边界，不等所有子系统抽完才发现不可运行；M4 才构成更完整的持久化与评测宿主。先通过可运行切片证明设计，再决定进一步打包或分仓，避免先做大目录重排。
+## 6. 迁移规则与回退
 
-## 6. 迁移兼容与回退
-
-1. **公共 API：** 记录仍公开的 Runtime 符号和调用方。实现迁移可以暂留转发入口，不能恢复已删除的 Session/Orchestrator 或改变稳定 reason code。
+1. **公共 API：** 迁移时更新全部调用方和测试，删除旧位置与旧导出，不设转发别名，不恢复旧 Session/Orchestrator。
 2. **Web 行为：** 路由、SSE/WS 字段、`generation_id == run_id`、Artifact URL、画布 schema 在迁移窗口保留；通用结果通过产品投影转换，不能直接把新 DTO 推给旧前端。
 3. **数据：** 初期保留 AgentHub 表和加密字段；本地驱动有自己的 schema 版本。需要改产品 schema 时附迁移、旧数据读取/回退策略，不顺带修改外键或删除历史记录。
 4. **配置与权限：** 产品默认值留宿主；CLI 必须明确自身的有效授权和能力集。缺失凭据、依赖、权限均显式返回，不能通过无提示 mock 让验收“通过”。
 5. **副作用：** 一条入口切换到新实现后，只执行一次外部操作；不通过“双跑”比较文件写入、进程、MCP 或外部 Agent。只读轨迹比较可使用替身或独立临时工作区。
-6. **回退：** 每阶段保留可回退的入口适配和独立提交；若契约回归，回退该阶段并保留已产生的 Journal/用户文件，不通过删除证据恢复表面状态。
+6. **回退：** 每阶段保留独立提交；若契约回归，回退该阶段并保留已产生的 Journal/用户文件，不通过删除证据恢复表面状态。
 
 ## 7. 验收矩阵
 
@@ -202,8 +212,8 @@ M2 就开始用 CLI 检验边界，不等所有子系统抽完才发现不可运
 
 评测报告至少记录任务 ID、代码版本、模型与驱动配置的非敏感部分、能力集、工作区基线、执行结果、终态原因、工具证据、用量及其估算标记、耗时和未完成项。真实模型具有随机性，不要求与替身测试逐字一致，但成功条件必须预先确定且由可检查结果支撑。
 
-## 8. 本轮边界与下一步
+## 8. 本轮交付边界
 
-本轮交付的是系统级架构规范及与当前代码的对应关系，不创建 CLI、不移动源文件、不更改数据库或权限行为。源码依旧按照 [File map](../file-map.md) 定位。
+已交付根级共享发行包、可安装 CLI、本地驱动与执行链测试。CLI 直接组装公共 Runtime；Web 的 `runtime_service` 注入相同 AgentLoopExecutor 并提供产品扩展。尚存的 Web `services/agents/function_loop.py` 和非 MVP 子系统未在本期全面收敛。
 
-下一次开发应从 M1 的具体契约切片开始，并尽快进入 M2 的本地最小运行闭环。衡量进度应看“哪条执行链已被两个宿主共用、哪项依赖已被解除、哪些失败语义已被验证”，不看移走了多少文件。
+Windows 执行采用当前用户权限。文件工具与命令 cwd 校验、环境过滤及日志脱敏不能形成 OS 沙箱；PowerShell 仍可访问授权目录集合之外的资源。Job Object 仅管理进程树生命周期。真实模型验收和环境依赖的构建以实施记录为准，不以确定性替身代替。

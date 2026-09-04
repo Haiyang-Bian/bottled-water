@@ -20,7 +20,7 @@
 - `current-state.md` 是源码快照；不能把路线图写成现有能力。
 - `evolution.md` 只解释过去；历史类名和方案不构成兼容承诺。
 
-V1 已提供 `RuntimeEngine`、`RunHandle`、`RunRequest`、`RunState`、`RuntimeLimits`、`ContextSnapshot`、`EventEnvelope`、`SchedulerPolicy`、`CancellationScope` 和 `RunLease`。公开导出以 [`agent_runtime/__init__.py`](../../backend/src/agent_runtime/__init__.py) 为准，不再提供旧 `Session` 或 Orchestrator 兼容入口。
+V1 已提供 `RuntimeEngine`、`RunHandle`、`RunRequest`、`RunState`、`RuntimeLimits`、`ContextSnapshot`、`EventEnvelope`、`SchedulerPolicy`、`CancellationScope` 和 `RunLease`。公开导出以 [`agent_runtime/__init__.py`](../../src/agent_runtime/__init__.py) 为准，不再提供旧 `Session` 或 Orchestrator 兼容入口。
 
 ## 当前阶段
 

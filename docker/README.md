@@ -1,5 +1,10 @@
 # Docker Deployment
 
+The backend build context is the repository root. `Dockerfile.backend.dockerignore` includes only
+the workspace manifests, shared `src`, Web source and migrations. The image installs
+`agenthub-backend` and its shared package from the root lock. It runs the installed Python directly
+on port 8000; the image and Compose health checks use the same port and check HTTP status.
+
 Run the full stack from the repository root:
 
 ```powershell

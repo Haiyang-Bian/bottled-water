@@ -4,9 +4,9 @@ This file is the compact status reference for current docs. It avoids historical
 
 ## Architecture Split Status
 
-The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. This milestone changes documentation only. Shared subsystem extraction, independent local CLI, minimal installation profiles, and a standalone eval host remain planned; the current desktop client still packages the full backend.
+The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. The local CLI MVP now uses the root `agenthub-system` distribution and shared Kernel/AgentLoop. It includes persistent sessions, trust, DPAPI/env credentials, file operations, PowerShell/Git, JSONL, replay and managed Windows processes. See [CLI acceptance](./architecture/cli-mvp.md) for measured results and remaining live-service validation. A standalone eval host and non-MVP subsystem extraction remain planned; desktop still packages the full Web host.
 
-Runtime lifecycle and public ports already exist. Complete agent execution still depends on application-side context, tools, Skill/MCP, and persistence adapters. The generic tool user-permission check also retains a warnings-only path; see [capability boundaries](./capability-data-boundaries.md).
+Runtime lifecycle and public ports already exist. CLI executes without application context or ORM; Web-specific Skill/MCP and product adapters remain in the Web host. The generic tool user-permission check also retains a warnings-only path; see [capability boundaries](./capability-data-boundaries.md).
 
 ## Stable For Local Development And Demos
 

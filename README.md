@@ -20,6 +20,21 @@ Web 界面和 Windows 桌面端，用来验证对话、调度、工具调用、�
 
 ## 运行方式
 
+### 本地 CLI
+
+```powershell
+uv tool install --python 3.11 ".[cli]"
+agenthub init
+cd D:\Work\my-project
+agenthub
+# 退出后续聊
+agenthub --continue
+```
+
+首次启动询问信任，接受后以当前 Windows 用户权限自动执行工具。配置与记录默认保存到
+`%USERPROFILE%\.agenthub`。支持 PowerShell、Git、文件读写、显式跨目录和 JSONL；
+详见 [CLI 使用说明](./docs/cli.md)及[验收记录](./docs/architecture/cli-mvp.md)。
+
 ### Windows 桌面端
 
 桌面端会自动启动本地后端、初始化 SQLite 数据库并执行迁移，并以本机单用户身份直接进入
@@ -40,7 +55,7 @@ pnpm build:win
 
 ```powershell
 cd backend
-uv sync --extra dev
+uv sync --package agenthub-backend --extra dev
 uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -67,6 +82,8 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 
 ## 仓库结构
 
+- `src/`：共享契约、Runtime、模型、子系统、本机驱动和 CLI；由根级 `pyproject.toml` 发行。
+- `tests/`：共享系统和 CLI 验证。
 - `backend/`：FastAPI 服务、Runtime 集成、数据库模型和迁移。
 - `frontend/`：React Web 应用。
 - `desktop-client/`：Tauri Windows 客户端和本地后端打包脚本。
@@ -82,6 +99,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 
 ```powershell
 .\scripts\run-tests.ps1 -List
+.\scripts\run-tests.ps1 -Stack system -Module cli -Type integration
 .\scripts\run-tests.ps1 -Stack backend -Module runtime -Type unit
 .\scripts\run-tests.ps1 -Stack frontend -Module chat -Type unit
 ```
@@ -106,7 +124,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 浏览器能力仍依赖单独安装的本机工具。
 
 后续拆分以 Runtime 为内核，将执行、模型、上下文、工具、MCP、Skill、工作空间等能力
-整理为共享子系统，由 AgentHub、计划中的本地 CLI 和评测宿主组装。该目标已形成架构文档，
-源码拆分和独立 CLI 尚未完成；分阶段验收以复用能力与依赖边界为准，不以文件数量为准。
+整理为共享子系统，由 AgentHub、本地 CLI 和未来评测宿主组装。CLI MVP 已完成首条公共执行链迁移，
+MCP/Skill/Workflow 等领域仍待按实际用途抽取；分阶段验收以复用能力与依赖边界为准，不以文件数量为准。
 
 本项目使用 [Apache License 2.0](./LICENSE)。

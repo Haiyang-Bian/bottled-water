@@ -85,7 +85,16 @@ try {
 }
 finally {
     if (-not $process.HasExited) {
-        Stop-Process -Id $process.Id -Force
+        if ($env:OS -eq "Windows_NT") {
+            # PyInstaller onefile has a bootloader parent and an application child.
+            # Kill the test-owned tree while its root PID still exists.
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            if ($LASTEXITCODE -ne 0 -and -not $process.HasExited) {
+                throw "Unable to stop the test-owned sidecar process tree."
+            }
+        } else {
+            Stop-Process -Id $process.Id -Force
+        }
         $process.WaitForExit()
     }
     $resolvedData = [IO.Path]::GetFullPath($dataDir)

@@ -2,6 +2,10 @@
 
 本目录提供 AgentHub 的本地桌面发行版。Tauri 2 承载编译后的 React 前端，并在启动时自动运行打包的 FastAPI sidecar；用户不需要分别启动前端、后端、PostgreSQL 或 Redis。
 
+后端共享实现来自仓库根级 `src` 和 `agenthub-system`。sidecar 使用独立 uv 环境构建，
+新鲜度检查对后端源码、共享源码、两个 pyproject 和根 `uv.lock` 计算内容指纹；任一输入变化都会重建。
+`scripts/smoke-sidecar.ps1` 验证迁移、健康检查及本地身份，并关闭测试进程树。
+
 ## 本地数据与进程
 
 - sidecar 每次选择空闲的本机端口，仅监听 `127.0.0.1`。

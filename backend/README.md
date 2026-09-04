@@ -25,17 +25,18 @@ backend/
       persistence/     runtime persistence adapter
       schemas/         Pydantic schemas
       services/        business services
-    agent_runtime/     orchestration/runtime primitives
     common/            shared helpers
     db/                database config, session, models
-    model_provider/    model provider abstraction
   tests/               pytest suite
 ```
+
+Shared Runtime, execution, tools and Provider packages live in root `src/` and are supplied by
+`agenthub-system`. The uv workspace uses the root `uv.lock`; no backend-local lock or import alias remains.
 
 ## Local Run
 
 ```powershell
-uv sync --extra dev
+uv sync --package agenthub-backend --extra dev
 uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```

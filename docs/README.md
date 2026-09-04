@@ -2,13 +2,15 @@
 
 This directory contains the current documentation for AgentHub. Current-state documents remain the source of truth; the Runtime incubation area references selected historical commits as design evidence without restoring outdated plans as current behavior.
 
-The [system architecture](./architecture/README.md) defines the target split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. It is a design baseline, not a claim that the source has already been reorganized. Existing implementation guides continue to describe the current code.
+The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
 ## Start Here
 
+- [Local CLI](./cli.md): installation, configuration, trust, sessions, tools and JSONL.
+- [CLI acceptance](./architecture/cli-mvp.md): implementation milestones, measured tests and pending live-service checks.
 - [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.
 - [Subsystem and module catalog](./architecture/subsystems.md): Kernel, twelve subsystems, drivers, product modules, and their current source locations.
-- [Architecture differences and migration](./architecture/migration.md): current coupling problems, old-to-new mapping, staged extraction, compatibility, and acceptance criteria.
+- [Architecture differences and migration](./architecture/migration.md): original coupling, current migration status, old-to-new mapping and acceptance criteria.
 - [Development guide](./development-guide.md): local setup, Docker deployment, tests, and common workflows.
 - [Product design](./product-design.md): product positioning, user scenarios, capability design, runtime flow, acceptance script, and delivery scope.
 - [Feature guide](./functional-guide.md): product capabilities and user-facing flows.

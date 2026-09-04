@@ -2,14 +2,14 @@
 
 ## Project Structure & Module Organization
 
-AgentHub is a multi-client monorepo. Python code lives in `backend/src`; keep routers in `app/api`, business logic in `app/services`, models in `db/models`, and migrations in `backend/alembic`. The React/Vite app is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; tests live in `frontend/tests`. Use `e2e` for Playwright, `docker` for deployment, `scripts` for repository utilities, and `docs` for architecture and operations. The Tauri 2 desktop client lives in `desktop-client`; Capacitor/PWA code lives in `mobile-client`.
+AgentHub is a multi-client monorepo. Shared system and CLI Python code lives in root `src` with tests in root `tests`. The Web host lives in `backend/src`; keep routers in `app/api`, business logic in `app/services`, models in `db/models`, and migrations in `backend/alembic`. The React/Vite app is under `frontend/src`, organized by `features`, `pages`, `api`, `store`, and `types`; tests live in `frontend/tests`. Use `e2e` for Playwright, `docker` for deployment, `scripts` for repository utilities, and `docs` for architecture and operations. The Tauri 2 desktop client lives in `desktop-client`; Capacitor/PWA code lives in `mobile-client`.
 
 ## Build, Test, and Development Commands
 
 Use Python 3.11, `uv`, Node.js 20+, and `pnpm` for the main application.
 
 ```powershell
-cd backend; uv sync --extra dev; uv run alembic upgrade head
+cd backend; uv sync --package agenthub-backend --extra dev; uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 cd ../frontend; pnpm install; pnpm dev
 ```

@@ -1,8 +1,25 @@
 # 子系统与模块目录
 
-> 本文定义目标职责，基于 2026-09-04 的源码核对。编号用于职责和迁移追踪，不表示目录已经存在或功能已经独立。总体依赖与状态规则见[系统架构](./README.md)，旧结构证据与验收见[迁移说明](./migration.md)。
+> 本文定义目标职责，基于 2026-09-04 的源码核对。编号用于职责和迁移追踪；MVP 迁移现状见下表，其余描述仍是目标职责。总体依赖与状态规则见[系统架构](./README.md)，旧结构证据与验收见[迁移说明](./migration.md)。
 
 模块按可维护的职责划分，不要求每行对应一个文件或一个发行包。每个子系统都应具备：通用输入/输出、明确依赖、资源关闭责任、可检查的失败状态和不依赖 Web 的契约测试。以下“迁出”指通用机制，“保留”指 AgentHub 业务适配；不能把一个现有大文件整体移动就视为完成。
+
+## 本次迁移现状
+
+| 层/子系统 | 已实现的公共位置 | 仍由原宿主或旧内部模块拥有的内容 |
+| --- | --- | --- |
+| 契约 | `src/agent_contracts`：执行上下文、grant、工具规格、授权/凭据/进程 Port、公共错误 | 既有 Run/Context 契约继续在 `agent_runtime/core`，不重复定义 |
+| Kernel | `src/agent_runtime`：Run、Actor、Watchdog、Journal、取消及 Context CAS 协调 | 旧团队/Workflow 策略仍位于该包内部，未宣称全部纯化 |
+| S1 执行 | `agent_subsystems/execution`：AgentLoop、AgentLoopExecutor、产品扩展接口 | Web 注入 `app/services/execution_extension.py`；旧 `services/agents/function_loop.py` 仍待后续收敛 |
+| S2 调度 | `agent_subsystems/scheduling/single_agent.py` | 复杂团队、Workflow 策略待迁移 |
+| S3 模型 | `src/model_provider`，SDK 延迟加载、usage 与流关闭 | UI Provider 目录在 `app/services/provider_catalog.py`，拥有者与加密字段在 Web |
+| S4 上下文 | `agent_subsystems/context/local.py` 消费 ContextSnapshot、按完整轮次裁剪历史并记录 | SQL/附件/知识库 contributors 待迁移 |
+| S5 工具 | `agent_subsystems/tools` 注册表、执行器、schema/授权边界 | Web 工具 CRUD、Skill/MCP 组装仍由 Web 持有 |
+| S6 工作空间 | `agent_subsystems/workspaces` 规范路径；`agent_adapters/local` 文件、PowerShell、Git、Job Object | Web 工作树、常驻终端和产品文件树待迁移 |
+| S7/S8/S9/S10/S11 | MCP、Skill、Workflow、内容、外部 Agent 均仅建立职责目录 | 原 Web 功能继续使用原实现 |
+| S12 观测 | `agent_subsystems/observability` 脱敏；SQLite 保存事件、CLI 消费 | Web 审计/实时投影/业务统计仍属宿主 |
+| 驱动 | `agent_adapters/storage` SQLite/会话锁，`credentials` DPAPI/env，`local` 本机操作 | 不提供 AppContainer、受限 Token 或网络隔离 |
+| H2 CLI | `src/agent_cli` 初始化、信任、REPL、批处理、恢复、JSONL、doctor/replay | 独立 eval 宿主与高级多 Agent 治理待实现 |
 
 ## K. Runtime Kernel
 
@@ -10,14 +27,14 @@
 
 | 模块 | 功能与状态 | 当前来源 / 目标边界 |
 | --- | --- | --- |
-| K1 Engine 与 Handle | 创建 Run、维护活跃 Handle、关闭运行时；终止 Run 不永久缓存在 Engine | [`engine.py`](../../backend/src/agent_runtime/runtime/engine.py)；只注入 Port |
+| K1 Engine 与 Handle | 创建 Run、维护活跃 Handle、关闭运行时；终止 Run 不永久缓存在 Engine | [`engine.py`](../../src/agent_runtime/runtime/engine.py)；只注入 Port |
 | K2 Run 状态机 | 验证控制提案、管理状态转换、分配事件序号、唯一终态 CAS | `RunKernel`；保留单一终态权威 |
-| K3 Actor 与 Mailbox | Run 内的 Agent 任务、控制消息与协作式执行 | [`agent_actor.py`](../../backend/src/agent_runtime/runtime/agent_actor.py)、[`mailbox.py`](../../backend/src/agent_runtime/runtime/mailbox.py)；不承载业务 AgentLoop |
-| K4 Watchdog 与预算 | wall/idle/决策数/Token/无进展限制；验证用量并收敛失败 | [`run_watchdog.py`](../../backend/src/agent_runtime/runtime/run_watchdog.py)；不把文字输出等同于有效进展 |
-| K5 取消与写租约 | 传播取消、隔离迟到结果、防止终态后写 Context/输出 | [`cancellation.py`](../../backend/src/agent_runtime/runtime/cancellation.py)、[`adapter_isolation.py`](../../backend/src/agent_runtime/runtime/adapter_isolation.py)；不能强制抢占任意同步代码 |
-| K6 Scope 提交 | 加载快照、协调消息/Blackboard/AgentMemory 增量的版本 CAS | [`scope_store.py`](../../backend/src/agent_runtime/context/scope_store.py)与 `ContextStore`；不查询 Conversation |
-| K7 团队通信控制 | 校验成员、收件人、线程与团队预算；处理消费和中断 | [`team_collaboration.py`](../../backend/src/agent_runtime/runtime/team_collaboration.py)、`TeamMessenger` / `TeamJournal`；调度偏好归 S2 |
-| K8 事件提交 | 先 Journal 后通知、终态事件原子提交、稳定 ID 和失败原因 | [`run_journal.py`](../../backend/src/agent_runtime/runtime/run_journal.py)与 Journal Port；SQL 实现不进入内核 |
+| K3 Actor 与 Mailbox | Run 内的 Agent 任务、控制消息与协作式执行 | [`agent_actor.py`](../../src/agent_runtime/runtime/agent_actor.py)、[`mailbox.py`](../../src/agent_runtime/runtime/mailbox.py)；不承载业务 AgentLoop |
+| K4 Watchdog 与预算 | wall/idle/决策数/Token/无进展限制；验证用量并收敛失败 | [`run_watchdog.py`](../../src/agent_runtime/runtime/run_watchdog.py)；不把文字输出等同于有效进展 |
+| K5 取消与写租约 | 传播取消、隔离迟到结果、防止终态后写 Context/输出 | [`cancellation.py`](../../src/agent_runtime/runtime/cancellation.py)、[`adapter_isolation.py`](../../src/agent_runtime/runtime/adapter_isolation.py)；不能强制抢占任意同步代码 |
+| K6 Scope 提交 | 加载快照、协调消息/Blackboard/AgentMemory 增量的版本 CAS | [`scope_store.py`](../../src/agent_runtime/context/scope_store.py)与 `ContextStore`；不查询 Conversation |
+| K7 团队通信控制 | 校验成员、收件人、线程与团队预算；处理消费和中断 | [`team_collaboration.py`](../../src/agent_runtime/runtime/team_collaboration.py)、`TeamMessenger` / `TeamJournal`；调度偏好归 S2 |
+| K8 事件提交 | 先 Journal 后通知、终态事件原子提交、稳定 ID 和失败原因 | [`run_journal.py`](../../src/agent_runtime/runtime/run_journal.py)与 Journal Port；SQL 实现不进入内核 |
 
 **约束：** Policy、Executor 和宿主都不能直接修改 Run 终态。预算耗尽、超时、上下文冲突和进程丢失不能伪装成成功。精确语义沿用 [Runtime 不变量](../runtime/invariants.md)。Kernel 对 SDK 异常的依赖应收敛到通用错误契约。
 
@@ -27,10 +44,10 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S1.1 执行适配器 | `AgentExecutionRequest` → 输出、报告、usage、记忆增量；执行检查点校验取消与租约 | [`agent_executor.py`](../../backend/src/agent_runtime/runtime/agent_executor.py)；保留 `AgentExecutor` 契约 |
-| S1.2 默认 AgentLoop | 模型/工具轮次、流式响应、工具结果回填、终止条件 | [`agent_loop.py`](../../backend/src/agent_runtime/runtime/agent_loop.py)；拆出通用循环，产品交付启发式交 H1 |
-| S1.3 调用帧与消息转换 | 消息、工具 schema、工具调用/响应、模型流片段的归一化 | [`core/types.py`](../../backend/src/agent_runtime/core/types.py)、[`services/agents`](../../backend/src/app/services/agents)；避免保留两套通用 loop |
-| S1.4 状态报告与进展 | 将可观察工作结果转换为结构化 report 和 usage；不从措辞推定工具成功 | [`status_report.py`](../../backend/src/agent_runtime/runtime/status_report.py)；业务交付校验为可选扩展 |
+| S1.1 执行适配器 | `AgentExecutionRequest` → 输出、报告、usage、记忆增量；执行检查点校验取消与租约 | [`agent_executor.py`](../../src/agent_subsystems/execution/agent_executor.py)；保留 `AgentExecutor` 契约 |
+| S1.2 默认 AgentLoop | 模型/工具轮次、流式响应、工具结果回填、终止条件 | [`agent_loop.py`](../../src/agent_subsystems/execution/agent_loop.py)；拆出通用循环，产品交付启发式交 H1 |
+| S1.3 调用帧与消息转换 | 消息、工具 schema、工具调用/响应、模型流片段的归一化 | [`core/types.py`](../../src/agent_runtime/core/types.py)、[`services/agents`](../../backend/src/app/services/agents)；避免保留两套通用 loop |
+| S1.4 状态报告与进展 | 将可观察工作结果转换为结构化 report 和 usage；不从措辞推定工具成功 | [`status_report.py`](../../src/agent_runtime/runtime/status_report.py)；业务交付校验为可选扩展 |
 | S1.5 执行上下文桥接 | 显式使用 Scope 历史、AgentMemory、Blackboard、当前输入与 inbox | 当前 `AgentLoopExecutor` 主要传入 Blackboard 和 metadata；必须补足通用历史消费路径 |
 
 **依赖：** S3 模型接口、S4 上下文接口、S5 工具调用接口及 Kernel 执行契约。只持有当次调用帧，不自行保存长期私有推理。嵌套模型/工具调用的用量和取消必须回到同一预算约束。
@@ -43,11 +60,11 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S2.1 单 Agent 策略 | 从初始输入和执行状态产生执行或完成提案 | [`strategies/policies.py`](../../backend/src/agent_runtime/strategies/policies.py) |
+| S2.1 单 Agent 策略 | 从初始输入和执行状态产生执行或完成提案 | [`single_agent.py`](../../src/agent_subsystems/scheduling/single_agent.py)，失败/阻塞提出失败终态 |
 | S2.2 Team Lead 策略 | 选择成员、生成子任务、等待报告与汇总 | 同上；通用调度与 AgentHub 交付规则分离 |
-| S2.3 平权协作策略 | 根据 inbox、开放线程和成员进展建议调度 | [`collaborative.py`](../../backend/src/agent_runtime/strategies/collaborative.py)；角色名不授予资源控制权 |
-| S2.4 Workflow 策略桥 | 把就绪节点转换为调度提案，将执行结果交回 S9 | [`strategies/workflow.py`](../../backend/src/agent_runtime/strategies/workflow.py)及 `policies.py`；不另建父 Run 状态机 |
-| S2.5 团队工具桥 | send/broadcast/reply/resolve 等动作转成 `TeamMessenger` 调用 | [`team_tools.py`](../../backend/src/agent_runtime/runtime/team_tools.py)；权限与消息持久化仍由 Kernel 控制 |
+| S2.3 平权协作策略 | 根据 inbox、开放线程和成员进展建议调度 | [`collaborative.py`](../../src/agent_runtime/strategies/collaborative.py)；角色名不授予资源控制权 |
+| S2.4 Workflow 策略桥 | 把就绪节点转换为调度提案，将执行结果交回 S9 | [`strategies/workflow.py`](../../src/agent_runtime/strategies/workflow.py)及 `policies.py`；不另建父 Run 状态机 |
+| S2.5 团队工具桥 | send/broadcast/reply/resolve 等动作转成 `TeamMessenger` 调用 | [`team_tools.py`](../../src/agent_runtime/runtime/team_tools.py)；权限与消息持久化仍由 Kernel 控制 |
 
 **状态与错误：** 策略状态应可由受控快照表达；当前 Workflow 游标不能据此宣称可重放恢复。非法目标、越权提案和策略异常交 Kernel 统一处理。`summary_agent_id` 是汇总目标，不是特权身份。
 
@@ -59,10 +76,10 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S3.1 模型规格与接口 | 消息、工具 schema、模型能力、请求限制和结果类型 | [`model_provider/core`](../../backend/src/model_provider/core)；延续已有接口，避免平行再造 |
-| S3.2 Provider 工厂 | 根据通用配置选择驱动，报告能力和缺失依赖 | [`factory.py`](../../backend/src/model_provider/factory.py)；SDK 按需加载，前端表单元数据另行适配 |
-| S3.3 流与用量 | 合并文本/tool call 片段、usage 归一化、输出超限关流 | [`streaming.py`](../../backend/src/model_provider/core/streaming.py)；估算值明确标记 |
-| S3.4 Provider 驱动 | Ark、OpenAI-compatible、DeepSeek 的请求、流、错误转换 | [`providers`](../../backend/src/model_provider/providers)；外部异常转为可分类领域错误 |
+| S3.1 模型规格与接口 | 消息、工具 schema、模型能力、请求限制和结果类型 | [`model_provider/core`](../../src/model_provider/core)；延续已有接口，避免平行再造 |
+| S3.2 Provider 工厂 | 根据通用配置选择驱动，报告能力和缺失依赖 | [`factory.py`](../../src/model_provider/factory.py)；SDK 按需加载，前端表单元数据另行适配 |
+| S3.3 流与用量 | 合并文本/tool call 片段、usage 归一化、输出超限关流 | [`streaming.py`](../../src/model_provider/core/streaming.py)；估算值明确标记 |
+| S3.4 Provider 驱动 | Ark、OpenAI-compatible、DeepSeek 的请求、流、错误转换 | [`providers`](../../src/model_provider/providers)；外部异常转为可分类领域错误 |
 | S3.5 配置与凭据桥 | 宿主配置和凭据引用 → 通用模型规格与可调用实例 | [`model_config_resolver.py`](../../backend/src/app/services/model_config_resolver.py)；DB 查询/解密留宿主适配器 |
 
 **状态与资源：** 请求帧属于调用，连接池属于驱动/宿主生命周期。重试不得超过剩余时间与预算；认证失败、超限、限流、取消、缺失能力和 mock 结果必须可区分。
@@ -77,7 +94,7 @@
 | --- | --- | --- |
 | S4.1 上下文装配器 | Scope 快照、Agent 规格、任务、来源片段 → 消息列表和来源信息 | [`context/builder.py`](../../backend/src/app/services/context/builder.py)；去除 Session 与 Conversation 参数 |
 | S4.2 预算与压缩 | Token 估计、优先级、裁剪、片段拼装、预留输出空间 | [`compression.py`](../../backend/src/app/services/context/compression.py)；纯算法优先抽取 |
-| S4.3 消息与记忆映射 | Scope history、Blackboard、AgentMemory → Agent 可见上下文；生成有类型的增量 | [`agent_runtime/context`](../../backend/src/agent_runtime/context)、[`context/memory.py`](../../backend/src/app/services/context/memory.py)；不得隐式跨 scope 取数据 |
+| S4.3 消息与记忆映射 | Scope history、Blackboard、AgentMemory → Agent 可见上下文；生成有类型的增量 | [`agent_runtime/context`](../../src/agent_runtime/context)、[`context/memory.py`](../../backend/src/app/services/context/memory.py)；不得隐式跨 scope 取数据 |
 | S4.4 Context contributors | 附件、工作空间、任务、运行态、变量、团队成员等来源适配 | [`services/context`](../../backend/src/app/services/context)；通用 contributor 接口迁出，DB 来源留 H1 |
 | S4.5 检索与索引 | 分块、检索接口、打分、来源引用，按授权返回片段 | [`knowledge.py`](../../backend/src/app/services/knowledge.py)；当前为词项/相似度方案，不能标作已实现向量语义检索 |
 
@@ -91,7 +108,7 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S5.1 工具目录与注册表 | 通用 `ToolSpec`、名称/别名、schema、能力需求、handler 注册 | [`agent_runtime/tools`](../../backend/src/agent_runtime/tools)、[`services/tools/registry.py`](../../backend/src/app/services/tools/registry.py)、[`catalog.py`](../../backend/src/app/services/tools/catalog.py)；目录数据与 DB CRUD 分开 |
+| S5.1 工具目录与注册表 | 通用 `ToolSpec`、名称/别名、schema、能力需求、handler 注册 | [`agent_runtime/tools`](../../src/agent_subsystems/tools)、[`services/tools/registry.py`](../../backend/src/app/services/tools/registry.py)、[`catalog.py`](../../backend/src/app/services/tools/catalog.py)；目录数据与 DB CRUD 分开 |
 | S5.2 Schema 与参数处理 | 校验模型参数、规范化别名、拒绝未声明输入 | [`schema.py`](../../backend/src/app/services/tools/schema.py)；可信授权信息走独立参数 |
 | S5.3 授权执行 | 校验有效 grants、工具可见性、嵌套调用和资源范围 | [`permissions.py`](../../backend/src/app/services/tools/permissions.py)、[`agents/permission_guard.py`](../../backend/src/app/services/agents/permission_guard.py)；用户 RBAC → grants 由宿主转换 |
 | S5.4 调用调度 | 统一 sync/async handler 调用、取消、deadline、调用 ID、结果归一化 | [`executor.py`](../../backend/src/app/services/tools/executor.py)；移除 `db, user` 入口 |
@@ -159,7 +176,7 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S9.1 图与定义 | 节点、边、输入输出、变量、版本化定义 | [`agent_runtime/workflow`](../../backend/src/agent_runtime/workflow)、[`workflows/definition.py`](../../backend/src/app/services/workflows/definition.py)、[`graph.py`](../../backend/src/app/services/workflows/graph.py)；统一通用图，画布映射留宿主 |
+| S9.1 图与定义 | 节点、边、输入输出、变量、版本化定义 | [`agent_runtime/workflow`](../../src/agent_runtime/workflow)、[`workflows/definition.py`](../../backend/src/app/services/workflows/definition.py)、[`graph.py`](../../backend/src/app/services/workflows/graph.py)；统一通用图，画布映射留宿主 |
 | S9.2 静态校验 | 节点类型、连接、引用、循环限制和可执行性 | [`validator.py`](../../backend/src/app/services/workflows/validator.py)、`conditions.py`；拒绝无效图 |
 | S9.3 调度与状态 | 就绪节点、依赖、分支/循环、节点结果、重规划输入 | [`scheduler.py`](../../backend/src/app/services/workflows/scheduler.py)、[`engine.py`](../../backend/src/app/services/workflows/engine.py)及 runtime workflow 模块；不并存独立父 Run 终态机制 |
 | S9.4 节点适配器 | start/end、agent、tool、skill、mcp、condition、loop、artifact | [`nodes`](../../backend/src/app/services/workflows/nodes)；只调用对应公开能力接口 |
@@ -168,7 +185,7 @@
 
 **状态与错误：** 节点失败、跳过、阻塞和运行终态不是同一个状态。图层不能吞掉子系统失败，也不能因为一个节点返回文字就标记整个 Run 成功。持久节点状态不等于中途 crash resume；现有可变游标仍是重放重建的差距。
 
-**留在宿主：** Conversation 的 `workflow_enabled`、画布存取、Agent ID 映射、WorkflowRun ORM、轮询 API 与 UI 进度。S9 图执行与 Kernel Policy 的接合应收敛现有多处机制，迁移时保持已有画布行为兼容。
+**留在宿主：** Conversation 的 `workflow_enabled`、画布存取、Agent ID 映射、WorkflowRun ORM、轮询 API 与 UI 进度。S9 图执行与 Kernel Policy 的接合应收敛现有多处机制，迁移时更新画布调用方并验证已有功能。
 
 ## S10. 内容、文档与产物子系统
 
@@ -211,7 +228,7 @@
 | S12.1 Journal 驱动 | Run/Event/Team 的创建、追加、终态 CAS、游标查询 | [`app/persistence`](../../backend/src/app/persistence)与内存 Journal；SQL 产品模型适配留宿主，独立本地驱动待实现 |
 | S12.2 Context 存储驱动 | Scope 加载、版本 CAS、结构化状态 | [`runtime_store.py`](../../backend/src/app/persistence/runtime_store.py)、内存 ContextStore；通用 scope 不应强制 Conversation 外键 |
 | S12.3 消费与投递 | 游标、幂等、补拉、订阅隔离、失败处理 | [`conversation_run_manager.py`](../../backend/src/app/services/conversation_run_manager.py)、[`realtime`](../../backend/src/app/services/realtime)；可复用消费机制与 Web 投影拆开 |
-| S12.4 脱敏与审计 | 事件/调用 payload 脱敏、审计 Port、结果导出 | [`run_journal.py`](../../backend/src/agent_runtime/runtime/run_journal.py)、[`audit.py`](../../backend/src/app/services/audit.py)、[`output_filter.py`](../../backend/src/app/services/output_filter.py)；产品审计查询留宿主 |
+| S12.4 脱敏与审计 | 事件/调用 payload 脱敏、审计 Port、结果导出 | [`run_journal.py`](../../src/agent_runtime/runtime/run_journal.py)、[`audit.py`](../../backend/src/app/services/audit.py)、[`output_filter.py`](../../backend/src/app/services/output_filter.py)；产品审计查询留宿主 |
 | S12.5 日志与用量 | 结构化日志、关联 ID、latency、usage、估算标记 | [`common/logger.py`](../../backend/src/common/logger.py)、generation 记录与模型 usage；由宿主配置输出目标 |
 | S12.6 Eval 证据导出 | 配置版本、代码版本、任务输入、事件引用、结果、失败与环境能力 | 独立 eval 宿主待实现；不得把 mock 结果混入真实模型结果 |
 
@@ -249,7 +266,7 @@
 | H1.7 产物与发布 | Artifact 归属/版本/差异/下载、部署预览、回滚、健康检查和 URL | `services/artifacts.py`、`artifact_exports.py` 的产品部分、`deployments.py`、`backend_process_manager.py` |
 | H1.8 能力管理 | 模型/工具/Skill/MCP/外部 Agent 的 CRUD、用户安装记录、探测与管理界面 API | 对应 `app/api`、catalog 服务和 `db/models/capabilities.py` |
 | H1.9 传输与运维 | API/SSE/WS、错误到 HTTP 的映射、审计/日志页面、种子数据、应用队列和健康检查 | `app/api`、`services/realtime`、`queue.py`、`seed.py`、`system_seed.py`、`app/core` |
-| H1.10 产品执行扩展 | 全栈交付/文档/部署规则、AgentHub 提示词和汇总发布选择 | `services/runtime/policies.py`、`services/chat`、目前散落在 AgentLoop/common/llm 的启发式 |
+| H1.10 产品执行扩展 | 全栈交付/文档/部署规则、AgentHub 提示词和汇总发布选择 | `services/execution_extension.py` 注入公共 Loop；其余 `services/runtime/policies.py`、`services/chat`、common/llm 规则仍在宿主 |
 
 H1 可以保留 SQLAlchemy、FastAPI 和产品加密模型，但职责应逐步收敛为“产品数据映射 + 通用能力调用 + 业务结果呈现”。当前同名 `OrchestratorService` 属于宿主服务，不应因 Runtime 移除了旧 Orchestrator 导出而误删。
 
@@ -257,15 +274,15 @@ H1 可以保留 SQLAlchemy、FastAPI 和产品加密模型，但职责应逐步�
 
 | 模块 | 功能与边界 | 当前状态 / 位置 |
 | --- | --- | --- |
-| H2.1 CLI 配置与组装 | 解析命令、本地身份/授权/模型/执行根、驱动选择；直接使用共享执行链 | 待实现；当前 [`app/cli.py`](../../backend/src/app/cli.py) 是管理员管理工具 |
-| H2.2 CLI 输入与输出 | 单次运行、后续 REPL、Ctrl+C、文本/JSONL、stderr 日志、退出码 | 待实现；不是 Web API 包装的独立性证明 |
-| H2.3 CLI Scope 与记录 | 本地持久 Context/Journal、事件查询、下一 Run | 待实现；replay 与 crash resume 分离 |
+| H2.1 CLI 配置与组装 | 解析命令、本地身份/授权/模型/执行根、驱动选择；直接使用共享执行链 | 已实现于 [`agent_cli`](../../src/agent_cli)；当前 `app.cli` 仍是 Web 管理员工具 |
+| H2.2 CLI 输入与输出 | 单次运行、交互 REPL、Ctrl+C、文本/JSONL、stderr 日志、退出码 | 已实现；通过独立 wheel 和真实本机工具验证 |
+| H2.3 CLI Scope 与记录 | 本地持久 Context/Journal、事件查询、下一 Run | 已实现 SQLite + 跨进程锁；replay 只读，崩溃不恢复执行位置 |
 | H3.1 Eval 场景与依赖 | 固定输入、临时工作目录、fake Provider、故障注入、真实模型配置 | 独立宿主待实现；复用 [`backend/tests/test_agent_runtime`](../../backend/tests/test_agent_runtime) 的语义基线 |
 | H3.2 Eval 断言与报告 | 任务结果、事件顺序、权限、取消、资源清理、用量与耗时 | 待实现；所有失败/降级/未执行均记录 |
 | H4.1 React 工作台 | routes/pages、features、API、store、types、事件归并、文件与产物展示 | [`frontend/src`](../../frontend/src)；UI 状态不是 Kernel 状态真源 |
 | H4.2 Desktop 包装 | Tauri 窗口、本地后端 sidecar、启动/关闭、打包与系统集成 | [`desktop-client`](../../desktop-client)；当前复用完整后端 |
 | H4.3 Mobile 客户端 | PWA 缓存、移动 API、Capacitor 原生包装与交互 | [`mobile-client`](../../mobile-client)；复用后端事件和数据契约 |
-| H5.1 发行与运行环境 | Docker/nginx、迁移入口、开发启动、可选依赖打包、配置隔离 | [`docker`](../../docker)、`backend/pyproject.toml`、各客户端构建脚本 |
+| H5.1 发行与运行环境 | Docker/nginx、迁移入口、开发启动、可选依赖打包、配置隔离 | [`docker`](../../docker)、根 `pyproject.toml`/`uv.lock`、`backend/pyproject.toml`、各客户端构建脚本 |
 | H5.2 工程验证 | 分组测试、契约门禁、前后端回归、桌面 smoke、可复现任务报告 | [`scripts`](../../scripts)、[`e2e`](../../e2e)、各模块 tests；不是运行内核的一部分 |
 
 ## 模块间调用规则速查

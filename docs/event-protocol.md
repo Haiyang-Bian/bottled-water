@@ -94,7 +94,7 @@ The Docker nginx config proxies both `/ws/` and `/ws` to the backend.
 - WebSocket chat: `backend/src/app/api/websocket.py`
 - Realtime services: `backend/src/app/services/realtime`
 - Chat finalization/cancellation: `backend/src/app/services/chat`
-- Runtime events: `backend/src/agent_runtime`
+- Runtime events: `src/agent_runtime`
 
 ## Protocol Contract
 
