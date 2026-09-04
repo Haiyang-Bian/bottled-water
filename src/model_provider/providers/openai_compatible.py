@@ -99,7 +99,7 @@ class OpenAICompatibleProvider(BaseModelProvider):
         )
         try:
             async for response_chunk in stream:
-                if response_chunk.usage:
+                if getattr(response_chunk, "usage", None):
                     yield StreamChunk(usage=response_chunk.usage.model_dump())
                 for choice in response_chunk.choices:
                     delta = choice.delta

@@ -20,6 +20,7 @@ class SingleAgentPolicy:
         if report.will == AgentWill.WAIT:
             return SchedulingProposal(action="wait")
         return SchedulingProposal(
-            action="assign", target_agent_ids=(snapshot.agents[0].id,),
+            action="assign",
+            target_agent_ids=(snapshot.agents[0].id,),
             task=report.target_task or snapshot.input,
         )

@@ -9,6 +9,10 @@ class ConfigurationError(RuntimeError):
     """Invalid configuration or an unavailable required capability."""
 
 
+class ModelInvocationError(RuntimeError):
+    """The selected provider could not complete a model request."""
+
+
 class OperationError(RuntimeError):
     def __init__(self, code: str, message: str):
         self.code = code

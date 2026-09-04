@@ -10,6 +10,7 @@
 import pytest
 
 from model_provider import ChatResponse, StreamChunk
+from app.services.execution_extension import WebExecutionExtension
 from agent_runtime.core.interfaces import AgentContextBuildResult
 from agent_subsystems.execution.agent_loop import AgentLoop, _StatusReportStreamFilter
 from agent_runtime.core.types import AgentConfig, AgentState, AgentWill
@@ -33,7 +34,7 @@ class TestAgentLoopBasic:
     @pytest.mark.asyncio
     async def test_run_without_tools(self, agent_config, provider):
         """测试无工具时的基本执行"""
-        loop = AgentLoop(agent_config, provider)
+        loop = AgentLoop(agent_config, provider, extension_factory=WebExecutionExtension)
         result = await loop.run(
             task="写一个函数",
             blackboard_view={},
@@ -57,7 +58,7 @@ class TestAgentLoopBasic:
             ),
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("任务", {}, None)
 
         logger.info(result["work_product"])
@@ -80,7 +81,7 @@ class TestAgentLoopBasic:
             ChatResponse(content="这是一个正常的聊天回答。"),
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("讲一个笑话", {}, None)
 
         assert result["work_product"] == "这是一个正常的聊天回答。"
@@ -115,7 +116,7 @@ class TestAgentLoopBasic:
             }
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("读文件", {}, mock_tool_executor)
 
         assert len(result["tool_events"]) == 1
@@ -147,7 +148,7 @@ class TestAgentLoopBasic:
                 )
 
         mock_provider.chat_stream = chat_stream
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run(
             "runtime prompt with attachment context",
             {},
@@ -206,7 +207,7 @@ class TestAgentLoopBasic:
             }
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("create a demo docx", {}, mock_tool_executor)
 
         assert [call["tool_name"] for call in mock_tool_executor.calls] == ["artifact.create_docx"]
@@ -236,7 +237,7 @@ class TestAgentLoopBasic:
             ),
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("调用未知工具", {}, None)
 
         # 没有 tool_executor，工具调用会被跳过
@@ -272,7 +273,7 @@ class TestAgentLoopBasic:
             }
         ]
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("生成一个企业知识库问答 HTML 页面", {}, mock_tool_executor)
 
         assert mock_tool_executor.calls
@@ -325,7 +326,7 @@ class TestAgentLoopBasic:
 
         mock_tool_executor.execute = fail_execute
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("读取缺失文件", {}, mock_tool_executor)
 
         assert result["status_report"].state == AgentState.FAILED
@@ -351,7 +352,7 @@ class TestAgentLoopBasic:
             )
         mock_provider.responses = responses
 
-        loop = AgentLoop(agent_config, mock_provider)
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
         result = await loop.run("无限工具调用", {}, None)
 
         assert len(result["tool_events"]) == AgentLoop.MAX_TOOL_ROUNDS
@@ -363,7 +364,7 @@ class TestAgentLoopPromptBuilding:
     @pytest.fixture
     def loop(self, mock_provider):
         config = AgentConfig(id="test", name="测试", system_prompt="你是一个测试助手。")
-        return AgentLoop(config, mock_provider)
+        return AgentLoop(config, mock_provider, extension_factory=WebExecutionExtension)
 
     def test_build_prompt(self, loop):
         bb_view = {
@@ -373,14 +374,14 @@ class TestAgentLoopPromptBuilding:
             "kv_state": {"status": "ok"},
             "version": 1,
         }
-        prompt = loop._build_prompt("写一个函数", bb_view)
+        prompt = loop.extension._build_prompt("写一个函数", bb_view)
         assert "写一个函数" in prompt
         assert "近期历史" in prompt
         assert "状态变量" in prompt
         assert "```status_report" in prompt
 
     def test_format_blackboard_empty(self, loop):
-        text = loop._format_blackboard({})
+        text = loop.extension._format_blackboard({})
         assert text == "（无）"
 
     def test_format_blackboard_full(self, loop):
@@ -397,7 +398,7 @@ class TestAgentLoopPromptBuilding:
             ],
             "version": 5,
         }
-        text = loop._format_blackboard(bb)
+        text = loop.extension._format_blackboard(bb)
         assert "完成代码" in text
         assert "progress" in text
         assert "历史摘要" in text
@@ -410,7 +411,7 @@ class TestAgentLoopStatusParsing:
     @pytest.fixture
     def loop(self, mock_provider):
         config = AgentConfig(id="test", name="测试", system_prompt="prompt")
-        return AgentLoop(config, mock_provider)
+        return AgentLoop(config, mock_provider, extension_factory=WebExecutionExtension)
 
     def test_extract_from_code_block(self, loop):
         content = '工作完成。\n```status_report\n{"state": "completed", "will": "complete", "rationale": "搞定了", "confidence": 0.95}\n```'

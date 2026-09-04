@@ -73,13 +73,16 @@ class ToolExecutorImpl:
             )
         except Exception as e:
             logger.error(
-                "内置工具执行失败", tool=tool_call.tool_name, call_id=tool_call.call_id, error=str(e)
+                "内置工具执行失败",
+                tool=tool_call.tool_name,
+                call_id=tool_call.call_id,
+                error=str(e),
             )
             return ToolResult(
                 call_id=tool_call.call_id,
                 success=False,
                 result=None,
-                error=str(e),
+                error=f"{getattr(e, 'code', 'tool_error')}: {e}",
             )
 
     async def _execute_mcp(self, tool_call: ToolCall, tool_info: dict) -> ToolResult:
@@ -110,7 +113,10 @@ class ToolExecutorImpl:
             )
         except Exception as e:
             logger.error(
-                "MCP 工具执行失败", tool=tool_call.tool_name, server_id=tool_info.get("server_id"), error=str(e)
+                "MCP 工具执行失败",
+                tool=tool_call.tool_name,
+                server_id=tool_info.get("server_id"),
+                error=str(e),
             )
             return ToolResult(
                 call_id=tool_call.call_id,

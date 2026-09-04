@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
-from agent_contracts.errors import OutputTokenLimitExceeded
+from agent_contracts.errors import OutputTokenLimitExceeded, ModelInvocationError
 
 from ..context.scope_store import InMemoryContextStore, VersionedBlackboard
 from ..core.ports import (
@@ -724,6 +724,8 @@ class RunKernel:
             await self._abort("adapter_not_cancellable")
         except OutputTokenLimitExceeded:
             await self._abort("token_budget_exhausted")
+        except ModelInvocationError:
+            await self._abort("model_error")
         except EventSequenceConflictError:
             await self._abort("event_sequence_conflict")
         except EventJournalError:

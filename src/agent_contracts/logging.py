@@ -9,9 +9,12 @@ class Logger:
 
     def _write(self, level: int, message: str, **fields):
         exc_info = fields.pop("exc_info", False)
-        self.logger.log(level, message, extra={"context": " ".join(
-            f"{key}={value}" for key, value in fields.items()
-        )}, exc_info=exc_info)
+        self.logger.log(
+            level,
+            message,
+            extra={"context": " ".join(f"{key}={value}" for key, value in fields.items())},
+            exc_info=exc_info,
+        )
 
     def debug(self, message: str, **fields):
         self._write(logging.DEBUG, message, **fields)

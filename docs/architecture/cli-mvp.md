@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | M0 | 目标目录、职责、实施基线 | 完成 |
 | M1 | 根级共享发行包、workspace、Kernel 导入边界 | 完成 |
-| M2 | 公共执行循环、配置、信任、SQLite、会话历史及失败语义 | 进行中 |
-| M3 | 文件、PowerShell、Git、进程生命周期 | 待实施 |
-| M4 | 独立安装、真实/确定性验收、Web/桌面回归、文档 | 待实施 |
+| M2 | 公共执行循环、配置、信任、SQLite、会话历史及失败语义 | 确定性闭环完成，真实 Provider 待配置 |
+| M3 | 文件、PowerShell、Git、进程生命周期 | 完成，继续故障验收 |
+| M4 | 独立安装、真实/确定性验收、Web/桌面回归、文档 | 进行中 |
 
 ## 接口和验收约定
 
@@ -32,3 +32,5 @@
 基线：`0b2d957`，原有未提交 `frontend/pnpm-workspace.yaml` 不属于本次工作。后续记录实际执行的检查，真实 Provider 未验证时不得以替身结果替代。
 
 M1：内核、调度策略和依赖边界 16 项通过；F821/F822 静态检查通过。使用原后端锁文件保留依赖版本，仅增加 CLI 所需依赖。公共 AgentLoop 已迁出 Kernel，Web 产品规则由 `WebExecutionExtension` 注入。
+
+M2/M3：11 项本机功能测试通过（含实际 Windows 进程、PowerShell/Git、DPAPI、文件编码、SQLite CAS 和失败终态）。端到端测试经真实 SDK 连接本地 HTTP 替身，完成代码读取、hash 修改、PowerShell 断言、Git diff、退出续聊、目录隔离、显式跨目录和网络失败。替身不计为真实 Provider 验收。

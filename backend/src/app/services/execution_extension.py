@@ -1,4 +1,5 @@
 """AgentHub product delivery rules injected into the shared execution loop."""
+
 import json
 import re
 import uuid
@@ -12,16 +13,24 @@ from agent_subsystems.execution.extensions import ExecutionExtension
 
 logger = get_logger(__name__)
 
+
 class WebExecutionExtension(ExecutionExtension):
     def __init__(self, agent):
         super().__init__(agent)
         self.forced_artifact_tool_name = None
         self.executed_artifact_tools = set()
 
-    build_prompt = lambda self, *args: self._build_prompt(*args)
-    select_tools = lambda self, *args: self._filter_tools_for_task(*args)
-    summary_instruction = lambda self, results: self._summary_instruction(results)
-    recover_arguments = lambda self, *args: self._recover_tool_call_arguments(*args)
+    def build_prompt(self, *args):
+        return self._build_prompt(*args)
+
+    def select_tools(self, *args):
+        return self._filter_tools_for_task(*args)
+
+    def summary_instruction(self, results):
+        return self._summary_instruction(results)
+
+    def recover_arguments(self, *args):
+        return self._recover_tool_call_arguments(*args)
 
     async def direct_execution(self, task, tool_executor, emit):
         if self.agent.system_prompt == "" and self.agent.role.endswith("_executor"):
@@ -36,9 +45,13 @@ class WebExecutionExtension(ExecutionExtension):
             self.executed_artifact_tools.add(name)
             self.forced_artifact_tool_name = name
 
-    def prepare_calls(self, task, tools, tool_results, messages, content, tool_calls, context_metadata):
+    def prepare_calls(
+        self, task, tools, tool_results, messages, content, tool_calls, context_metadata
+    ):
         if tool_calls and self._artifact_tool_succeeded(tool_results):
-            artifact_tool_name = self._artifact_tool_name(tool_results) or self.forced_artifact_tool_name
+            artifact_tool_name = (
+                self._artifact_tool_name(tool_results) or self.forced_artifact_tool_name
+            )
             if self._only_artifact_create_calls(tool_calls):
                 logger.info(
                     "Agent skipped duplicate artifact tool calls",
@@ -103,30 +116,99 @@ class WebExecutionExtension(ExecutionExtension):
         return content, tool_calls
 
     def finalize(self, task, work_product, status_report, tool_results):
-        if self._artifact_tool_succeeded(tool_results) and (not work_product.strip() or self._looks_like_artifact_argument_fragment(work_product)):
-            work_product = self._artifact_completion_message(self._artifact_tool_name(tool_results) or self.forced_artifact_tool_name, tool_results, task)
+        if self._artifact_tool_succeeded(tool_results) and (
+            not work_product.strip() or self._looks_like_artifact_argument_fragment(work_product)
+        ):
+            work_product = self._artifact_completion_message(
+                self._artifact_tool_name(tool_results) or self.forced_artifact_tool_name,
+                tool_results,
+                task,
+            )
         elif not work_product.strip() and self._has_failed_tool_results(tool_results):
             work_product = self._tool_failure_message(tool_results)
             if status_report.state != AgentState.FAILED:
-                status_report = AgentReport(agent_id=status_report.agent_id, state=AgentState.FAILED, will=AgentWill.BLOCKED, target_task=status_report.target_task, blockers=[work_product], priority=status_report.priority, confidence=0.0, rationale=status_report.rationale or 'Tool execution failed and no user-visible work product was produced.', expected_duration=status_report.expected_duration)
-        if status_report.state == AgentState.UNKNOWN and work_product.strip() and (not tool_results):
-            status_report = AgentReport(agent_id=status_report.agent_id, state=AgentState.COMPLETED, will=AgentWill.COMPLETE, target_task=status_report.target_task, blockers=status_report.blockers, priority=status_report.priority, confidence=max(status_report.confidence, 0.8), rationale='Direct response produced without tool execution.', expected_duration=status_report.expected_duration)
-        if self._artifact_tool_succeeded(tool_results) and status_report.state == AgentState.UNKNOWN and work_product.strip():
-            status_report = AgentReport(agent_id=status_report.agent_id, state=AgentState.COMPLETED, will=AgentWill.COMPLETE, target_task=status_report.target_task, blockers=status_report.blockers, priority=status_report.priority, confidence=max(status_report.confidence, 0.9), rationale=status_report.rationale or 'Artifact tool succeeded.', expected_duration=status_report.expected_duration)
+                status_report = AgentReport(
+                    agent_id=status_report.agent_id,
+                    state=AgentState.FAILED,
+                    will=AgentWill.BLOCKED,
+                    target_task=status_report.target_task,
+                    blockers=[work_product],
+                    priority=status_report.priority,
+                    confidence=0.0,
+                    rationale=status_report.rationale
+                    or "Tool execution failed and no user-visible work product was produced.",
+                    expected_duration=status_report.expected_duration,
+                )
+        if (
+            status_report.state == AgentState.UNKNOWN
+            and work_product.strip()
+            and (not tool_results)
+        ):
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.COMPLETED,
+                will=AgentWill.COMPLETE,
+                target_task=status_report.target_task,
+                blockers=status_report.blockers,
+                priority=status_report.priority,
+                confidence=max(status_report.confidence, 0.8),
+                rationale="Direct response produced without tool execution.",
+                expected_duration=status_report.expected_duration,
+            )
+        if (
+            self._artifact_tool_succeeded(tool_results)
+            and status_report.state == AgentState.UNKNOWN
+            and work_product.strip()
+        ):
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.COMPLETED,
+                will=AgentWill.COMPLETE,
+                target_task=status_report.target_task,
+                blockers=status_report.blockers,
+                priority=status_report.priority,
+                confidence=max(status_report.confidence, 0.9),
+                rationale=status_report.rationale or "Artifact tool succeeded.",
+                expected_duration=status_report.expected_duration,
+            )
         runtime_failure = self._runtime_validation_failure_message(tool_results)
         project_runtime_failure = self._project_runtime_validation_failure(task, tool_results)
         if project_runtime_failure:
-            runtime_failure = f'{runtime_failure}；{project_runtime_failure}' if runtime_failure else project_runtime_failure
+            runtime_failure = (
+                f"{runtime_failure}；{project_runtime_failure}"
+                if runtime_failure
+                else project_runtime_failure
+            )
         if runtime_failure and status_report.state == AgentState.COMPLETED:
             if work_product.strip():
-                work_product = f'{work_product.rstrip()}\n\n注意：{runtime_failure}'
+                work_product = f"{work_product.rstrip()}\n\n注意：{runtime_failure}"
             else:
                 work_product = runtime_failure
-            status_report = AgentReport(agent_id=status_report.agent_id, state=AgentState.FAILED, will=AgentWill.BLOCKED, target_task=status_report.target_task, blockers=[runtime_failure], priority=status_report.priority, confidence=0.0, rationale='Runtime validation tools failed; successful file/artifact creation alone does not prove the project ran.', expected_duration=status_report.expected_duration)
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.FAILED,
+                will=AgentWill.BLOCKED,
+                target_task=status_report.target_task,
+                blockers=[runtime_failure],
+                priority=status_report.priority,
+                confidence=0.0,
+                rationale="Runtime validation tools failed; successful file/artifact creation alone does not prove the project ran.",
+                expected_duration=status_report.expected_duration,
+            )
         missing_delivery = self._project_delivery_missing_result(task, tool_results)
         if missing_delivery:
             work_product = missing_delivery
-            status_report = AgentReport(agent_id=status_report.agent_id, state=AgentState.FAILED, will=AgentWill.BLOCKED, target_task=status_report.target_task, blockers=[missing_delivery], priority=status_report.priority, confidence=0.0, rationale='Project delivery requires persisted tool results; narration alone is not accepted.', expected_duration=status_report.expected_duration)
+            status_report = AgentReport(
+                agent_id=status_report.agent_id,
+                state=AgentState.FAILED,
+                will=AgentWill.BLOCKED,
+                target_task=status_report.target_task,
+                blockers=[missing_delivery],
+                priority=status_report.priority,
+                confidence=0.0,
+                rationale="Project delivery requires persisted tool results; narration alone is not accepted.",
+                expected_duration=status_report.expected_duration,
+            )
         return work_product, status_report
 
     @staticmethod
@@ -137,7 +219,6 @@ class WebExecutionExtension(ExecutionExtension):
             for result in tool_results
         )
 
-
     @staticmethod
     def _artifact_tool_name(tool_results: List[Dict[str, Any]]) -> str | None:
         for result in reversed(tool_results):
@@ -146,19 +227,13 @@ class WebExecutionExtension(ExecutionExtension):
                 return tool_name
         return None
 
-
     @staticmethod
     def _has_failed_tool_results(tool_results: List[Dict[str, Any]]) -> bool:
         return any(result.get("success") is False for result in tool_results)
 
-
     @staticmethod
     def _tool_failure_message(tool_results: List[Dict[str, Any]]) -> str:
-        failures = [
-            result
-            for result in tool_results
-            if result.get("success") is False
-        ]
+        failures = [result for result in tool_results if result.get("success") is False]
         if not failures:
             return "工具执行没有产出可见结果，需要重新执行或人工复核。"
         first = failures[0]
@@ -167,7 +242,6 @@ class WebExecutionExtension(ExecutionExtension):
         total = len(failures)
         suffix = f"；本轮共有 {total} 个工具调用失败。" if total > 1 else ""
         return f"{tool} 执行失败，未生成可交付产物：{error}{suffix}"
-
 
     @classmethod
     def _summary_instruction(cls, tool_results: List[Dict[str, Any]]) -> str:
@@ -202,7 +276,6 @@ class WebExecutionExtension(ExecutionExtension):
             )
         return instruction
 
-
     @staticmethod
     def _runtime_validation_failure_message(tool_results: List[Dict[str, Any]]) -> str | None:
         runtime_tools = {
@@ -218,7 +291,9 @@ class WebExecutionExtension(ExecutionExtension):
         }
         failures: list[str] = []
         deploy_succeeded = WebExecutionExtension._tool_succeeded(tool_results, "deploy.preview")
-        successful_runtime_validation = WebExecutionExtension._has_successful_non_install_runtime_validation(tool_results)
+        successful_runtime_validation = (
+            WebExecutionExtension._has_successful_non_install_runtime_validation(tool_results)
+        )
         for result in tool_results:
             tool = str(result.get("tool") or result.get("tool_name") or "")
             if tool not in runtime_tools:
@@ -239,7 +314,9 @@ class WebExecutionExtension(ExecutionExtension):
                         failed = True
             if not failed:
                 continue
-            if successful_runtime_validation and WebExecutionExtension._is_package_install_command(command):
+            if successful_runtime_validation and WebExecutionExtension._is_package_install_command(
+                command
+            ):
                 continue
             error = str(result.get("error") or "").strip()
             if not error and isinstance(output, dict):
@@ -259,7 +336,6 @@ class WebExecutionExtension(ExecutionExtension):
         suffix = f"；另有 {len(failures) - 1} 个运行/验证工具失败" if len(failures) > 1 else ""
         return f"{failures[0]}{suffix}"
 
-
     @staticmethod
     def _latest_successful_deployment_output(tool_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         for item in reversed(tool_results):
@@ -276,13 +352,21 @@ class WebExecutionExtension(ExecutionExtension):
                 return candidate
         return {}
 
-
     @staticmethod
     def _has_successful_non_install_runtime_validation(tool_results: List[Dict[str, Any]]) -> bool:
-        validation_tools = {"sandbox.run", "terminal.start", "api.test", "browser.open", "deploy.preview", "test.run"}
+        validation_tools = {
+            "sandbox.run",
+            "terminal.start",
+            "api.test",
+            "browser.open",
+            "deploy.preview",
+            "test.run",
+        }
         for result in tool_results:
             tool = str(result.get("tool") or result.get("tool_name") or "")
-            if tool not in validation_tools or WebExecutionExtension._is_package_install_command(WebExecutionExtension._runtime_command(result)):
+            if tool not in validation_tools or WebExecutionExtension._is_package_install_command(
+                WebExecutionExtension._runtime_command(result)
+            ):
                 continue
             if result.get("success") is False:
                 continue
@@ -299,7 +383,6 @@ class WebExecutionExtension(ExecutionExtension):
             return True
         return False
 
-
     @staticmethod
     def _runtime_command(result: Dict[str, Any]) -> str:
         args = result.get("arguments") if isinstance(result.get("arguments"), dict) else None
@@ -310,7 +393,6 @@ class WebExecutionExtension(ExecutionExtension):
             if isinstance(nested, dict):
                 command = str(nested.get("command") or "").strip()
         return command
-
 
     @staticmethod
     def _project_runtime_validation_failure(
@@ -331,7 +413,6 @@ class WebExecutionExtension(ExecutionExtension):
                 return "api.test tested AgentHub's own app, not the generated backend service"
         return None
 
-
     @staticmethod
     def _is_package_install_command(command: str) -> bool:
         normalized = " ".join(str(command or "").strip().lower().split())
@@ -342,7 +423,6 @@ class WebExecutionExtension(ExecutionExtension):
             or normalized.startswith("py -m pip install ")
         )
 
-
     @staticmethod
     def _only_artifact_create_calls(tool_calls: List[Dict[str, Any]]) -> bool:
         if not tool_calls:
@@ -352,7 +432,6 @@ class WebExecutionExtension(ExecutionExtension):
             if not name.startswith("artifact.create_"):
                 return False
         return True
-
 
     @staticmethod
     def _dedupe_artifact_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -367,7 +446,6 @@ class WebExecutionExtension(ExecutionExtension):
             deduped.append(tool_call)
         return deduped
 
-
     @staticmethod
     def _drop_executed_artifact_tool_calls(
         tool_calls: List[Dict[str, Any]],
@@ -381,14 +459,12 @@ class WebExecutionExtension(ExecutionExtension):
             if str(tool_call.get("function", {}).get("name") or "") not in executed_artifact_tools
         ]
 
-
     @staticmethod
     def _looks_like_artifact_argument_fragment(content: str) -> bool:
         normalized = content.strip().lower()
         if normalized in {"0", ">", "<", "li", "ul", "html", "body", "head", "script"}:
             return True
         return bool(len(normalized) <= 3 and re.fullmatch(r"[<>/a-z0-9]+", normalized))
-
 
     @staticmethod
     def _artifact_completion_message(
@@ -429,7 +505,6 @@ class WebExecutionExtension(ExecutionExtension):
             )
         return "我已经完成产物生成，可以在下面的产物卡片里预览和下载。"
 
-
     @staticmethod
     def _latest_artifact_output(
         tool_results: List[Dict[str, Any]],
@@ -449,7 +524,6 @@ class WebExecutionExtension(ExecutionExtension):
                 return result
         return {}
 
-
     @staticmethod
     def _artifact_display_title(output: Dict[str, Any], task: str = "") -> str:
         artifact = output.get("artifact") if isinstance(output.get("artifact"), dict) else {}
@@ -468,14 +542,14 @@ class WebExecutionExtension(ExecutionExtension):
             title = WebExecutionExtension._title_from_task(task)
         return title[:80]
 
-
     @staticmethod
     def _title_from_task(task: str) -> str:
         title = re.sub(r"\s+", " ", task or "").strip()
         title = re.sub(r"^(请|帮我|帮忙|麻烦)?(生成|创建|做|制作)(一个|一份|一下)?", "", title)
-        title = re.sub(r"(pdf|word|docx|pptx?|excel|xlsx|html|网页|页面|文档)$", "", title, flags=re.IGNORECASE)
+        title = re.sub(
+            r"(pdf|word|docx|pptx?|excel|xlsx|html|网页|页面|文档)$", "", title, flags=re.IGNORECASE
+        )
         return title.strip(" ：:，,。")[:40]
-
 
     def _forced_artifact_tool_call(
         self,
@@ -509,7 +583,6 @@ class WebExecutionExtension(ExecutionExtension):
             },
         }
 
-
     def _forced_project_delivery_tool_call(
         self,
         task: str,
@@ -534,8 +607,14 @@ class WebExecutionExtension(ExecutionExtension):
             if isinstance(tool, dict)
         }
         role = f"{self.agent.name} {self.agent.role}".lower()
-        is_release = any(token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线"))
-        if is_release and "deploy.preview" in available and not self._tool_succeeded(tool_results, "deploy.preview"):
+        is_release = any(
+            token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线")
+        )
+        if (
+            is_release
+            and "deploy.preview" in available
+            and not self._tool_succeeded(tool_results, "deploy.preview")
+        ):
             artifact_id = self._latest_artifact_id(tool_results, messages or [], task)
             if artifact_id:
                 deploy_args: dict[str, Any] = {
@@ -544,7 +623,9 @@ class WebExecutionExtension(ExecutionExtension):
                 }
                 # 传递 conversation_id 以支持全栈部署（检测后端工作区文件）
                 if metadata:
-                    conv_id = str(metadata.get("conversation_id") or metadata.get("session_id") or "")
+                    conv_id = str(
+                        metadata.get("conversation_id") or metadata.get("session_id") or ""
+                    )
                     if conv_id:
                         deploy_args["conversation_id"] = conv_id
                 return self._tool_call(
@@ -553,7 +634,6 @@ class WebExecutionExtension(ExecutionExtension):
                     prefix="project_deploy",
                 )
         return None
-
 
     @staticmethod
     def _latest_artifact_id(
@@ -582,14 +662,12 @@ class WebExecutionExtension(ExecutionExtension):
                 return str(matches[-1])
         return None
 
-
     @staticmethod
     def _tool_succeeded(tool_results: List[Dict[str, Any]], tool_name: str) -> bool:
         return any(
             str(result.get("tool") or "") == tool_name and result.get("success") is True
             for result in tool_results
         )
-
 
     def _project_delivery_missing_result(
         self,
@@ -599,9 +677,16 @@ class WebExecutionExtension(ExecutionExtension):
         if not self._looks_like_project_code_delivery(task):
             return None
         role = f"{self.agent.name} {self.agent.role}".lower()
-        is_backend = any(token in role for token in ("back", "backend", "api", "server", "后端", "服务端", "接口"))
-        is_frontend = any(token in role for token in ("front", "frontend", "ui", "web", "前端", "页面"))
-        is_release = any(token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线"))
+        is_backend = any(
+            token in role
+            for token in ("back", "backend", "api", "server", "后端", "服务端", "接口")
+        )
+        is_frontend = any(
+            token in role for token in ("front", "frontend", "ui", "web", "前端", "页面")
+        )
+        is_release = any(
+            token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线")
+        )
         has_file_write = self._tool_succeeded(tool_results, "file.write")
         has_artifact = self._artifact_tool_succeeded(tool_results)
         has_deploy = self._tool_succeeded(tool_results, "deploy.preview")
@@ -618,7 +703,6 @@ class WebExecutionExtension(ExecutionExtension):
             return "部署交付需要真实部署预览、沙箱运行或终端服务验证结果；本轮没有检测到成功的部署/运行记录，已拒绝口头完成。"
         return None
 
-
     @staticmethod
     def _tool_call(tool_name: str, arguments: dict[str, Any], *, prefix: str) -> dict[str, Any]:
         return {
@@ -630,7 +714,6 @@ class WebExecutionExtension(ExecutionExtension):
             },
         }
 
-
     @staticmethod
     def _project_slug(task: str) -> str:
         text = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "-", str(task or "").lower()).strip("-")
@@ -641,7 +724,6 @@ class WebExecutionExtension(ExecutionExtension):
         if any(word in text for word in ("五子棋", "gomoku")):
             return "gomoku-project"
         return text[:48].strip("-") or "agenthub-project"
-
 
     def _filter_tools_for_task(
         self,
@@ -659,9 +741,16 @@ class WebExecutionExtension(ExecutionExtension):
         if not self._looks_like_project_code_delivery(task):
             return tools
         role = f"{self.agent.name} {self.agent.role}".lower()
-        is_frontend = any(token in role for token in ("front", "frontend", "ui", "ux", "前端", "页面", "界面"))
-        is_backend = any(token in role for token in ("back", "backend", "api", "server", "后端", "服务端", "接口"))
-        is_release = any(token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线"))
+        is_frontend = any(
+            token in role for token in ("front", "frontend", "ui", "ux", "前端", "页面", "界面")
+        )
+        is_backend = any(
+            token in role
+            for token in ("back", "backend", "api", "server", "后端", "服务端", "接口")
+        )
+        is_release = any(
+            token in role for token in ("deploy", "release", "ops", "部署", "发布", "上线")
+        )
         if not (is_frontend or is_backend or is_release):
             return tools
 
@@ -686,7 +775,6 @@ class WebExecutionExtension(ExecutionExtension):
                 continue
             filtered.append(tool)
         return filtered
-
 
     @staticmethod
     def _looks_like_project_code_delivery(task: str) -> bool:
@@ -740,15 +828,15 @@ class WebExecutionExtension(ExecutionExtension):
                 "deploy",
             )
         )
-        return has_project and (has_code_or_delivery or not any(marker in normalized for marker in doc_only_markers))
-
+        return has_project and (
+            has_code_or_delivery or not any(marker in normalized for marker in doc_only_markers)
+        )
 
     @staticmethod
     def _recover_tool_call_arguments(tool_name: str, task: str) -> dict[str, Any] | None:
         if tool_name not in HTML_ARTIFACT_TOOLS:
             return None
         return artifact_arguments(tool_name, task)
-
 
     async def _execute_virtual_agent(
         self,
@@ -767,14 +855,18 @@ class WebExecutionExtension(ExecutionExtension):
         arguments: Dict[str, Any] = {}
 
         if node_type == "tool":
-            tool_name = node_config.get("tool_name", "") or (self.agent.tools[0] if self.agent.tools else "")
+            tool_name = node_config.get("tool_name", "") or (
+                self.agent.tools[0] if self.agent.tools else ""
+            )
             arguments = node_config.get("arguments", {})
         elif node_type == "mcp":
             tool_name = node_config.get("tool_name", "")
             arguments = node_config.get("arguments", {})
         else:
             # skill / artifact 暂走 LLM 路径（在 _execute_loop 中不应走到这里）
-            logger.warning("虚拟智能体类型不支持直接执行", agent_id=self.agent.id, node_type=node_type)
+            logger.warning(
+                "虚拟智能体类型不支持直接执行", agent_id=self.agent.id, node_type=node_type
+            )
             return {
                 "work_product": f"虚拟智能体 {self.agent.name} 暂不支持直接执行",
                 "status_report": AgentReport(
@@ -830,7 +922,9 @@ class WebExecutionExtension(ExecutionExtension):
                     result=result,
                 )
         except Exception as e:
-            logger.error("虚拟智能体工具执行失败", agent_id=self.agent.id, tool=tool_name, error=str(e))
+            logger.error(
+                "虚拟智能体工具执行失败", agent_id=self.agent.id, tool=tool_name, error=str(e)
+            )
             result = ToolResult(
                 call_id=tool_call.call_id,
                 success=False,
@@ -876,7 +970,6 @@ class WebExecutionExtension(ExecutionExtension):
             ),
             "tool_events": tool_events,
         }
-
 
     def _build_prompt(
         self,
@@ -925,7 +1018,6 @@ Assignment context (read-only; use upstream_outputs when coordinating with other
 ```
 """
 
-
     def _format_assignment_context(self, task_input: Any | None) -> str:
         if not isinstance(task_input, dict) or not task_input:
             return "(none)"
@@ -967,7 +1059,6 @@ Assignment context (read-only; use upstream_outputs when coordinating with other
             return "(none)"
         return json.dumps(safe, ensure_ascii=False, indent=2, default=str)[:12000]
 
-
     def _format_blackboard(self, blackboard_view: dict) -> str:
         """格式化 Blackboard 分层视图为文本"""
         parts = []
@@ -999,4 +1090,3 @@ Assignment context (read-only; use upstream_outputs when coordinating with other
             parts.append(f"版本：{version}")
 
         return "\n".join(parts) if parts else "（无）"
-

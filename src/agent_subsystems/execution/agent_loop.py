@@ -16,11 +16,18 @@ import uuid
 from typing import Dict, Any, Optional, List
 
 from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatResponse
-from agent_contracts.errors import OutputTokenLimitExceeded
+from agent_contracts.errors import OutputTokenLimitExceeded, ModelInvocationError
 from model_provider.core.streaming import collect_chat_stream
 
 from agent_contracts.logging import get_logger
-from agent_runtime.core.types import AgentConfig, AgentReport, AgentState, AgentWill, ToolCall, ToolResult
+from agent_runtime.core.types import (
+    AgentConfig,
+    AgentReport,
+    AgentState,
+    AgentWill,
+    ToolCall,
+    ToolResult,
+)
 from agent_runtime.core.interfaces import (
     AgentContextBuildRequest,
     AgentContextBuildResult,
@@ -117,8 +124,7 @@ class _StatusReportStreamFilter:
             return True
         partial = re.match(r"^```\s*([a-z_]*)$", normalized, flags=re.IGNORECASE)
         return bool(
-            partial
-            and any(name.startswith(partial.group(1).lower()) for name in cls._names)
+            partial and any(name.startswith(partial.group(1).lower()) for name in cls._names)
         )
 
     @classmethod
@@ -339,9 +345,11 @@ class AgentLoop:
                         max_tokens=remaining_tokens,
                     )
                 self._record_usage(response, system_prompt, messages)
+            except OutputTokenLimitExceeded:
+                raise
             except Exception as e:
                 logger.error("Agent LLM 调用失败", agent_id=self.agent.id, error=str(e))
-                raise
+                raise ModelInvocationError("Model request failed") from e
 
             await self._run_checkpoint(
                 checkpoint,
@@ -497,7 +505,11 @@ class AgentLoop:
                 # 将工具结果加入消息列表
                 tool_msg = ChatMessage(
                     role="tool",
-                    content=json.dumps({"success": result.success, "result": result.result, "error": result.error}, ensure_ascii=False, default=str),
+                    content=json.dumps(
+                        {"success": result.success, "result": result.result, "error": result.error},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
                     name=tool_name,
                     tool_call_id=tool_call.call_id,
                 )
@@ -567,19 +579,25 @@ class AgentLoop:
                 raise
             except Exception as e:
                 logger.error("Agent 总结调用失败", agent_id=self.agent.id, error=str(e))
-                raise
+                raise ModelInvocationError("Model summary request failed") from e
 
         status_report = self._extract_status_report(final_content)
         work_product = self._remove_status_report(final_content)
         original_product = work_product
-        work_product, status_report = self.extension.finalize(task, work_product, status_report, tool_results)
+        work_product, status_report = self.extension.finalize(
+            task, work_product, status_report, tool_results
+        )
         if tool_round >= self.MAX_TOOL_ROUNDS and messages and messages[-1].role == "tool":
             status_report.state = AgentState.FAILED
             status_report.will = AgentWill.BLOCKED
             status_report.blockers = ["tool_round_budget_exhausted"]
         if self.use_streaming and work_product != original_product:
-            await self._emit_text_response(_emit, stream_message_id, work_product,
-                stream_context=self._stream_context_payload(context_metadata))
+            await self._emit_text_response(
+                _emit,
+                stream_message_id,
+                work_product,
+                stream_context=self._stream_context_payload(context_metadata),
+            )
 
         if agent_ctx:
             agent_ctx.add("thought", work_product)
@@ -753,6 +771,7 @@ class AgentLoop:
                     **stream_context,
                 },
             )
+
         # tool_calls 在流式中可能分散在多个 chunk，需要积累
         tool_calls_acc: Dict[int, Dict[str, Any]] = {}
 
@@ -767,7 +786,7 @@ class AgentLoop:
         finish_reason = None
         try:
             async for chunk in stream:
-                if getattr(chunk, 'usage', None) is not None:
+                if getattr(chunk, "usage", None) is not None:
                     usage = chunk.usage
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
@@ -791,29 +810,31 @@ class AgentLoop:
                             {
                                 "agent_id": self.agent.id,
                                 "agent_name": self.agent.name,
-                                "agent_avatar_url": (self.agent.model_config or {}).get("avatar_url"),
+                                "agent_avatar_url": (self.agent.model_config or {}).get(
+                                    "avatar_url"
+                                ),
                                 "agent_message_id": stream_message_id,
                                 "token": visible_delta,
                                 **stream_context,
                             },
                         )
-    
+
                 # 1.5 思考过程
                 if chunk.reasoning:
                     reasoning_parts.append(chunk.reasoning)
                     await ensure_stream_started()
                     await _emit(
                         "agent.thinking",
-                            {
-                                "agent_id": self.agent.id,
-                                "agent_name": self.agent.name,
-                                "agent_avatar_url": (self.agent.model_config or {}).get("avatar_url"),
-                                "agent_message_id": stream_message_id,
-                                "thinking": chunk.reasoning,
-                                **stream_context,
-                            },
+                        {
+                            "agent_id": self.agent.id,
+                            "agent_name": self.agent.name,
+                            "agent_avatar_url": (self.agent.model_config or {}).get("avatar_url"),
+                            "agent_message_id": stream_message_id,
+                            "thinking": chunk.reasoning,
+                            **stream_context,
+                        },
                     )
-    
+
                 # 2. tool_call 增量（可能跨多个 chunk）
                 if chunk.tool_call:
                     tc = chunk.tool_call
@@ -828,7 +849,7 @@ class AgentLoop:
                             existing["function"]["arguments"] = (
                                 existing["function"].get("arguments", "") + inc_args
                             )
-    
+
                 # 3. 结束标记
                 # Continue to consume the usage-only trailer.
         finally:
@@ -870,7 +891,9 @@ class AgentLoop:
         system_prompt = self.agent.system_prompt
         metadata = dict(context_metadata or {})
         prompt_task = str(metadata.get("visible_content") or task)
-        user_prompt = self.extension.build_prompt(prompt_task, blackboard_view, metadata.get("task_input"))
+        user_prompt = self.extension.build_prompt(
+            prompt_task, blackboard_view, metadata.get("task_input")
+        )
 
         if context_provider:
             request = AgentContextBuildRequest(
@@ -901,11 +924,16 @@ class AgentLoop:
 
         messages = self._agent_context_messages(agent_ctx)
         if self.context_snapshot is not None:
-            messages = [ChatMessage(role=m["role"], content=m["content"]) for m in self.context_snapshot.messages]
+            messages = [
+                ChatMessage(role=m["role"], content=m["content"])
+                for m in self.context_snapshot.messages
+            ]
         messages.append(
             ChatMessage(
                 role="user",
-                content=self.extension.build_prompt(task, blackboard_view, metadata.get("task_input")),
+                content=self.extension.build_prompt(
+                    task, blackboard_view, metadata.get("task_input")
+                ),
             )
         )
         return system_prompt, messages
@@ -921,11 +949,7 @@ class AgentLoop:
             elif frame.frame_type == "tool_call":
                 tc = frame.content
                 if isinstance(tc, dict):
-                    name = (
-                        tc.get("tool_name")
-                        or tc.get("function", {}).get("name")
-                        or "unknown"
-                    )
+                    name = tc.get("tool_name") or tc.get("function", {}).get("name") or "unknown"
                     messages.append(ChatMessage(role="assistant", content=f"历史工具调用：{name}"))
             elif frame.frame_type == "tool_result":
                 tr = frame.content
