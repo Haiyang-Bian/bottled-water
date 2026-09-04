@@ -2,13 +2,18 @@
 
 This directory contains the current documentation for AgentHub. Current-state documents remain the source of truth; the Runtime incubation area references selected historical commits as design evidence without restoring outdated plans as current behavior.
 
+The [system architecture](./architecture/README.md) defines the target split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. It is a design baseline, not a claim that the source has already been reorganized. Existing implementation guides continue to describe the current code.
+
 ## Start Here
 
+- [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.
+- [Subsystem and module catalog](./architecture/subsystems.md): Kernel, twelve subsystems, drivers, product modules, and their current source locations.
+- [Architecture differences and migration](./architecture/migration.md): current coupling problems, old-to-new mapping, staged extraction, compatibility, and acceptance criteria.
 - [Development guide](./development-guide.md): local setup, Docker deployment, tests, and common workflows.
 - [Product design](./product-design.md): product positioning, user scenarios, capability design, runtime flow, acceptance script, and delivery scope.
 - [Feature guide](./functional-guide.md): product capabilities and user-facing flows.
 - [File map](./file-map.md): where the important backend, frontend, test, and deployment files live.
-- [Backend architecture](./backend-architecture.md): FastAPI, persistence, runtime services, tools, skills, MCP, and workflow execution.
+- [Backend architecture](./backend-architecture.md): current FastAPI implementation and its integration boundaries; use the system architecture for the target design.
 - [Workflow runtime](./agent-workflow-runtime.md): single chat, group chat, workflow canvas, node execution, and persisted run state.
 - [Event protocol](./event-protocol.md): SSE/WebSocket event names and frontend merge behavior.
 - [Capability and data boundaries](./capability-data-boundaries.md): permissions, data ownership, and runtime safety boundaries.
@@ -25,6 +30,8 @@ This directory contains the current documentation for AgentHub. Current-state do
 - Deployment source of truth: `docker/docker-compose.yml`, `docker/Dockerfile.backend`, `docker/Dockerfile.frontend`, and `docker/nginx.conf`.
 
 ## Current Architecture At A Glance
+
+This is the current implementation. The target makes Web one host of shared subsystems, alongside the planned local CLI and eval harness; desktop currently packages the full backend.
 
 ```text
 React Workbench

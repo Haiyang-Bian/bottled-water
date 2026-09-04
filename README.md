@@ -70,6 +70,8 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 - `backend/`：FastAPI 服务、Runtime 集成、数据库模型和迁移。
 - `frontend/`：React Web 应用。
 - `desktop-client/`：Tauri Windows 客户端和本地后端打包脚本。
+- `mobile-client/`：移动端 PWA/Capacitor 客户端。
+- `docs/architecture/`：按内核、子系统、驱动与宿主划分的系统目标架构、模块职责和迁移验收。
 - `docs/runtime/`：Runtime 的目标架构、不变量、现状和演化记录。
 - `docker/`：容器化运行配置。
 - `scripts/`：分组测试和仓库工具。
@@ -89,6 +91,9 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 ## 文档
 
 - [文档索引](./docs/README.md)
+- [系统架构与拆分设计](./docs/architecture/README.md)
+- [子系统与模块职责](./docs/architecture/subsystems.md)
+- [新旧架构差异与迁移验收](./docs/architecture/migration.md)
 - [Runtime 文档](./docs/runtime/README.md)
 - [开发指南](./docs/development-guide.md)
 - [安全与模型供应商](./docs/security-and-model-providers.md)
@@ -99,5 +104,9 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 当前工作的重点是 Runtime 生命周期、事件日志、调度策略和桌面端可用性，而不是继续扩张
 社区或平台功能。Windows 桌面端是首个本地发行目标；部分文档转换、外部编码 Agent 和
 浏览器能力仍依赖单独安装的本机工具。
+
+后续拆分以 Runtime 为内核，将执行、模型、上下文、工具、MCP、Skill、工作空间等能力
+整理为共享子系统，由 AgentHub、计划中的本地 CLI 和评测宿主组装。该目标已形成架构文档，
+源码拆分和独立 CLI 尚未完成；分阶段验收以复用能力与依赖边界为准，不以文件数量为准。
 
 本项目使用 [Apache License 2.0](./LICENSE)。

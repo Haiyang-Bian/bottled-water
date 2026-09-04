@@ -1,8 +1,10 @@
 # Runtime 当前实现对照
 
-> 快照日期：2026-08-20。本文只描述当前分支中可由源码和测试验证的状态，不构成产品能力声明。
+> 原有实现快照：2026-08-20；系统边界补充核对：2026-09-04，源码基线 `06b41ae92370762c52f35c4607c3c08002dd48bf`。本轮补充模块依赖与独立宿主差距，未重新验收全部产品能力，不构成产品能力声明。
 
 状态仅使用：`已实现`、`部分实现`、`未实现`、`遗留路径`。
+
+系统目标见[内核、子系统与宿主](../architecture/README.md)。下表中“已实现”表示该行机制存在，不表示所有子系统已经解耦或可独立发行。
 
 | 目标契约 | 当前机制 | 状态 | 已知差距 |
 | --- | --- | --- | --- |
@@ -33,11 +35,26 @@
 | Kernel 不理解产品交付规则 | 全栈顺序、文档和部署启发式已迁入 AgentHub Policy | 部分实现 | [`AgentLoop`](../../backend/src/agent_runtime/runtime/agent_loop.py) 仍含产物生成、部署验证和应用特定提示逻辑 |
 | 单一 Runtime 主链与依赖方向 | 旧 Orchestrator 已删除；AST 测试禁止 `agent_runtime` 导入 `app` 或 `db` | 已实现 | AgentLoop 仍含产物、全栈和部署启发式；应用层实时事件总线仍作为 Journal 后的投影通道 |
 
+## 独立子系统与宿主的补充对照
+
+| 目标契约 | 当前机制 | 状态 | 已知差距 |
+| --- | --- | --- | --- |
+| Kernel 与默认执行子系统分离 | `agent_runtime` 同时导出 Kernel、AgentLoopExecutor、策略、基础工具等；Engine 引用 model_provider 的流式异常 | 部分实现 | 直接 `app/db` 导入限制不覆盖产品启发式、传递依赖和最小安装环境 |
+| 默认执行器消费通用 Scope 历史 | Kernel 提供完整 `ContextSnapshot`；`AgentLoopExecutor` 主要向 loop 传入 Blackboard 和宿主 context provider | 部分实现 | messages/agent_memories 未直接传入 loop；Web 历史依赖 SQL ContextBuilder，需要独立两轮 Run 验证 |
+| 可复用工具、Skill、MCP 与资源子系统 | `app/services` 有完整集成路径，入口常接收 Session/User/Conversation/Skill 等对象 | 部分实现 | 执行机制、产品授权与 ORM 记录尚未分离；工具用户权限检查保留 `strict=False` 告警路径 |
+| 通用 Scope 的本地持久存储 | 内存 Store/Journal 已有，Web SQL 适配器绑定 Conversation 外键 | 部分实现 | 尚无已独立验收的 CLI 本地持久驱动；不能为复用而要求创建产品会话 |
+| 直接宿主同一执行链的本地 CLI | `app.cli` 目前只有管理员初始化命令 | 未实现 | 单次运行、取消、JSONL、本地 Scope、事件查询和最小依赖发行待实现 |
+| 独立 eval harness | 已有 Kernel/工作流/集成 pytest 基础 | 部分实现 | 尚无完整独立宿主串联工具、MCP、Skill、真实模型与任务证据报告 |
+
+具体源码证据、旧模块归属和分阶段验收见[新旧架构差异与迁移](../architecture/migration.md)。本轮只更新文档，未通过更名或移动源码宣告拆分完成。
+
 ## 已移除入口
 
 `Session`、`Orchestrator`、`ActorOrchestrator`、`SchedulerAgent`、旧 Watchdog 和旧 Scheduler 不再从 `agent_runtime` 导出，也没有兼容别名。请求中的 `runtime_mode` 以 HTTP 422 和 `runtime_mode_removed` 拒绝；策略只由聊天类型、`scheduling_strategy` 与 `workflow_enabled` 决定。
 
 ## 后续范围
+
+系统拆分按 [M1–M5 迁移计划](../architecture/migration.md)推进：先收敛契约并尽早跑通本地 CLI，再补充可组合子系统、持久化和评测。以下是既有 Kernel 演进事项；本次分层不改变其未完成状态。
 
 1. 为 EventSink 增加有界队列、慢订阅者隔离与失败队列。
 2. 增加日志压缩、保留策略和跨进程实时广播；现阶段不自动删除 Journal。

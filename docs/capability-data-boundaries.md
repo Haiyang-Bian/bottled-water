@@ -2,6 +2,8 @@
 
 AgentHub exposes powerful capabilities through agents, tools, skills, MCP servers, sandbox commands, and external coding agents. This document defines the current boundaries.
 
+The [system architecture](./architecture/README.md) separates host identity/RBAC from the shared tool subsystem's execution grants. That extraction is a target design; the existing tool paths still have the implementation gap described below.
+
 ## Permission Model
 
 Agents can be configured with explicit permissions for:
@@ -22,6 +24,8 @@ Tool calls must pass:
 - Tool availability
 - Input schema validation
 - Runtime safety checks
+
+These are required boundaries, not a claim that every current entry point uniformly enforces them. In [`tools/executor.py`](../backend/src/app/services/tools/executor.py), the generic user-permission check uses `strict=False` and can return `permission_warnings` without rejecting the call at that check. Agent capability filtering and tool-specific checks are separate. The [migration plan](./architecture/migration.md) tracks consolidation into an explicit execution-time authorization contract.
 
 Successful and failed tool calls should be recorded through invocation records. User-facing claims about files, artifacts, deployment, external agents, or tests should be grounded in those records.
 

@@ -2,6 +2,12 @@
 
 This file is the compact status reference for current docs. It avoids historical closure notes and only tracks present behavior and known boundaries.
 
+## Architecture Split Status
+
+The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. This milestone changes documentation only. Shared subsystem extraction, independent local CLI, minimal installation profiles, and a standalone eval host remain planned; the current desktop client still packages the full backend.
+
+Runtime lifecycle and public ports already exist. Complete agent execution still depends on application-side context, tools, Skill/MCP, and persistence adapters. The generic tool user-permission check also retains a warnings-only path; see [capability boundaries](./capability-data-boundaries.md).
+
 ## Stable For Local Development And Demos
 
 - Authentication, open member registration, database-backed RBAC, administrator bootstrap, users, workspaces, projects, and conversation management.
@@ -65,6 +71,7 @@ When a feature changes, update the closest source-of-truth document:
 
 - Product flow: `docs/functional-guide.md`
 - Code ownership: `docs/file-map.md`
-- Backend/runtime design: `docs/backend-architecture.md` or `docs/agent-workflow-runtime.md`
+- System target and module boundaries: `docs/architecture/README.md`, `docs/architecture/subsystems.md`, and `docs/architecture/migration.md`
+- Current backend/runtime behavior: `docs/backend-architecture.md`, `docs/agent-workflow-runtime.md`, and `docs/runtime/current-state.md`
 - Events: `docs/event-protocol.md`
 - Deployment: `docker/README.md` and `docs/development-guide.md`
