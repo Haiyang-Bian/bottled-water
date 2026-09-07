@@ -41,7 +41,26 @@ class LocalToolExecutor:
             lease,
         )
         registry, specs = ToolRegistry(), {}
-        files = LocalFiles(self.grant.workspace)
+
+        async def read_index(directory):
+            outcome = await self.process_driver.run(
+                [executable("git"), "ls-files", "--cached", "-z"],
+                directory,
+                timeout=10,
+                context=context,
+                env={"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
+            )
+            if outcome.get("exit_code") != 0:
+                state = (
+                    "not_repository"
+                    if "not a git repository" in outcome.get("stderr", "").lower()
+                    else "failed"
+                )
+                return [], state
+            names = outcome.get("stdout", "").split("\0")[:-1]
+            return names, "truncated" if outcome.get("truncated") else "complete"
+
+        files = LocalFiles(self.grant.workspace, index_reader=read_index)
 
         def register(name, description, handler, properties, required, capability):
             schema = {
@@ -81,18 +100,27 @@ class LocalToolExecutor:
         )
         register(
             "file.list",
-            "List file paths, skipping generated and dependency directories.",
+            "List files and directories at one level by default. Set recursive=true to find nested sources; include_ignored=true to inspect excluded content. Inspect discovery diagnostics and pagination.",
             files.list,
-            {"path": string, "pattern": string, "offset": integer, "limit": integer},
+            {
+                "path": string,
+                "pattern": string,
+                "offset": integer,
+                "limit": integer,
+                "recursive": {"type": "boolean"},
+                "include_ignored": {"type": "boolean"},
+            },
             [],
             "files",
         )
         register(
             "file.search",
-            "Search literal text with file paths and line numbers.",
+            "Search literal text recursively in discoverable source files. include_ignored opts into excluded content; inspect discovery diagnostics and pagination.",
             files.search,
             {
                 "query": string,
+                "recursive": {"type": "boolean"},
+                "include_ignored": {"type": "boolean"},
                 "path": string,
                 "pattern": string,
                 "offset": integer,

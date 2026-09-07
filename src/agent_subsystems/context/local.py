@@ -24,6 +24,8 @@ class LocalContextProvider:
         system = request.base_system_prompt + (
             f"\nCurrent working directory: {self.workspace.root}\nAccessible file tool roots:\n{roots}\n"
             "PowerShell uses the current Windows user's permissions. No OS sandbox is provided. "
+            "Begin with a shallow file.list, then locate and read relevant sources. "
+            "Generated content is excluded from discovery unless explicitly included. "
             "Use file.read hashes for edits, inspect actual command exit codes, and never claim "
             "tests passed without executing them. Do not commit, push or reset unless requested."
         )

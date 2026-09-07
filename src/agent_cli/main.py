@@ -13,7 +13,7 @@ from .config import Profile, home_directory, load_config, save_config, select_pr
 
 def parser():
     root = argparse.ArgumentParser(prog="agenthub", description="AgentHub local coding agent")
-    root.add_argument("--version", action="version", version="agenthub 0.1.1")
+    root.add_argument("--version", action="version", version="agenthub 0.1.2")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
     session.add_argument("--continue", dest="continue_session", action="store_true")

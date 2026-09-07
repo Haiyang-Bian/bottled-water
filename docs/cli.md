@@ -1,6 +1,6 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.1`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.2`，主要验证平台为 Windows、Python 3.11。
 
 ## 安装与首次使用
 
@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.1-py3-none-any.whl[cli]"
+uv tool install --python 3.11 ".\dist\agenthub_system-0.1.2-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -123,7 +123,7 @@ agenthub trust remove D:\Work\shared
 
 | 工具 | 行为 |
 | --- | --- |
-| `file.list` / `file.search` | 路径模式/字面文本搜索；`offset/limit` 分页；返回 `next_offset` 和截断标记 |
+| `file.list` / `file.search` | 列举默认浅层、搜索默认递归；`recursive` 控制递归；返回文件、目录、分页及发现范围信息 |
 | `file.read` | 按行读文本并返回 SHA-256；支持 UTF-8、UTF-8 BOM 和带 BOM 的 UTF-16；文本上限 8 MiB |
 | `file.write` | 新建用 `expected_hash="new"`；覆盖必须提供最近读取的 hash |
 | `file.edit` | 精确匹配一次旧文本；检测外部修改，保留编码、BOM 和换行风格 |
@@ -131,6 +131,8 @@ agenthub trust remove D:\Work\shared
 | `git.run` | 独立参数数组，不拼接 shell；不自动提交、推送或重置 |
 
 进程 stdout/stderr 合计保留最多 64 KiB，超限后仍排空管道，并返回 `truncated`。文件读取内容及搜索/列举分页受 64 KiB 上限约束。Job Object 采用挂起创建、加入后运行；加入失败报错，超时、取消或宿主退出清理该 Job 的进程树。本期没有 PTY 或跨任务常驻终端。
+
+文件发现继承授权根内的 `.gitignore`，默认过滤 `.git`、`.venv`、`node_modules`、`__pycache__`、`.next`、`target`。已被 Git 跟踪的文件仍可发现。`include_ignored=true` 显式查看被忽略内容；直接 `file.read` 不受发现规则限制，仍检查授权路径。索引不可用或截断通过 `discovery_degraded` 和 `index_state` 报告，分页结果不代表完整扫描。
 
 文件更新使用乐观 hash 检查和临时文件替换，检测到版本冲突时要求重新读取；它不锁住所有外部编辑器。环境变量过滤和日志脱敏减少意外泄漏，不能向同一用户运行的任意脚本隐藏所有凭据。
 
