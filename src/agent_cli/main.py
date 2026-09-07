@@ -6,6 +6,7 @@ import getpass
 import json
 import sys
 from dataclasses import asdict
+from agent_contracts.version import system_version
 
 from agent_contracts.errors import ConfigurationError, OperationError
 from .config import Profile, home_directory, load_config, save_config, select_profile
@@ -13,7 +14,7 @@ from .config import Profile, home_directory, load_config, save_config, select_pr
 
 def parser():
     root = argparse.ArgumentParser(prog="agenthub", description="AgentHub local coding agent")
-    root.add_argument("--version", action="version", version="agenthub 0.1.4")
+    root.add_argument("--version", action="version", version=f"agenthub {system_version()}")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
     session.add_argument("--continue", dest="continue_session", action="store_true")
@@ -92,7 +93,7 @@ async def dispatch(args):
     from agent_adapters.storage.sqlite import SQLiteStore
     from agent_subsystems.workspaces.paths import canonical_directory
 
-    store = SQLiteStore(home / "state.sqlite3")
+    store = SQLiteStore(home / "state.sqlite3", readonly=args.command == "replay")
     try:
         if args.command == "trust":
             path = canonical_directory(args.path)
@@ -113,14 +114,32 @@ async def dispatch(args):
             while True:
                 page = await store.read_events(args.run_id, after_sequence=cursor)
                 for event in page.items:
-                    print(store.redactor.dumps(event))
+                    displayed = asdict(event)
+                    if event.type in {
+                        "system.run_started",
+                        "system.run_completed",
+                        "system.run_failed",
+                        "system.run_cancelled",
+                    }:
+                        for field in ("system_version", "effective_limits", "counters", "usage"):
+                            displayed["payload"].setdefault(field, None)
+                    print(store.redactor.dumps(displayed))
                 if not page.items:
                     break
                 cursor = page.next_sequence
             return 0
         from agent_adapters.credentials.local import LocalCredentialStore
-        from agent_adapters.local.processes import executable, powershell_executable
 
+        if args.command == "doctor":
+            from .diagnostics import doctor
+
+            try:
+                config = load_config(home)
+            except ConfigurationError:
+                config = {}
+            report = doctor(home, store, config, args.profile)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["healthy"] else 2
         config = load_config(home)
         if args.max_turns is not None:
             value = None if args.max_turns == "unlimited" else int(args.max_turns)
@@ -128,26 +147,9 @@ async def dispatch(args):
 
             ExecutionLimits(max_model_turns=value)
             config.setdefault("execution", {})["max_model_turns"] = value
-        _, profile = select_profile(config, args.profile)
+        name, profile = select_profile(config, args.profile)
+        config["active_profile"] = name
         secret = LocalCredentialStore(home / "credentials").resolve(profile.credential_ref)
-        if args.command == "doctor":
-            print(
-                json.dumps(
-                    {
-                        "home": str(home),
-                        "provider": profile.provider,
-                        "model": profile.model,
-                        "credential": "available",
-                        "powershell": powershell_executable(config.get("powershell")),
-                        "git": executable("git"),
-                        "execution_mode": "current_user",
-                        "filesystem_isolation": False,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 0
         from model_provider import create_provider
         from agent_subsystems.observability.redaction import Redactor
         from .provider import LocalModelProvider

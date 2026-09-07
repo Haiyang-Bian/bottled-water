@@ -10,10 +10,11 @@ from logging.handlers import RotatingFileHandler
 
 from agent_contracts.context import ContextBudget
 from agent_subsystems.context.continuation import JournalContinuationReader
-from agent_contracts.harness import ExecutionLimits
+from agent_contracts.version import system_version
+from .diagnostics import effective_limits
 from agent_contracts.execution import ResourceGrant, WorkspaceSpec
 from agent_contracts.errors import ConfigurationError, OperationError
-from agent_runtime import AgentConfig, RunRequest, RuntimeEngine, RuntimeLimits
+from agent_runtime import AgentConfig, RunRequest, RuntimeEngine
 from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 from agent_subsystems.context.local import LocalContextProvider
@@ -67,7 +68,9 @@ class Renderer:
             print("" if self.wrote_tokens else self.redactor.text(result.output))
             print(
                 f"[{result.state.value}: {result.reason_code}] run={result.run_id} "
-                f"usage={result.usage.total_tokens} counters={result.counters}",
+                f"usage={result.usage.total_tokens} estimated={result.usage.estimated} "
+                f"incomplete={result.usage.incomplete} counters={result.counters}\n"
+                f"Continue: agenthub --resume {result.context_scope_id}",
                 file=sys.stderr,
             )
 
@@ -129,7 +132,7 @@ async def run_turn(
     workspace = WorkspaceSpec(
         canonical_directory(session["root"]), tuple(canonical_directory(p) for p in session["dirs"])
     )
-    limits = RuntimeLimits(**config.get("limits", {}))
+    execution_limits, limits = effective_limits(config, profile)
     driver = LocalProcessDriver(redactor)
     renderer = Renderer(redactor, json_mode=json_mode, interactive=interactive)
     grant = ResourceGrant(workspace, frozenset({"files", "process"}))
@@ -144,9 +147,7 @@ async def run_turn(
         context_budget=ContextBudget(
             profile.max_context_chars, profile.context_window_tokens, profile.max_tokens
         ),
-        execution_limits=ExecutionLimits(
-            request_timeout_seconds=profile.timeout_seconds, **config.get("execution", {})
-        ),
+        execution_limits=execution_limits,
     )
     engine = RuntimeEngine(
         agent_executor=executor,
@@ -165,6 +166,18 @@ async def run_turn(
                 policy=SingleAgentPolicy(),
                 metadata={
                     "session_id": session["id"],
+                    "system_version": system_version(),
+                    "model": profile.model,
+                    "provider": profile.provider,
+                    "profile": config.get(
+                        "active_profile", config.get("default_profile", "default")
+                    ),
+                    "effective_limits": {
+                        "execution": asdict(execution_limits),
+                        "run": asdict(limits),
+                        "max_context_chars": profile.max_context_chars,
+                        "context_window_tokens": profile.context_window_tokens,
+                    },
                     "execution_deadline": time.monotonic() + limits.wall_time_seconds,
                 },
             )

@@ -53,6 +53,8 @@ $arguments = @(
     "--name", "agenthub-backend",
     "--paths", (Join-Path $backendRoot "src"),
     "--paths", $sharedRoot,
+    "--copy-metadata", "agenthub-system",
+    "--copy-metadata", "agenthub-backend",
     "--paths", $backendRoot,
     "--add-data", $alembicData,
     "--collect-all", "rapidocr_onnxruntime",

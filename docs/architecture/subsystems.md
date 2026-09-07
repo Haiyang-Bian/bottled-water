@@ -1,6 +1,6 @@
 # 子系统与模块目录
 
-> 本文定义目标职责，基于 2026-09-04 的源码核对。编号用于职责和迁移追踪；MVP 迁移现状见下表，其余描述仍是目标职责。总体依赖与状态规则见[系统架构](./README.md)，旧结构证据与验收见[迁移说明](./migration.md)。
+> 本文定义目标职责，基于 2026-09-07 的源码核对。编号用于职责和迁移追踪；MVP 迁移现状见下表，其余描述仍是目标职责。总体依赖与状态规则见[系统架构](./README.md)，旧结构证据与验收见[迁移说明](./migration.md)。
 
 模块按可维护的职责划分，不要求每行对应一个文件或一个发行包。每个子系统都应具备：通用输入/输出、明确依赖、资源关闭责任、可检查的失败状态和不依赖 Web 的契约测试。以下“迁出”指通用机制，“保留”指 AgentHub 业务适配；不能把一个现有大文件整体移动就视为完成。
 
@@ -8,17 +8,17 @@
 
 | 层/子系统 | 已实现的公共位置 | 仍由原宿主或旧内部模块拥有的内容 |
 | --- | --- | --- |
-| 契约 | `src/agent_contracts`：执行上下文、grant、工具规格、授权/凭据/进程 Port、公共错误 | 既有 Run/Context 契约继续在 `agent_runtime/core`，不重复定义 |
-| Kernel | `src/agent_runtime`：Run、Actor、Watchdog、Journal、取消及 Context CAS 协调 | 旧团队/Workflow 策略仍位于该包内部，未宣称全部纯化 |
+| 契约 | `src/agent_contracts`：执行上下文、grant、工具规格、授权/凭据/进程 Port、公共错误、ExecutionLimits/Observer、ContextBudget、ContinuationReader、RunCompletionPort | 既有 Run/Context 契约继续在 `agent_runtime/core`，不重复定义 |
+| Kernel | `src/agent_runtime`：Run、Actor、Watchdog、Journal、取消、阶段期限、单次请求用量结算及原子完成协调 | 旧团队/Workflow 策略仍位于该包内部，未宣称全部纯化 |
 | S1 执行 | `agent_subsystems/execution`：AgentLoop、AgentLoopExecutor、产品扩展接口 | Web 注入 `app/services/execution_extension.py`；旧 `services/agents/function_loop.py` 仍待后续收敛 |
 | S2 调度 | `agent_subsystems/scheduling/single_agent.py` | 复杂团队、Workflow 策略待迁移 |
 | S3 模型 | `src/model_provider`，SDK 延迟加载、usage 与流关闭 | UI Provider 目录在 `app/services/provider_catalog.py`，拥有者与加密字段在 Web |
-| S4 上下文 | `agent_subsystems/context/local.py` 消费 ContextSnapshot、按完整轮次裁剪历史并记录 | SQL/附件/知识库 contributors 待迁移 |
-| S5 工具 | `agent_subsystems/tools` 注册表、执行器、schema/授权边界 | Web 工具 CRUD、Skill/MCP 组装仍由 Web 持有 |
-| S6 工作空间 | `agent_subsystems/workspaces` 规范路径；`agent_adapters/local` 文件、PowerShell、Git、Job Object | Web 工作树、常驻终端和产品文件树待迁移 |
+| S4 上下文 | `agent_subsystems/context` 消费 ContextSnapshot、每次请求预算整理、失败/取消续接快照 | SQL/附件/知识库 contributors 待迁移 |
+| S5 工具 | `agent_subsystems/tools` 注册表、执行器、schema/授权边界、同 scope 工具记录检索 | Web 工具 CRUD、Skill/MCP 组装仍由 Web 持有 |
+| S6 工作空间 | `agent_subsystems/workspaces` 规范路径、分层忽略与源码发现；`agent_adapters/local` 文件、PowerShell、Git、Job Object | Web 工作树、常驻终端和产品文件树待迁移 |
 | S7/S8/S9/S10/S11 | MCP、Skill、Workflow、内容、外部 Agent 均仅建立职责目录 | 原 Web 功能继续使用原实现 |
 | S12 观测 | `agent_subsystems/observability` 脱敏；SQLite 保存事件、CLI 消费 | Web 审计/实时投影/业务统计仍属宿主 |
-| 驱动 | `agent_adapters/storage` SQLite/会话锁，`credentials` DPAPI/env，`local` 本机操作 | 不提供 AppContainer、受限 Token 或网络隔离 |
+| 驱动 | `agent_adapters/storage` SQLite v2、事务完成、迁移/会话锁，`credentials` DPAPI/env，`local` 本机操作 | 不提供 AppContainer、受限 Token 或网络隔离 |
 | H2 CLI | `src/agent_cli` 初始化、信任、REPL、批处理、恢复、JSONL、doctor/replay | 独立 eval 宿主与高级多 Agent 治理待实现 |
 
 ## K. Runtime Kernel

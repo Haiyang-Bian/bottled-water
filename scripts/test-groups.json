@@ -129,10 +129,13 @@
     ],
     "cli:unit": [
       "tests/test_local_system.py",
-      "tests/test_local_boundaries.py"
+      "tests/test_local_boundaries.py",
+      "tests/test_harness_diagnostics.py",
+      "tests/test_migration_chain.py"
     ],
     "cli:integration": [
-      "tests/test_cli_integration.py"
+      "tests/test_cli_integration.py",
+      "tests/test_harness_upgrade.py"
     ],
     "providers:live": [
       "tests/test_cli_live.py"

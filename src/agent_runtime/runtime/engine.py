@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any
 
 from agent_contracts.harness import ExecutionStopped
+from agent_contracts.version import system_version
 from agent_contracts.persistence import RunCompletionPort, ContinuationReader
 from .completion import InMemoryRunCompletion
 from .execution_observer import KernelExecutionObserver
@@ -660,6 +661,11 @@ class RunKernel:
                 {
                     "run_id": self.request.run_id,
                     "context_scope_id": self.request.context_scope_id,
+                    "system_version": system_version(),
+                    **{
+                        key: self.request.metadata.get(key)
+                        for key in ("model", "provider", "profile", "effective_limits")
+                    },
                 },
             )
             while not self.state.is_terminal:
@@ -1146,6 +1152,8 @@ class RunKernel:
                         "state": state.value,
                         "reason_code": reason_code,
                         "usage": result.usage.to_dict(),
+                        "counters": result.counters,
+                        "system_version": system_version(),
                         "output": output,
                     },
                 )

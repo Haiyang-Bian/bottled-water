@@ -187,7 +187,9 @@ def cli_fixture(tmp_path):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=45,
+            # The product allows a 120-second request; this is a functional process
+            # deadline including SDK startup, not a separate 45-second performance gate.
+            timeout=180,
         )
         assert result.returncode == expected, (
             f"{result.returncode}: {result.stdout}\n{result.stderr}"

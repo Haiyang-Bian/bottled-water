@@ -8,7 +8,7 @@
 | 0.1.2 | 源码发现、忽略规则、浅层与递归 | 实现、确定性及安装验收通过 |
 | 0.1.3 | 运行中上下文预算、工具记录检索 | 实现、确定性及安装验收通过 |
 | 0.1.4 | 续接、schema v2、原子完成提交 | 实现、确定性及安装验收通过 |
-| 0.1.5 | 诊断、升级与完整安装验收 | 待实施 |
+| 0.1.5 | 诊断、升级与完整安装验收 | 实现、安装、已配置 DeepSeek 任务与桌面验收通过；已知限制见下文 |
 
 每版同步 Python 发行版本、后端精确依赖及根锁，保留客户端独立版本。每版执行针对性测试、Web 回归、独立 wheel 安装、Ruff 与 diff 检查，通过后提交并创建本地标签。不推送或上传发布。
 
@@ -60,3 +60,18 @@
 - Kernel / 原有 SQL 存储回归 13 通过，`var/web-014-a.xml`；新增 SQL 原子回滚与团队宿主通过。初次聊天测试因测试组装仍混用内存上下文与 SQL Journal 失败，已同步改为 SQL 原子完成端口并复验。
 - 最终 Web 聊天完成与取消复验 2 通过，`var/web-014-manager.xml`。
 - sidecar 内容指纹已包含新源码和 Alembic 迁移，本版未重复构建二进制。真实 Provider 与 Docker 本版未执行。
+
+0.1.5 桌面验收随后发现本版新增 Alembic 迁移接在较早 revision，造成多 head；在 0.1.5 修正并补充单 head 检查。本版 SQL 功能回归与 CLI 安装结果保持原结论，不能据此宣称本版 Web 部署迁移通过。
+
+## 0.1.5 验收
+
+- 共享系统 53 通过、3 按独立入口跳过，`var/harness-015-final.xml`；已安装 CLI 7 通过，`var/install-015-final.log`。
+- Web / Runtime / 桌面入口 131 通过、1 缺少凭据跳过，`var/web-015.xml`。
+- 使用真实 0.1.0 wheel 创建包含 DPAPI 凭据、信任、成功历史的旧状态，独立升级验收 1 通过，`var/upgrade-015.xml`。
+- 最终 sidecar 构建及实际 Alembic 迁移、单用户启动通过，`var/sidecar-015-final-build.log`、`var/sidecar-015-final-smoke.log`。
+- wheel SHA-256：`6249c7dc7136e167dd9ff3f7a5c99fd216dd349754c28f71b036d821c14ae610`。
+- DeepSeek `deepseek-v4-flash`：真实项目检查、修复/测试、diff、重启续聊、目录隔离、跨目录读取通过；取消与崩溃后的修复/测试续接、进程清理及无重放检查通过。受控连接故障记录为 failed，可 replay 查询。
+- 保留纯描述性恢复任务被模型自报告为 failed/blocked 的负结果，不宣称模型语义判断完全可靠；不将内核预算停止改判为成功。首次安装/全组测试的外层等待超时、验收脚本只读命令误判及迁移链问题均在[详细验收报告](../acceptance/harness-0.1.5.md)记录。
+- OpenAI-compatible 没有配置真实 profile，未执行真实验收；Docker engine 未运行，未执行构建。
+
+每个 wheel 的最终源码提交与校验值保存在 `dist/harness-releases.json`；`scripts/verify-release-history.py` 用不可变本地标签逐文件校验共享源码。安装和升级方法见 [CLI 文档](../cli.md)。

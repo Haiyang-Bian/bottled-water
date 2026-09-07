@@ -217,3 +217,9 @@ REPL 和会话持久化已提前到 M2。本次直接安装共享包验证，不
 已交付根级共享发行包、可安装 CLI、本地驱动与执行链测试。CLI 直接组装公共 Runtime；Web 的 `runtime_service` 注入相同 AgentLoopExecutor 并提供产品扩展。尚存的 Web `services/agents/function_loop.py` 和非 MVP 子系统未在本期全面收敛。
 
 Windows 执行采用当前用户权限。文件工具与命令 cwd 校验、环境过滤及日志脱敏不能形成 OS 沙箱；PowerShell 仍可访问授权目录集合之外的资源。Job Object 仅管理进程树生命周期。真实模型验收和环境依赖的构建以实施记录为准，不以确定性替身代替。
+
+## 9. Harness 0.1.1—0.1.5 增量迁移
+
+本轮新增公共执行限制与阶段观察、源码发现策略、每次请求的上下文整理、同 scope 结果检索和失败续接。Kernel 正常完成通过 RunCompletionPort 一次提交 Context CAS、续接游标、Run 结果与终态事件；SQLite、SQL 与内存适配器采用相同语义。普通工具错误仍由模型处理，资源与协议停止由 Kernel 提交明确原因。
+
+新本地数据库为 schema v2，旧 v1 数据通过迁移锁、会话锁、一致性备份与事务迁移保留。Web 新增续接元数据列，0.1.5 将迁移链正确接在现有工作树迁移之后。尚未迁移的业务模块和多 Agent 权限治理仍按原归属保留。逐版证据、已发现问题及实际验收状态见 [Harness 版本记录](./harness-releases.md)。

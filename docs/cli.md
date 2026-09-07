@@ -1,6 +1,6 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.4`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.5`，主要验证平台为 Windows、Python 3.11。
 
 ## 安装与首次使用
 
@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.4-py3-none-any.whl[cli]"
+uv tool install --python 3.11 ".\dist\agenthub_system-0.1.5-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -168,3 +168,15 @@ uv sync --all-packages --all-extras
 真实服务测试必须显式启用：设置 `AGENTHUB_LIVE_HOME` 指向用户配置目录，并设置 `AGENTHUB_LIVE_OPENAI_PROFILE` 或 `AGENTHUB_LIVE_DEEPSEEK_PROFILE`，再运行 `system/providers/live` 分组。测试使用独立临时项目，会产生真实模型费用。当前自动 live 场景覆盖修复和续聊；完整八项验收清单及未执行项见 [实施记录](./architecture/cli-mvp.md)。
 
 本期未实现 MCP/Skill 接入、AppContainer/受限 Token、多 Agent 权限治理、完整终端模拟或崩溃原地续跑。剩余源代码归属见[子系统目录](./architecture/subsystems.md)。
+
+## Harness 0.1.1—0.1.5
+
+默认模型请求轮数无限制，单 Run 仍受 1,200 秒和 500,000 累计 token 限制。使用 `--max-turns 25` 或 `--max-turns unlimited` 覆盖当前运行；也可在全局配置中设置 `[execution].max_model_turns`。达到限制后不追加总结请求，不自动创建新 Run。
+
+每个 profile 支持 `max_history_chars`、`max_context_chars`（默认 64,000）和可选 `context_window_tokens`；配置窗口后预留 `max_tokens` 输出额度。上下文按完整历史轮次裁剪，再缩减工具输出，保留来源引用。模型可以使用同会话的 `run.read_tool_result` 读取保存记录。
+
+`file.list` 默认浅层列出文件与目录，显式 `recursive=true` 才递归；`file.search` 默认递归。发现默认排除生成目录并遵守分层 `.gitignore`，已跟踪源码保持可发现性；`include_ignored=true` 查看被忽略内容。显式读取已授权路径不受发现忽略规则限制。
+
+`--version` 读取发行元数据。`doctor` 无需模型请求即可显示安装位置、schema、有效配置、限制和本机能力；缺失配置时仍提供部分诊断。`replay` 可只读打开旧 schema，不触发迁移；旧字段缺失显示 `null`，不能补造历史事实。
+
+安装验收：`scripts/verify-cli-install.ps1`；真实旧版本升级：`scripts/verify-cli-upgrade.ps1`；完整真实服务验收：`scripts/accept-harness-live.py --source-home <配置目录> --profile <显式profile> --python <已安装Python> --output <报告路径>`。后者会产生费用，工作项目和状态目录均为独立临时目录。具体通过、失败及未执行项见 [Harness 版本记录](./architecture/harness-releases.md)。

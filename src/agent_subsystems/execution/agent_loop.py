@@ -309,6 +309,9 @@ class AgentLoop:
                 + self.context_snapshot.continuation["summary"]
                 + "\nVerify current state before repeating any unknown operation. Never automatically "
                 "replay edits or commands. Use run.read_tool_result for recorded details."
+                " Previous Run states do not determine the outcome of this Run. Assess completion "
+                "against the current user request. Unknown historical results alone do not block "
+                "a request that only asks you to describe the available record."
             )
         if self.context_diagnostics:
             await _emit(

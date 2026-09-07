@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 from uuid import uuid4
 
@@ -65,6 +65,7 @@ class RuntimeBinding:
     policy_factory: Callable[[], Any]
     scheduling_strategy: str
     team_settings: dict[str, Any] | None = None
+    run_metadata: dict[str, Any] | None = None
 
     def create_policy(self):
         return self.policy_factory()
@@ -373,6 +374,15 @@ class OrchestratorService:
             policy_factory=policy_factory,
             scheduling_strategy=strategy,
             team_settings=team_settings,
+            run_metadata={
+                "model": getattr(provider, "model", None),
+                "provider": getattr(provider, "provider_type", None),
+                "profile": str(selected_model_config_id) if selected_model_config_id else "default",
+                "effective_limits": {
+                    "run": asdict(engine.limits),
+                    "execution": asdict(engine.agent_executor.execution_limits),
+                },
+            },
         )
 
     @staticmethod
@@ -420,6 +430,7 @@ class OrchestratorService:
                 input=prompt,
                 agents=binding.agents,
                 policy=binding.create_policy(),
+                metadata=dict(binding.run_metadata or {}),
             )
         )
         sink = SseSink(conversation_id=str(conversation.id))
