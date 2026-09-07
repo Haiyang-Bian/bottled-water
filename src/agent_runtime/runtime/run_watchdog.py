@@ -22,6 +22,18 @@ class RunWatchdog:
         self._started_at = time.monotonic()
         self._last_progress_at = self._started_at
         self._stopped = asyncio.Event()
+        self._phases: dict[str, tuple[str, float]] = {}
+
+    @property
+    def deadline(self):
+        return self._started_at + self.limits.wall_time_seconds
+
+    def phase_started(self, phase_id, phase, deadline):
+        self._phases[phase_id] = (phase, min(deadline, self.deadline))
+
+    def phase_finished(self, phase_id):
+        self._phases.pop(phase_id, None)
+        self._last_progress_at = time.monotonic()
 
     def record_progress(self) -> None:
         self._last_progress_at = time.monotonic()
@@ -30,7 +42,11 @@ class RunWatchdog:
         now = time.monotonic()
         if now - self._started_at >= self.limits.wall_time_seconds:
             return "wall_time_exceeded"
-        if now - self._last_progress_at >= self.limits.idle_time_seconds:
+        for phase, deadline in self._phases.values():
+            # Let the phase's own timeout close its adapter before the fallback fires.
+            if now >= deadline + self.limits.cancellation_grace_seconds:
+                return f"{phase}_timeout"
+        if not self._phases and now - self._last_progress_at >= self.limits.idle_time_seconds:
             return "idle_timeout"
         return None
 

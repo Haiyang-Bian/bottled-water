@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
+from agent_contracts.harness import ExecutionLimits, ExecutionStopped
+from agent_runtime.core.types import AgentReport, AgentState, AgentWill
 from agent_contracts.errors import ModelInvocationError, OutputTokenLimitExceeded
 
 from agent_runtime.core.run_types import AgentExecutionResult, AgentMemory, Usage
@@ -21,7 +23,9 @@ class AgentLoopExecutor:
         context_provider=None,
         use_streaming: bool = True,
         extension_factory=ExecutionExtension,
+        execution_limits=None,
     ) -> None:
+        self.execution_limits = execution_limits or ExecutionLimits()
         self.model_provider = model_provider
         self.tool_executor = tool_executor
         self.context_provider = context_provider
@@ -35,6 +39,9 @@ class AgentLoopExecutor:
             use_streaming=self.use_streaming,
             max_output_tokens=request.token_budget_remaining,
             extension_factory=self.extension_factory,
+            execution_limits=self.execution_limits,
+            observer=request.observer,
+            deadline=request.deadline,
         )
         loop.context_snapshot = request.context
 
@@ -85,13 +92,27 @@ class AgentLoopExecutor:
                 context_provider=self.context_provider,
                 context_metadata=metadata,
             )
+        except ExecutionStopped as exc:
+            if exc.reason_code == "model_timeout":
+                loop.usage_estimated = True
+            return AgentExecutionResult(
+                agent_id=request.agent.id,
+                report=AgentReport(agent_id=request.agent.id, state=AgentState.FAILED,
+                                   will=AgentWill.BLOCKED, blockers=[exc.reason_code]),
+                reason_code=exc.reason_code, execution_id=request.execution_id,
+                usage=Usage(**loop.usage, estimated=loop.usage_estimated),
+                counters=dict(loop.counters),
+            )
         except (ModelInvocationError, OutputTokenLimitExceeded) as exc:
+            exc.usage_accounted = request.observer is not None
             exc.usage = {
                 **loop.usage,
                 "estimated": loop.usage_estimated
                 or isinstance(exc, ModelInvocationError)
                 or not any(loop.usage.values()),
             }
+            if request.observer:
+                await request.observer.usage_reported("interrupted", exc.usage, dict(loop.counters))
             raise
         report = result["status_report"]
         output = str(result.get("work_product") or "")
@@ -110,5 +131,7 @@ class AgentLoopExecutor:
                 completed_tasks=(request.task,) if report.state.value == "completed" else (),
                 blockers=tuple(report.blockers),
             ),
-            progress=bool(output.strip()) or not report.blockers,
+            progress=None,
+            execution_id=request.execution_id,
+            counters=dict(loop.counters),
         )

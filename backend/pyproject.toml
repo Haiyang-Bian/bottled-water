@@ -7,11 +7,11 @@ where = ["src"]
 
 [project]
 name = "agenthub-backend"
-version = "0.1.0"
+version = "0.1.1"
 description = "AgentHub multi-agent collaboration backend"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "agenthub-system==0.1.0",
+    "agenthub-system==0.1.1",
     "alembic>=1.13.3",
     "email-validator>=2.2.0",
     "fastapi>=0.115.0",

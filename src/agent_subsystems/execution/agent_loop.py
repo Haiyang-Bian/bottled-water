@@ -38,6 +38,8 @@ from agent_runtime.context.agent_ctx import AgentContext
 from agent_runtime.runtime.status_report import parse_agent_status_report
 
 from .extensions import ExecutionExtension
+from .activity import execution_phase, ProtocolFrameGuard
+from agent_contracts.harness import ExecutionLimits, ExecutionStopped
 
 logger = get_logger(__name__)
 
@@ -152,8 +154,6 @@ class AgentLoop:
     2. 步进模式：step() 每次执行一步，支持外部干预
     """
 
-    MAX_TOOL_ROUNDS = 10  # 最大工具调用轮数，防止无限循环
-
     def __init__(
         self,
         agent_config: AgentConfig,
@@ -161,7 +161,13 @@ class AgentLoop:
         use_streaming: bool = False,
         max_output_tokens: int | None = None,
         extension_factory=ExecutionExtension,
+        execution_limits=None,
+        observer=None,
+        deadline=None,
     ):
+        self.execution_limits = execution_limits or ExecutionLimits()
+        self.observer, self.deadline = observer, deadline
+        self.counters = {"model_requests": 0, "tool_rounds": 0, "tool_calls": 0}
         self.extension = extension_factory(agent_config)
         self.context_snapshot = None
         self.context_diagnostics = {}
@@ -282,13 +288,14 @@ class AgentLoop:
         if direct is not None:
             return direct
 
-        system_prompt, messages = await self._build_model_context(
-            task=task,
-            blackboard_view=blackboard_view,
-            agent_ctx=agent_ctx,
-            context_provider=context_provider,
-            context_metadata=context_metadata,
-        )
+        async with self._phase("context"):
+            system_prompt, messages = await self._build_model_context(
+                task=task,
+                blackboard_view=blackboard_view,
+                agent_ctx=agent_ctx,
+                context_provider=context_provider,
+                context_metadata=context_metadata,
+            )
         if self.context_diagnostics:
             await _emit(
                 "agent.context_built", {"agent_id": self.agent.id, **self.context_diagnostics}
@@ -323,36 +330,49 @@ class AgentLoop:
         tool_round = 0
         stream_message_id = f"stream-{self.agent.id}-{uuid.uuid4().hex[:12]}"
 
-        while tool_round < self.MAX_TOOL_ROUNDS:
+        while True:
+            limit = self.execution_limits.max_model_turns
+            if limit is not None and self.counters["model_requests"] >= limit:
+                raise ExecutionStopped("model_turn_budget_exhausted")
             tool_round += 1
+            self.counters["model_requests"] += 1
             await self._run_checkpoint(checkpoint, "before_llm", {"round": tool_round})
 
             try:
                 tools_for_round = self.extension.tools_for_round(tools, tool_results)
                 remaining_tokens = self._remaining_token_budget()
-                if self.use_streaming:
-                    response = await self._chat_streaming(
-                        messages=messages,
-                        system_prompt=system_prompt,
-                        tools=tools_for_round,
-                        _emit=_emit,
-                        stream_message_id=stream_message_id,
-                        stream_context=self._stream_context_payload(context_metadata),
-                        defer_stop_if_tool_calls=True,
-                        max_tokens=remaining_tokens,
-                    )
-                else:
-                    response = await collect_chat_stream(
-                        self.model,
-                        messages=messages,
-                        system_prompt=system_prompt,
-                        tools=tools_for_round,
-                        max_tokens=remaining_tokens,
-                    )
+                async with self._phase("model"):
+                    if self.use_streaming:
+                        response = await self._chat_streaming(
+                            messages=messages,
+                            system_prompt=system_prompt,
+                            tools=tools_for_round,
+                            _emit=_emit,
+                            stream_message_id=stream_message_id,
+                            stream_context=self._stream_context_payload(context_metadata),
+                            defer_stop_if_tool_calls=True,
+                            max_tokens=remaining_tokens,
+                        )
+                    else:
+                        response = await collect_chat_stream(
+                            self.model,
+                            messages=messages,
+                            system_prompt=system_prompt,
+                            tools=tools_for_round,
+                            max_tokens=remaining_tokens,
+                        )
                 self._record_usage(response, system_prompt, messages)
+                if self.observer:
+                    await self.observer.usage_reported(str(tool_round),
+                        {**self.usage, "estimated": self.usage_estimated}, dict(self.counters))
+                self._remaining_token_budget()
                 if response.finish_reason == "length":
-                    raise OutputTokenLimitExceeded("token_budget_exhausted")
-            except OutputTokenLimitExceeded:
+                    raise ExecutionStopped("output_token_limit_exceeded")
+                guard = ProtocolFrameGuard()
+                guard.push(response.content or "", final=True)
+                if guard.invalid:
+                    raise ExecutionStopped("provider_protocol_error")
+            except (OutputTokenLimitExceeded, ExecutionStopped):
                 raise
             except Exception as e:
                 logger.error("Agent LLM 调用失败", agent_id=self.agent.id, error=str(e))
@@ -380,6 +400,8 @@ class AgentLoop:
 
                 break
 
+            self.counters["tool_rounds"] += 1
+            self.counters["tool_calls"] += len(tool_calls)
             tool_calls = self._normalize_tool_calls(tool_calls)
 
             # 处理工具调用
@@ -455,7 +477,11 @@ class AgentLoop:
                         )
 
                         # 执行工具
-                        result = await active_tool_executor.execute(tool_call)
+                        timeout = tool_call.parameters.get("timeout", 120)
+                        if not isinstance(timeout, (int, float)) or timeout <= 0:
+                            timeout = 120
+                        async with self._phase("tool", timeout + 5):
+                            result = await active_tool_executor.execute(tool_call)
 
                         # 如果 result 已经是 ToolResult，直接返回
                         if not isinstance(result, ToolResult):
@@ -466,6 +492,8 @@ class AgentLoop:
                                 result=result,
                             )
                     except Exception as e:
+                        if isinstance(e, ExecutionStopped) and e.reason_code != "tool_timeout":
+                            raise
                         logger.error("工具执行失败", tool=tool_call.tool_name, error=str(e))
 
                         result = ToolResult(
@@ -537,71 +565,17 @@ class AgentLoop:
                 "after_tool_round",
                 {"round": tool_round, "tool_count": len(tool_calls)},
             )
+            if self.observer:
+                await self.observer.usage_reported(str(tool_round),
+                    {**self.usage, "estimated": self.usage_estimated}, dict(self.counters))
 
-        # 如果达到工具调用上限
-        if tool_round >= self.MAX_TOOL_ROUNDS:
-            logger.warning(
-                "Agent 工具调用达到上限",
-                agent_id=self.agent.id,
-                max_rounds=self.MAX_TOOL_ROUNDS,
-            )
-
-        # 解析回复：分离成果和状态报告
         final_content = messages[-1].content if messages else ""
-        # 如果最后一条消息是 tool 消息，需要再调一次 LLM 获取总结
-        if messages and messages[-1].role == "tool":
-            try:
-                await self._run_checkpoint(checkpoint, "before_summary", {})
-                summary_messages = [
-                    *messages,
-                    ChatMessage(
-                        role="user",
-                        content=self.extension.summary_instruction(tool_results),
-                    ),
-                ]
-                if self.use_streaming:
-                    remaining_tokens = self._remaining_token_budget()
-                    summary_response = await self._chat_streaming(
-                        messages=summary_messages,
-                        system_prompt=system_prompt,
-                        tools=None,
-                        _emit=_emit,
-                        stream_message_id=stream_message_id,
-                        stream_context=self._stream_context_payload(context_metadata),
-                        max_tokens=remaining_tokens,
-                    )
-                else:
-                    summary_response = await collect_chat_stream(
-                        self.model,
-                        messages=summary_messages,
-                        system_prompt=system_prompt,
-                        max_tokens=self._remaining_token_budget(),
-                    )
-                self._record_usage(summary_response, system_prompt, summary_messages)
-                if summary_response.finish_reason == "length":
-                    raise OutputTokenLimitExceeded("token_budget_exhausted")
-                final_content = summary_response.content or ""
-                await self._run_checkpoint(
-                    checkpoint,
-                    "after_summary",
-                    {"content_length": len(final_content)},
-                )
-            except OutputTokenLimitExceeded:
-                raise
-            except Exception as e:
-                logger.error("Agent 总结调用失败", agent_id=self.agent.id, error=str(e))
-                raise ModelInvocationError("Model summary request failed") from e
-
         status_report = self._extract_status_report(final_content)
         work_product = self._remove_status_report(final_content)
         original_product = work_product
         work_product, status_report = self.extension.finalize(
             task, work_product, status_report, tool_results
         )
-        if tool_round >= self.MAX_TOOL_ROUNDS and messages and messages[-1].role == "tool":
-            status_report.state = AgentState.FAILED
-            status_report.will = AgentWill.BLOCKED
-            status_report.blockers = ["tool_round_budget_exhausted"]
         if self.use_streaming and work_product != original_product:
             await self._emit_text_response(
                 _emit,
@@ -651,11 +625,10 @@ class AgentLoop:
             self.usage["prompt_tokens"] += self._estimate_tokens(prompt)
             self.usage["completion_tokens"] += self._estimate_tokens(response.content or "")
             self.usage_estimated = True
-        if (
-            self.max_output_tokens is not None
-            and sum(self.usage.values()) >= self.max_output_tokens
-        ):
-            raise OutputTokenLimitExceeded("token_budget_exhausted")
+    def _phase(self, name, timeout=None):
+        return execution_phase(self.observer, name,
+                               timeout or self.execution_limits.request_timeout_seconds,
+                               self.deadline)
 
     def _remaining_token_budget(self) -> int | None:
         if self.max_output_tokens is None:
@@ -764,6 +737,7 @@ class AgentLoop:
         content_parts: List[str] = []
         reasoning_parts: List[str] = []
         token_filter = _StatusReportStreamFilter()
+        protocol_guard = ProtocolFrameGuard()
         stream_started = False
         stream_context = stream_context or {}
 
@@ -813,7 +787,7 @@ class AgentLoop:
                 # 1. 文本内容
                 if chunk.content:
                     content_parts.append(chunk.content)
-                    visible_delta = token_filter.push(chunk.content)
+                    visible_delta = token_filter.push(protocol_guard.push(chunk.content))
                     if visible_delta:
                         await ensure_stream_started()
                         await _emit(
@@ -867,6 +841,13 @@ class AgentLoop:
             await stream.aclose()
 
         # 组装最终响应
+        tail = token_filter.push(protocol_guard.push("", final=True))
+        if tail:
+            await ensure_stream_started()
+            await _emit("agent.token", {
+                "agent_id": self.agent.id, "agent_message_id": stream_message_id,
+                "token": tail, **stream_context,
+            })
         full_content = "".join(content_parts)
         final_tool_calls = (
             [tool_calls_acc[i] for i in sorted(tool_calls_acc.keys())] if tool_calls_acc else None

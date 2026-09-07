@@ -337,7 +337,9 @@ class TestAgentLoopBasic:
         """测试工具调用轮数上限"""
         # 模拟 LLM 总是返回 tool_calls
         responses = []
-        for _ in range(AgentLoop.MAX_TOOL_ROUNDS + 1):
+        from agent_contracts.harness import ExecutionLimits, ExecutionStopped
+
+        for _ in range(4):
             responses.append(
                 ChatResponse(
                     content="",
@@ -352,10 +354,11 @@ class TestAgentLoopBasic:
             )
         mock_provider.responses = responses
 
-        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension)
-        result = await loop.run("无限工具调用", {}, None)
-
-        assert len(result["tool_events"]) == AgentLoop.MAX_TOOL_ROUNDS
+        loop = AgentLoop(agent_config, mock_provider, extension_factory=WebExecutionExtension,
+                         execution_limits=ExecutionLimits(max_model_turns=3))
+        with pytest.raises(ExecutionStopped, match="model_turn_budget_exhausted"):
+            await loop.run("无限工具调用", {}, None)
+        assert mock_provider.call_count == 3
 
 
 class TestAgentLoopPromptBuilding:

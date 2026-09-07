@@ -13,8 +13,12 @@ class SingleAgentPolicy:
                 action="assign", target_agent_ids=(snapshot.agents[0].id,), task=snapshot.input
             )
         report = snapshot.reports[-1]
+        results = snapshot.execution_results
+        if results and results[-1].reason_code:
+            return SchedulingProposal(action="fail", reason_code=results[-1].reason_code)
         if report.state == AgentState.FAILED or report.will == AgentWill.BLOCKED:
-            return SchedulingProposal(action="fail", reason_code="agent_failed")
+            return SchedulingProposal(action="fail", reason_code="agent_blocked"
+                                      if report.will == AgentWill.BLOCKED else "agent_failed")
         if report.state == AgentState.COMPLETED or report.will == AgentWill.COMPLETE:
             return SchedulingProposal(action="complete")
         if report.will == AgentWill.WAIT:

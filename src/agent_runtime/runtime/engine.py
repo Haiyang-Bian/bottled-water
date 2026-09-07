@@ -8,6 +8,9 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
+from agent_contracts.harness import ExecutionStopped
+from .execution_observer import KernelExecutionObserver
+
 from agent_contracts.errors import OutputTokenLimitExceeded, ModelInvocationError
 
 from ..context.scope_store import InMemoryContextStore, VersionedBlackboard
@@ -182,6 +185,10 @@ class RunKernel:
         self._context: ContextSnapshot | None = None
         self._blackboard: VersionedBlackboard | None = None
         self._memories: dict[str, AgentMemory] = {}
+        self._execution_results = []
+        self._execution_usage = {}
+        self._execution_counters = {}
+        self._accounted_requests = set()
         self._reports = []
         self._outputs: list[str] = []
         self._last_event: EventEnvelope | None = None
@@ -716,11 +723,15 @@ class RunKernel:
             await self._abort("adapter_timeout")
         except AdapterNotCancellableError:
             await self._abort("adapter_not_cancellable")
+        except ExecutionStopped as exc:
+            await self._abort(exc.reason_code)
         except OutputTokenLimitExceeded as exc:
-            self.usage.add(Usage(**(exc.usage or {"estimated": True})))
+            if not getattr(exc, "usage_accounted", False):
+                self.usage.add(Usage(**(exc.usage or {"estimated": True})))
             await self._abort("token_budget_exhausted")
         except ModelInvocationError as exc:
-            self.usage.add(Usage(**(exc.usage or {"estimated": True})))
+            if not getattr(exc, "usage_accounted", False):
+                self.usage.add(Usage(**(exc.usage or {"estimated": True})))
             await self._abort("model_error")
         except EventSequenceConflictError:
             await self._abort("event_sequence_conflict")
@@ -750,6 +761,7 @@ class RunKernel:
             decision_count=self.decision_count,
             metadata=deepcopy(self.request.metadata),
             collaboration=collaboration,
+            execution_results=tuple(self._execution_results),
         )
 
     async def _execute_targets(
@@ -815,6 +827,10 @@ class RunKernel:
                 target=target,
                 causation_id=self._last_event.event_id if self._last_event else None,
             )
+        requests = [replace(r, observer=KernelExecutionObserver(self, r.execution_id),
+                            deadline=self._watchdog.deadline,
+                            metadata={**r.metadata, "execution_deadline": self._watchdog.deadline})
+                    for r in requests]
         tasks = {
             asyncio.create_task(
                 self._actors[request.agent.id].assign(request),
@@ -836,7 +852,11 @@ class RunKernel:
         self, result: AgentExecutionResult, *, is_summary: bool = False
     ) -> None:
         self.lease.require_valid()
-        self.usage.add(result.usage)
+        self._execution_results.append(result)
+        if result.execution_id not in self._execution_usage:
+            self.usage.add(result.usage)
+        if result.execution_id:
+            self._execution_counters[result.execution_id] = result.counters
         budget_reason = self._watchdog.check_tokens(self.usage.total_tokens)
         if budget_reason is not None:
             await self._abort(budget_reason)
@@ -854,10 +874,10 @@ class RunKernel:
             assert self._blackboard is not None
             version, _ = await self._blackboard.read()
             await self._blackboard.update(version, result.blackboard_update)
-        if result.progress:
+        if result.progress is True:
             self.no_progress_count = 0
             self._watchdog.record_progress()
-        else:
+        elif result.progress is False:
             self.no_progress_count += 1
             budget_reason = self._watchdog.check_no_progress(self.no_progress_count)
             if budget_reason is not None:
@@ -867,6 +887,8 @@ class RunKernel:
             "agent.report",
             {
                 "agent_id": result.agent_id,
+                "reason_code": result.reason_code,
+                "counters": result.counters,
                 "state": result.report.state.value,
                 "will": result.report.will.value,
                 "work_product": result.output,
@@ -882,6 +904,9 @@ class RunKernel:
             },
             source=f"agent:{result.agent_id}",
         )
+
+        if result.reason_code:
+            await self._abort(result.reason_code)
 
     async def _commit_context(self) -> None:
         self.lease.require_valid()
@@ -1059,6 +1084,8 @@ class RunKernel:
                 ),
                 context_version=self._context.version if self._context is not None else 0,
                 output=output,
+                counters={name: sum(c.get(name, 0) for c in self._execution_counters.values())
+                          for name in ("model_requests", "tool_rounds", "tool_calls")},
             )
             terminal_type = {
                 RunState.COMPLETED: "system.run_completed",

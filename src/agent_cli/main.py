@@ -13,13 +13,14 @@ from .config import Profile, home_directory, load_config, save_config, select_pr
 
 def parser():
     root = argparse.ArgumentParser(prog="agenthub", description="AgentHub local coding agent")
-    root.add_argument("--version", action="version", version="agenthub 0.1.0")
+    root.add_argument("--version", action="version", version="agenthub 0.1.1")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
     session.add_argument("--continue", dest="continue_session", action="store_true")
     session.add_argument("--resume")
     root.add_argument("--add-dir", action="append", default=[])
     root.add_argument("--profile")
+    root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
     commands = root.add_subparsers(dest="command")
     init = commands.add_parser("init", help="Configure a model and credential reference")
@@ -119,6 +120,11 @@ async def dispatch(args):
         from agent_adapters.local.processes import executable, powershell_executable
 
         config = load_config(home)
+        if args.max_turns is not None:
+            value = None if args.max_turns == "unlimited" else int(args.max_turns)
+            from agent_contracts.harness import ExecutionLimits
+            ExecutionLimits(max_model_turns=value)
+            config.setdefault("execution", {})["max_model_turns"] = value
         _, profile = select_profile(config, args.profile)
         secret = LocalCredentialStore(home / "credentials").resolve(profile.credential_ref)
         if args.command == "doctor":

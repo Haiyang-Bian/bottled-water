@@ -212,6 +212,7 @@ class PolicySnapshot:
     decision_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     collaboration: CollaborationSnapshot | None = None
+    execution_results: tuple[AgentExecutionResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,9 @@ class AgentExecutionRequest:
     inbox: tuple[TeamMessage, ...] = ()
     team_messenger: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_id: str = field(default_factory=lambda: uuid4().hex)
+    observer: Any | None = None
+    deadline: float | None = None
 
 
 @dataclass(frozen=True)
@@ -254,7 +258,10 @@ class AgentExecutionResult:
     usage: Usage = field(default_factory=Usage)
     memory: AgentMemory | None = None
     blackboard_update: dict[str, Any] = field(default_factory=dict)
-    progress: bool = True
+    progress: bool | None = None
+    reason_code: str | None = None
+    execution_id: str = ""
+    counters: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -268,6 +275,7 @@ class RunResult:
     usage: Usage
     context_version: int = 0
     output: str = ""
+    counters: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

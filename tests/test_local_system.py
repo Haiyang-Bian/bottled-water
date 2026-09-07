@@ -303,7 +303,7 @@ async def test_failed_agent_report_is_a_failed_kernel_run(store):
             RunRequest("failure", "task", (AgentConfig("a", "A", ""),), SingleAgentPolicy())
         )
         result = await handle.result()
-        assert result.state == RunState.FAILED and result.reason_code == "agent_failed"
+        assert result.state == RunState.FAILED and result.reason_code == "agent_blocked"
         assert result.output == "Cannot complete"
         assert not (await store.load("failure")).messages
     finally:

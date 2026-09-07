@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict
 from logging.handlers import RotatingFileHandler
 
+from agent_contracts.harness import ExecutionLimits
 from agent_contracts.execution import ResourceGrant, WorkspaceSpec
 from agent_contracts.errors import ConfigurationError, OperationError
 from agent_runtime import AgentConfig, RunRequest, RuntimeEngine, RuntimeLimits
@@ -35,6 +36,10 @@ class Renderer:
         elif event.type == "agent.token" and self.interactive:
             print(self.redactor.text(event.payload.get("token", "")), end="", flush=True)
             self.wrote_tokens = True
+        elif event.type in {"execution.phase_started", "execution.phase_finished"}:
+            p = event.payload
+            elapsed = f" {p['elapsed_seconds']:.2f}s" if "elapsed_seconds" in p else ""
+            print(f"[{p['phase']}] {event.type.rsplit('_', 1)[-1]}{elapsed}", file=sys.stderr)
         elif event.type in {"agent.tool_call", "agent.tool_result"}:
             payload = event.payload
             tool = payload.get("tool") or ", ".join(payload.get("tools", []))
@@ -59,7 +64,8 @@ class Renderer:
         else:
             print("" if self.wrote_tokens else self.redactor.text(result.output))
             print(
-                f"[{result.state.value}: {result.reason_code}] run={result.run_id}", file=sys.stderr
+                f"[{result.state.value}: {result.reason_code}] run={result.run_id} "
+                f"usage={result.usage.total_tokens} counters={result.counters}", file=sys.stderr
             )
 
 
@@ -131,6 +137,8 @@ async def run_turn(
         ),
         context_provider=LocalContextProvider(workspace, profile.max_history_chars),
         use_streaming=True,
+        execution_limits=ExecutionLimits(request_timeout_seconds=profile.timeout_seconds,
+                                         **config.get("execution", {})),
     )
     engine = RuntimeEngine(
         agent_executor=executor, context_store=store, run_journal=store, limits=limits

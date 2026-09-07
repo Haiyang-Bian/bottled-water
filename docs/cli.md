@@ -1,6 +1,6 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.0`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.1`，主要验证平台为 Windows、Python 3.11。
 
 ## 安装与首次使用
 
@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.0-py3-none-any.whl[cli]"
+uv tool install --python 3.11 ".\dist\agenthub_system-0.1.1-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -77,7 +77,15 @@ idle_time_seconds = 180
 max_total_tokens = 500000
 max_decisions = 50
 cancellation_grace_seconds = 5
+
+[execution]
+# 可选；省略表示不限制模型请求轮数，最终答复也计一轮。
+# max_model_turns = 40
 ```
+
+`--max-turns N` 覆盖本次运行的模型请求轮数，`--max-turns unlimited` 取消配置中的轮数限制。总时间与累计 token 预算仍生效。达到限制后不额外调用模型总结，也不会自动启动新 Run。终端与 JSONL 区分模型请求数、工具轮数和工具调用次数。
+
+空闲看门狗监测未处于有效执行阶段的异常空闲。模型和工具阶段有独立截止时间，并受 Run 总期限约束；流式 token 不视为任务进展。模型轮数、总 token、单次输出截断、模型超时和协议错误保留独立原因码。
 
 `max_tokens` 限制单次模型输出，`timeout_seconds` 为 Provider 请求超时。`max_history_chars` 是历史和当前请求的字符预算：按完整历史轮次裁剪，当前请求始终保留，裁剪信息写入 `agent.context_built`。它不是准确 tokenizer 上限，不自动调用摘要模型。Runtime 总预算与命令超时另行约束；未知用量明确标为估算，实际 usage 优先使用 Provider 值。
 

@@ -270,7 +270,7 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     assert failed["state"] == "failed"
     assert failed["usage"]["estimated"]
     truncated = records(run("--json", "-p", "TRUNCATED", expected=1))[-1]
-    assert truncated["state"] == "failed" and truncated["reason_code"] == "token_budget_exhausted"
+    assert truncated["state"] == "failed" and truncated["reason_code"] == "output_token_limit_exceeded"
     assert truncated["usage"]["prompt_tokens"] == 30 and not truncated["usage"]["estimated"]
     assert len(json.loads(run("sessions").stdout)) >= 2
     if os.environ.get("AGENTHUB_TEST_PYTHON"):

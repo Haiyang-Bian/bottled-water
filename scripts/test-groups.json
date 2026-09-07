@@ -120,7 +120,8 @@
   },
   "system": {
     "runtime:unit": [
-      "tests/test_package_boundary.py"
+      "tests/test_package_boundary.py",
+      "tests/test_harness_execution.py"
     ],
     "cli:unit": [
       "tests/test_local_system.py",
