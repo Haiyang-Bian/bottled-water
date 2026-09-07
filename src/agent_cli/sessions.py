@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 from agent_adapters.storage.session_queries import SessionQueries, decode
 from agent_adapters.storage.session_lock import SessionLock
@@ -29,7 +30,13 @@ class SessionSummary:
     last_run_id: str
 
     def label(self):
-        return f"{self.title} · {self.last_active} · {self.run_count} 轮 · {self.state}"
+        try:
+            date = datetime.fromisoformat(self.last_active).astimezone().strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            date = self.last_active
+        state = {"completed": "已完成", "failed": "失败", "cancelled": "已取消",
+                 "running": "上次运行未结束"}.get(self.state, self.state)
+        return f"{self.title} · {date} · {self.run_count} 轮 · {state}"
 
 
 class SessionCatalogReader:

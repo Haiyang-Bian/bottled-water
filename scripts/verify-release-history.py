@@ -2,8 +2,10 @@
 
 import argparse
 import hashlib
+import io
 import json
 import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -17,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--through", type=int, choices=range(1, 6), default=5)
+    parser.add_argument("--through", type=int, choices=range(1, 8), default=7)
     args = parser.parse_args()
     records = []
     for minor in range(1, args.through + 1):
@@ -25,11 +27,12 @@ def main():
         tag = f"agenthub-v{version}"
         commit = git("rev-parse", f"{tag}^{{commit}}").decode().strip()
         wheel = ROOT / "dist" / f"agenthub_system-{version}-py3-none-any.whl"
-        sources = git("ls-tree", "-r", "--name-only", tag, "src").decode().splitlines()
-        with zipfile.ZipFile(wheel) as archive:
-            for path in sources:
-                if path.endswith(".py"):
-                    expected = git("show", f"{tag}:{path}")
+        sources = tarfile.open(fileobj=io.BytesIO(git("archive", tag, "src")))
+        with sources, zipfile.ZipFile(wheel) as archive:
+            for member in sources.getmembers():
+                path = member.name
+                if member.isfile() and path.endswith(".py"):
+                    expected = sources.extractfile(member).read()
                     actual = archive.read(path.removeprefix("src/"))
                     # Git canonicalizes text to LF; a Windows wheel may retain CRLF.
                     if actual.replace(b"\r\n", b"\n") != expected.replace(b"\r\n", b"\n"):

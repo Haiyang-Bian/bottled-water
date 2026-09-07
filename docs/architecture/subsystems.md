@@ -19,7 +19,7 @@
 | S7/S8/S9/S10/S11 | MCP、Skill、Workflow、内容、外部 Agent 均仅建立职责目录 | 原 Web 功能继续使用原实现 |
 | S12 观测 | `agent_subsystems/observability` 脱敏；SQLite 保存事件、CLI 消费 | Web 审计/实时投影/业务统计仍属宿主 |
 | 驱动 | `agent_adapters/storage` SQLite v2、事务完成、迁移/会话锁，`credentials` DPAPI/env，`local` 本机操作 | 不提供 AppContainer、受限 Token 或网络隔离 |
-| H2 CLI | `src/agent_cli` 初始化、信任、REPL、批处理、恢复、JSONL、doctor/replay | 独立 eval 宿主与高级多 Agent 治理待实现 |
+| H2 CLI | `src/agent_cli` 初始化、信任、草稿/会话选择、历史、Rich/纯文本/JSONL、doctor/replay | 独立 eval 宿主与高级多 Agent 治理待实现 |
 
 ## K. Runtime Kernel
 

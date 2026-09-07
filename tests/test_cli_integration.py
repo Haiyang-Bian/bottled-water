@@ -80,7 +80,17 @@ def cli_fixture(tmp_path):
             delta = {
                 "content": 'Finished.\n```status_report\n{"state":"completed","will":"complete"}\n```'
             }
-            if scenario == "REPAIR":
+            if scenario == "VISUAL":
+                if step == 0:
+                    delta = call("Execute a non-interactive", {
+                        "script": "Start-Sleep -Seconds 3; Write-Output '中文工具结果 TEST PASSED'"
+                    })
+                else:
+                    delta = {"content": "# 验证完成\n\n已执行 **PowerShell**，测试通过。\n\n"
+                             "```python\n" + "\n".join(f"value_{i} = {i}" for i in range(45))
+                             + "\n```\n\n继续输入可处理下一项任务。\n"
+                             '```status_report\n{"state":"completed","will":"complete"}\n```'}
+            elif scenario == "REPAIR":
                 if step == 0:
                     delta = call("Read text", {"path": "calc.py"})
                 elif step == 1:

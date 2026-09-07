@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.5-py3-none-any.whl[cli]"
+uv tool install --force --python 3.11 ".\dist\agenthub_system-0.1.7-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -172,6 +172,30 @@ uv sync --all-packages --all-extras
 真实服务测试必须显式启用：设置 `AGENTHUB_LIVE_HOME` 指向用户配置目录，并设置 `AGENTHUB_LIVE_OPENAI_PROFILE` 或 `AGENTHUB_LIVE_DEEPSEEK_PROFILE`，再运行 `system/providers/live` 分组。测试使用独立临时项目，会产生真实模型费用。当前自动 live 场景覆盖修复和续聊；完整八项验收清单及未执行项见 [实施记录](./architecture/cli-mvp.md)。
 
 本期未实现 MCP/Skill 接入、AppContainer/受限 Token、多 Agent 权限治理、完整终端模拟或崩溃原地续跑。剩余源代码归属见[子系统目录](./architecture/subsystems.md)。
+
+## 会话与界面（0.1.6—0.1.7）
+
+直接运行 `agenthub` 进入新会话草稿，首次提交任务后才保存。`agenthub -r`、
+`agenthub resume` 或交互命令 `/resume` 打开当前目录的选择列表，无需记忆 ID。
+输入文字过滤，方向键选择，PageUp/PageDown 翻页，Enter 确认，Esc 返回。
+`agenthub -c` 继续最近有执行记录的会话；失败、取消会话也可以继续，空会话不参与排序。
+恢复后回显最近 3 轮，超过 12,000 字符会提示截断；`/history` 分页查看完整保存记录。
+回显不会再追加到模型上下文。`/new` 创建草稿，`/session` 查看诊断 ID 和目录。
+
+界面默认显示 Markdown、工具摘要和动态状态。普通工具输出展示最多 6 行；
+`/tools` 通过两级列表选择 Run 和工具，分页读取已保存结果，不会重新执行。
+原结果被驱动截断时，未保存部分不能通过详情恢复。
+
+- Enter 发送，Alt+Enter 或 Ctrl+J 换行；支持多行粘贴。
+- Tab 补全命令及 `/add-dir` 路径；上下键浏览当前会话输入。
+- `--verbose` 或 `/verbose on|off` 控制详细工具输出和内部阶段信息。
+- `--plain` 禁用装饰、颜色及运行动画；`--no-color` 或 `NO_COLOR` 禁用颜色。
+- 重定向自动使用纯文本；`--json` 保持 JSONL，不混入界面或历史回显。
+- 执行中 Ctrl+C 取消当前任务并清理工具进程，然后恢复输入；已产生的文件修改保留。
+
+`agenthub --json sessions` 用于脚本查询；非交互恢复必须提供 `--resume ID`。
+普通恢复列表限定当前实际目录；`sessions --all` 只读显示其他目录的位置，不自动切换授权。
+界面使用 prompt_toolkit 与 Rich，未引入全屏 TUI，也未改变本机工具的非交互进程模型。
 
 ## Harness 0.1.1—0.1.5
 

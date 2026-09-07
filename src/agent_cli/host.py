@@ -23,53 +23,7 @@ from agent_adapters.local.processes import LocalProcessDriver
 from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
 
 
-class Renderer:
-    def __init__(self, redactor, *, json_mode=False, interactive=False):
-        self.redactor, self.json_mode, self.interactive = redactor, json_mode, interactive
-        self.wrote_tokens = False
-
-    def event(self, event):
-        if event.type in {"agent.thinking", "model.reasoning", "model.thinking"}:
-            return
-        if self.json_mode:
-            print(self.redactor.dumps(event), flush=True)
-        elif event.type == "agent.token" and self.interactive:
-            print(self.redactor.text(event.payload.get("token", "")), end="", flush=True)
-            self.wrote_tokens = True
-        elif event.type in {"execution.phase_started", "execution.phase_finished"}:
-            p = event.payload
-            elapsed = f" {p['elapsed_seconds']:.2f}s" if "elapsed_seconds" in p else ""
-            print(f"[{p['phase']}] {event.type.rsplit('_', 1)[-1]}{elapsed}", file=sys.stderr)
-        elif event.type in {"agent.tool_call", "agent.tool_result"}:
-            payload = event.payload
-            tool = payload.get("tool") or ", ".join(payload.get("tools", []))
-            status = (
-                "start"
-                if event.type == "agent.tool_call"
-                else ("ok" if payload.get("success") else "failed")
-            )
-            print(self.redactor.text(f"\n[{tool}] {status}"), file=sys.stderr, flush=True)
-            if event.type == "agent.tool_result":
-                result = payload.get("result")
-                if isinstance(result, dict):
-                    for key in ("stdout", "stderr"):
-                        if result.get(key):
-                            print(self.redactor.text(result[key]), file=sys.stderr)
-                if payload.get("error"):
-                    print(self.redactor.text(str(payload["error"])), file=sys.stderr)
-
-    def result(self, result):
-        if self.json_mode:
-            print(self.redactor.dumps({"type": "result", **asdict(result)}), flush=True)
-        else:
-            print("" if self.wrote_tokens else self.redactor.text(result.output))
-            print(
-                f"[{result.state.value}: {result.reason_code}] run={result.run_id} "
-                f"usage={result.usage.total_tokens} estimated={result.usage.estimated} "
-                f"incomplete={result.usage.incomplete} counters={result.counters}\n"
-                f"Continue: agenthub --resume {result.context_scope_id}",
-                file=sys.stderr,
-            )
+from .rendering import renderer_for
 
 
 def configure_logging(home, redactor):
@@ -125,13 +79,17 @@ async def run_turn(
     *,
     json_mode=False,
     interactive=False,
+    plain=False,
+    no_color=False,
+    verbose=False,
 ):
     workspace = WorkspaceSpec(
         canonical_directory(session["root"]), tuple(canonical_directory(p) for p in session["dirs"])
     )
     execution_limits, limits = effective_limits(config, profile)
     driver = LocalProcessDriver(redactor)
-    renderer = Renderer(redactor, json_mode=json_mode, interactive=interactive)
+    renderer = renderer_for(redactor, json_mode=json_mode, interactive=interactive,
+                            plain=plain, no_color=no_color, verbose=verbose)
     grant = ResourceGrant(workspace, frozenset({"files", "process"}))
     executor = AgentLoopExecutor(
         model_provider=provider,
@@ -191,6 +149,7 @@ async def run_turn(
         renderer.result(result)
         return {"completed": 0, "failed": 1, "cancelled": 130}[result.state.value]
     finally:
+        renderer.close()
         signal.signal(signal.SIGINT, previous)
         await engine.shutdown()
         await driver.aclose()

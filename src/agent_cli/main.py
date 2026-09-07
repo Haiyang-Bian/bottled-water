@@ -23,6 +23,9 @@ def parser():
     root.add_argument("--profile")
     root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
+    root.add_argument("--plain", action="store_true", help="Plain text without animation")
+    root.add_argument("--no-color", action="store_true")
+    root.add_argument("--verbose", action="store_true", help="Detailed tool and phase output")
     commands = root.add_subparsers(dest="command")
     commands.add_parser("resume", help="Choose a saved conversation").add_argument(
         "resume_id", nargs="?", default=""

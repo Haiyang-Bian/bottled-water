@@ -15,7 +15,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Legacy wheel install failed" }
     $env:AGENTHUB_LEGACY_PYTHON = Join-Path $env:UV_TOOL_DIR "agenthub-system\Scripts\python.exe"
     $env:AGENTHUB_TEST_PYTHON = Join-Path $repo "var\cli-install-validation\tools\agenthub-system\Scripts\python.exe"
-    & .venv\Scripts\python.exe -B -m pytest -q tests/test_harness_upgrade.py --junitxml=var/upgrade-015.xml
+    $installedVersion = (& $env:AGENTHUB_TEST_PYTHON -B -m agent_cli.main --version) -replace '^agenthub ', ''
+    if ($installedVersion -notmatch '^0\.1\.\d+$') { throw "Invalid installed version" }
+    & .venv\Scripts\python.exe -B -m pytest -q tests/test_harness_upgrade.py "--junitxml=var/upgrade-$installedVersion.xml"
     if ($LASTEXITCODE -ne 0) { throw "Installed upgrade acceptance failed" }
 } finally {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process") }
