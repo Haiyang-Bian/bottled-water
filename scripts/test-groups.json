@@ -128,6 +128,7 @@
       "tests/test_harness_execution.py"
     ],
     "cli:unit": [
+      "tests/test_cli_sessions.py",
       "tests/test_local_system.py",
       "tests/test_local_boundaries.py",
       "tests/test_harness_diagnostics.py",

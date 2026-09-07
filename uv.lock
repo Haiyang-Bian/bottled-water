@@ -10,7 +10,7 @@ members = [
 
 [[package]]
 name = "agenthub-backend"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "backend" }
 dependencies = [
     { name = "agenthub-system" },
@@ -88,7 +88,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "agenthub-system"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "." }
 
 [package.optional-dependencies]

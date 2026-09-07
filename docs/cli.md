@@ -92,13 +92,17 @@ cancellation_grace_seconds = 5
 ## 会话、跨目录与批处理
 
 ```powershell
-agenthub                                      # 当前目录新会话
-agenthub --continue                           # 当前目录最近会话
+agenthub                                      # 新会话草稿，提交任务后保存
+agenthub -c                                    # 当前目录最近有执行记录的会话
+agenthub -r                                    # 列表选择，不需要记住会话 ID
+agenthub resume                                # 同样打开选择器
+agenthub --continue                           # 与 -c 相同
 agenthub --resume SESSION_ID                  # 当前目录指定会话
 agenthub --continue --add-dir D:\Work\shared   # 添加第二个根目录
 agenthub -p "修复问题并执行相关测试"             # 一次任务后退出
 agenthub --continue --json -p "检查 Git diff"  # JSONL
-agenthub sessions                            # 当前目录会话
+agenthub sessions                            # 当前目录会话表
+agenthub --json sessions                     # 脚本使用的会话索引
 agenthub sessions --all                       # 所有目录的会话索引
 agenthub replay RUN_ID                        # 已保存的事件 JSONL
 ```

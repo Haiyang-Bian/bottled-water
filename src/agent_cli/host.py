@@ -13,17 +13,14 @@ from agent_subsystems.context.continuation import JournalContinuationReader
 from agent_contracts.version import system_version
 from .diagnostics import effective_limits
 from agent_contracts.execution import ResourceGrant, WorkspaceSpec
-from agent_contracts.errors import ConfigurationError, OperationError
+from agent_contracts.errors import ConfigurationError
 from agent_runtime import AgentConfig, RunRequest, RuntimeEngine
 from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 from agent_subsystems.context.local import LocalContextProvider
-from agent_subsystems.observability.redaction import Redactor
 from agent_subsystems.workspaces.paths import canonical_directory
 from agent_adapters.local.processes import LocalProcessDriver
 from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
-from agent_adapters.storage.session_lock import SessionLock
-from .provider import LocalModelProvider
 
 
 class Renderer:
@@ -197,97 +194,3 @@ async def run_turn(
         signal.signal(signal.SIGINT, previous)
         await engine.shutdown()
         await driver.aclose()
-
-
-async def chat(args, home, config, profile, store, raw_provider, secret):
-    redactor = Redactor([secret])
-    store.redactor = redactor
-    provider = LocalModelProvider(raw_provider, redactor)
-    log_handler = configure_logging(home, redactor)
-    interactive = bool(sys.stdin.isatty() and not args.json)
-    root = canonical_directory(".")
-    try:
-        ensure_trusted(store, root, interactive)
-        if args.resume:
-            session = store.session(args.resume)
-            if session is None or session["root"] != str(root):
-                raise ConfigurationError("Session does not belong to the current directory")
-        elif args.continue_session:
-            sessions = store.sessions(root)
-            if not sessions:
-                raise ConfigurationError("No previous session exists in this directory")
-            session = sessions[0]
-        else:
-            session = store.new_session(root)
-        with SessionLock(home / "locks", session["id"]):
-            await store.recover_session(session["id"])
-            for path in [*session["dirs"], *args.add_dir]:
-                directory = canonical_directory(path)
-                ensure_trusted(store, directory, interactive)
-                if str(directory) not in session["dirs"] and directory != root:
-                    session["dirs"].append(str(directory))
-            store.set_directories(session["id"], session["dirs"])
-            if args.prompt is not None:
-                return await run_turn(
-                    store,
-                    session,
-                    provider,
-                    profile,
-                    config,
-                    redactor,
-                    args.prompt,
-                    json_mode=args.json,
-                )
-            if not interactive:
-                raise ConfigurationError(
-                    "Interactive mode requires a terminal; use -p for batch tasks"
-                )
-            from prompt_toolkit import PromptSession
-            from prompt_toolkit.patch_stdout import patch_stdout
-
-            prompt_session = PromptSession()
-            print(f"AgentHub · {root}\nSession: {session['id']}\n/help 查看命令", file=sys.stderr)
-            with patch_stdout():
-                while True:
-                    try:
-                        prompt = (await prompt_session.prompt_async("agenthub> ")).strip()
-                    except EOFError:
-                        return 0
-                    except KeyboardInterrupt:
-                        continue
-                    if not prompt:
-                        continue
-                    if prompt in {"/exit", "/quit"}:
-                        return 0
-                    if prompt == "/help":
-                        print(
-                            "/add-dir PATH  添加目录\n/session  会话信息\n/exit  退出\nCtrl+C  取消运行"
-                        )
-                    elif prompt == "/session":
-                        print(redactor.dumps(session))
-                    elif prompt.startswith("/add-dir "):
-                        try:
-                            path = canonical_directory(
-                                prompt[len("/add-dir ") :].strip().strip('"')
-                            )
-                            ensure_trusted(store, path, True)
-                            if str(path) not in session["dirs"] and path != root:
-                                session["dirs"].append(str(path))
-                            store.set_directories(session["id"], session["dirs"])
-                        except (ConfigurationError, OperationError, OSError, ValueError) as exc:
-                            print(str(exc), file=sys.stderr)
-                    else:
-                        await run_turn(
-                            store,
-                            session,
-                            provider,
-                            profile,
-                            config,
-                            redactor,
-                            prompt,
-                            interactive=True,
-                        )
-    finally:
-        await provider.aclose()
-        logging.getLogger().removeHandler(log_handler)
-        log_handler.close()

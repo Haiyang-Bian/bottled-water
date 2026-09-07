@@ -17,13 +17,16 @@ def parser():
     root.add_argument("--version", action="version", version=f"agenthub {system_version()}")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
-    session.add_argument("--continue", dest="continue_session", action="store_true")
-    session.add_argument("--resume")
+    session.add_argument("-c", "--continue", dest="continue_session", action="store_true")
+    session.add_argument("-r", "--resume", nargs="?", const="", default=None)
     root.add_argument("--add-dir", action="append", default=[])
     root.add_argument("--profile")
     root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
     commands = root.add_subparsers(dest="command")
+    commands.add_parser("resume", help="Choose a saved conversation").add_argument(
+        "resume_id", nargs="?", default=""
+    )
     init = commands.add_parser("init", help="Configure a model and credential reference")
     init.add_argument("--provider", choices=["openai_compatible", "deepseek"])
     init.add_argument("--model")
@@ -90,6 +93,16 @@ async def dispatch(args):
 
         print(json.dumps(_sanitize_value(load_config(home)), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "resume":
+        if args.continue_session or args.resume is not None:
+            raise ConfigurationError("resume 子命令不能与 -c/--resume 同时使用。")
+        args.resume = args.resume_id
+    if args.command in (None, "resume"):
+        from .app import chat
+        return await chat(args, home)
+    if args.command == "sessions":
+        from .app import list_sessions
+        return list_sessions(args, home)
     from agent_adapters.storage.sqlite import SQLiteStore
     from agent_subsystems.workspaces.paths import canonical_directory
 
@@ -99,15 +112,6 @@ async def dispatch(args):
             path = canonical_directory(args.path)
             store.trust(path, args.operation == "add")
             print(f"Trust {args.operation}: {path}", file=sys.stderr)
-            return 0
-        if args.command == "sessions":
-            print(
-                json.dumps(
-                    store.sessions(None if args.all else canonical_directory(".")),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
             return 0
         if args.command == "replay":
             cursor = 0
@@ -176,9 +180,6 @@ async def dispatch(args):
                 return 0
             finally:
                 await provider.aclose()
-        from .host import chat
-
-        return await chat(args, home, config, profile, store, raw, secret)
     finally:
         store.close()
 

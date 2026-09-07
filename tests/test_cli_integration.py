@@ -222,6 +222,25 @@ def records(result):
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
+def test_cli_keyboard_resume_without_id(cli_fixture):
+    run, project, _, requests = cli_fixture
+    run("trust", "add", str(project))
+    run("--json", "-p", "REPAIR")
+    keys = project / "keys.txt"
+    keys.write_text("\rREMEMBER\r/exit\r", encoding="utf-8", newline="")
+    result = subprocess.run(
+        [run.python, "-B", str(Path(__file__).parent / "helpers" / "cli_keyboard_host.py"),
+         str(keys), "-r"], cwd=project, env=run.environment,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "已恢复" in result.stdout and "REPAIR" in result.stdout
+    assert any(m["role"] == "user" and m["content"] == "REPAIR"
+               for m in requests[-1]["messages"])
+    assert sum(m["role"] == "user" and m["content"] == "REPAIR"
+               for m in requests[-1]["messages"]) == 1
+
+
 def test_cli_redacts_credentials_and_does_not_persist_private_reasoning(cli_fixture):
     import sqlite3
 
@@ -274,7 +293,7 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     truncated = records(run("--json", "-p", "TRUNCATED", expected=1))[-1]
     assert truncated["state"] == "failed" and truncated["reason_code"] == "output_token_limit_exceeded"
     assert truncated["usage"]["prompt_tokens"] == 30 and not truncated["usage"]["estimated"]
-    assert len(json.loads(run("sessions").stdout)) >= 2
+    assert len(json.loads(run("--json", "sessions").stdout)) >= 2
     if os.environ.get("AGENTHUB_TEST_PYTHON"):
         isolated = subprocess.run(
             [
@@ -319,7 +338,7 @@ def test_cli_process_tree_lock_cancellation_and_crash_recovery(cli_fixture, mode
             assert pids_file.exists(), (project / "cli.err").read_text(encoding="utf-8")
             pids = pids_file.read_text(encoding="ascii").split()
             handles = [win32api.OpenProcess(0x00100000, False, int(pid)) for pid in pids]
-            session = json.loads(run("sessions").stdout)[0]["id"]
+            session = json.loads(run("--json", "sessions").stdout)[0]["id"]
             run("--resume", session, "--json", "-p", "BUSY", expected=3)
             # Another session can run while the first owns both its lock and live processes.
             run("--json", "-p", "OTHER_SESSION")
