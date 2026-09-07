@@ -62,6 +62,7 @@ class InMemoryContextStore:
                 messages=tuple(deepcopy(delta.messages)),
                 blackboard=deepcopy(delta.blackboard),
                 agent_memories=memories,
+                continuation=deepcopy(delta.continuation),
             )
             self._snapshots[scope_id] = updated
             return _clone_snapshot(updated)
@@ -74,4 +75,5 @@ def _clone_snapshot(value: ContextSnapshot) -> ContextSnapshot:
         messages=tuple(deepcopy(value.messages)),
         blackboard=deepcopy(value.blackboard),
         agent_memories=dict(value.agent_memories),
+        continuation=deepcopy(value.continuation),
     )

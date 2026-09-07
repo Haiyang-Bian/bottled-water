@@ -120,7 +120,8 @@
   },
   "system": {
     "context:unit": [
-      "tests/test_harness_context.py"
+      "tests/test_harness_context.py",
+      "tests/test_harness_continuation.py"
     ],
     "runtime:unit": [
       "tests/test_package_boundary.py",

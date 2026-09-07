@@ -9,6 +9,8 @@ from dataclasses import replace
 from typing import Any
 
 from agent_contracts.harness import ExecutionStopped
+from agent_contracts.persistence import RunCompletionPort, ContinuationReader
+from .completion import InMemoryRunCompletion
 from .execution_observer import KernelExecutionObserver
 
 from agent_contracts.errors import OutputTokenLimitExceeded, ModelInvocationError
@@ -62,6 +64,8 @@ class RuntimeEngine:
         agent_executor: AgentExecutor,
         context_store: ContextStore | None = None,
         run_journal: RunJournal | None = None,
+        completion_port: RunCompletionPort | None = None,
+        continuation_reader: ContinuationReader | None = None,
         team_journal: TeamJournal | None = None,
         event_sink: RunEventSink | None = None,
         limits: RuntimeLimits | None = None,
@@ -69,6 +73,19 @@ class RuntimeEngine:
         self.agent_executor = agent_executor
         self.context_store = context_store or InMemoryContextStore()
         self.run_journal = run_journal or InMemoryRunJournal()
+        self.completion_port = completion_port
+        if self.completion_port is None:
+            if self.context_store is self.run_journal and hasattr(
+                self.context_store, "try_complete"
+            ):
+                self.completion_port = self.context_store
+            elif isinstance(self.context_store, InMemoryContextStore) and isinstance(
+                self.run_journal, InMemoryRunJournal
+            ):
+                self.completion_port = InMemoryRunCompletion(self.context_store, self.run_journal)
+            else:
+                raise ValueError("A shared atomic RunCompletionPort is required")
+        self.continuation_reader = continuation_reader
         self.team_journal = team_journal
         if self.team_journal is None and isinstance(self.run_journal, InMemoryRunJournal):
             self.team_journal = InMemoryTeamJournal(self.run_journal)
@@ -91,6 +108,8 @@ class RuntimeEngine:
             agent_executor=self.agent_executor,
             context_store=self.context_store,
             run_journal=self.run_journal,
+            completion_port=self.completion_port,
+            continuation_reader=self.continuation_reader,
             team_journal=self.team_journal,
             event_sink=self.event_sink,
             limits=self.limits,
@@ -147,6 +166,8 @@ class RunKernel:
         agent_executor: AgentExecutor,
         context_store: ContextStore,
         run_journal: RunJournal,
+        completion_port: RunCompletionPort,
+        continuation_reader: ContinuationReader | None,
         team_journal: TeamJournal | None,
         event_sink: RunEventSink | None,
         limits: RuntimeLimits,
@@ -156,6 +177,9 @@ class RunKernel:
         self.agent_executor = agent_executor
         self.context_store = context_store
         self.run_journal = run_journal
+        self.completion_port = completion_port
+        self.continuation_reader = continuation_reader
+        self._completion_task = None
         self.team_journal = team_journal
         self.event_sink = event_sink
         self.limits = limits
@@ -548,6 +572,9 @@ class RunKernel:
             pass
 
     async def cancel(self, reason: str) -> RunResult:
+        if self._completion_task is not None:
+            await asyncio.shield(self._completion_task)
+            return await self.result_future
         if self.state.is_terminal:
             return await self.result_future
         first_request = self.cancellation.cancel(reason or "user_cancelled")
@@ -589,6 +616,9 @@ class RunKernel:
             return await self.result_future
 
     async def fail(self, reason_code: str) -> RunResult:
+        if self._completion_task is not None:
+            await asyncio.shield(self._completion_task)
+            return await self.result_future
         if self.state.is_terminal:
             return await self.result_future
         self._forced_failure_reason = reason_code
@@ -602,6 +632,10 @@ class RunKernel:
         try:
             self.started_at = utc_now()
             self._context = await self.context_store.load(self.request.context_scope_id)
+            if self.continuation_reader is not None:
+                self._context = replace(
+                    self._context, continuation=await self.continuation_reader.read(self._context)
+                )
             self._blackboard = VersionedBlackboard(self._context.blackboard)
             self._memories = dict(self._context.agent_memories)
             try:
@@ -679,9 +713,13 @@ class RunKernel:
                     ):
                         continue
                     await self._stop_actors()
-                    await self._commit_context()
+                    delta = await self._context_delta()
                     output = self._summary_output or "\n\n".join(self._outputs)
-                    await self._finish(RunState.COMPLETED, "completed", output)
+                    self.cancellation.raise_if_cancelled()
+                    self._completion_task = asyncio.create_task(
+                        self._finish(RunState.COMPLETED, "completed", output, context_delta=delta)
+                    )
+                    await asyncio.shield(self._completion_task)
                     return
                 if proposal.action in {"assign", "parallel"}:
                     targets = proposal.target_agent_ids
@@ -745,6 +783,7 @@ class RunKernel:
             messages=self._context.messages,
             blackboard=value,
             agent_memories=dict(self._memories),
+            continuation=deepcopy(self._context.continuation),
         )
         collaboration = self._collaboration_snapshot() if self._collaboration_enabled else None
         return PolicySnapshot(
@@ -823,10 +862,15 @@ class RunKernel:
                 target=target,
                 causation_id=self._last_event.event_id if self._last_event else None,
             )
-        requests = [replace(r, observer=KernelExecutionObserver(self, r.execution_id),
-                            deadline=self._watchdog.deadline,
-                            metadata={**r.metadata, "execution_deadline": self._watchdog.deadline})
-                    for r in requests]
+        requests = [
+            replace(
+                r,
+                observer=KernelExecutionObserver(self, r.execution_id),
+                deadline=self._watchdog.deadline,
+                metadata={**r.metadata, "execution_deadline": self._watchdog.deadline},
+            )
+            for r in requests
+        ]
         tasks = {
             asyncio.create_task(
                 self._actors[request.agent.id].assign(request),
@@ -904,22 +948,20 @@ class RunKernel:
         if result.reason_code:
             await self._abort(result.reason_code)
 
-    async def _commit_context(self) -> None:
+    async def _context_delta(self) -> ContextDelta:
         self.lease.require_valid()
         assert self._context is not None and self._blackboard is not None
         _, blackboard = await self._blackboard.read()
-        self._context = await self.context_store.commit(
-            self.request.context_scope_id,
-            ContextDelta(
-                expected_version=self._context.version,
-                blackboard=blackboard,
-                messages=(
-                    *self._context.messages,
-                    {"role": "user", "content": self.request.input},
-                    *(({"role": "assistant", "content": output} for output in self._outputs)),
-                ),
-                agent_memories=dict(self._memories),
+        return ContextDelta(
+            expected_version=self._context.version,
+            blackboard=blackboard,
+            messages=(
+                *self._context.messages,
+                {"role": "user", "content": self.request.input},
+                *(({"role": "assistant", "content": output} for output in self._outputs)),
             ),
+            agent_memories=dict(self._memories),
+            continuation=deepcopy(self._context.continuation),
         )
 
     async def _executor_emit(
@@ -1054,7 +1096,9 @@ class RunKernel:
                 pass
         return event
 
-    async def _finish(self, state: RunState, reason_code: str, output: str = "") -> bool:
+    async def _finish(
+        self, state: RunState, reason_code: str, output: str = "", *, context_delta=None
+    ) -> bool:
         async with self._finish_lock:
             if self.state.is_terminal:
                 return False
@@ -1074,10 +1118,18 @@ class RunKernel:
                 started_at=self.started_at or self.finished_at,
                 finished_at=self.finished_at,
                 usage=replace(self.usage),
-                context_version=self._context.version if self._context is not None else 0,
+                context_version=(
+                    context_delta.expected_version + 1
+                    if context_delta is not None
+                    else self._context.version
+                    if self._context is not None
+                    else 0
+                ),
                 output=output,
-                counters={name: sum(c.get(name, 0) for c in self._execution_counters.values())
-                          for name in ("model_requests", "tool_rounds", "tool_calls")},
+                counters={
+                    name: sum(c.get(name, 0) for c in self._execution_counters.values())
+                    for name in ("model_requests", "tool_rounds", "tool_calls")
+                },
             )
             terminal_type = {
                 RunState.COMPLETED: "system.run_completed",
@@ -1098,17 +1150,53 @@ class RunKernel:
                     },
                 )
                 try:
-                    persisted = await self.run_journal.try_finish(result, terminal_event)
-                except EventSequenceConflictError:
-                    await self._finish_locally_after_journal_failure(
-                        result, reason_code="event_sequence_conflict"
+                    if context_delta is not None:
+                        updated = await self.completion_port.try_complete(
+                            context_delta, result, terminal_event
+                        )
+                        persisted = updated is not None
+                        if persisted:
+                            self._context = updated
+                    else:
+                        persisted = await self.run_journal.try_finish(result, terminal_event)
+                except Exception as exc:
+                    reason_code = (
+                        "context_conflict"
+                        if isinstance(exc, ContextConflictError)
+                        else "event_sequence_conflict"
+                        if isinstance(exc, EventSequenceConflictError)
+                        else "event_store_error"
                     )
-                    return True
-                except Exception:
-                    await self._finish_locally_after_journal_failure(
-                        result, reason_code="event_store_error"
+                    if context_delta is None:
+                        await self._finish_locally_after_journal_failure(
+                            result, reason_code=reason_code
+                        )
+                        return True
+                    # Completion rolled back. Persist a failure without consuming context/cursors.
+                    state = RunState.FAILED
+                    result = replace(
+                        result,
+                        state=state,
+                        reason_code=reason_code,
+                        output="",
+                        context_version=self._context.version,
                     )
-                    return True
+                    terminal_event = replace(
+                        terminal_event,
+                        type="system.run_failed",
+                        payload={
+                            "state": state.value,
+                            "reason_code": reason_code,
+                            "usage": result.usage.to_dict(),
+                        },
+                    )
+                    try:
+                        persisted = await self.run_journal.try_finish(result, terminal_event)
+                    except Exception:
+                        await self._finish_locally_after_journal_failure(
+                            result, reason_code=reason_code
+                        )
+                        return True
                 if not persisted:
                     return False
                 self.sequence = terminal_event.sequence
@@ -1162,7 +1250,7 @@ class RunKernel:
             started_at=attempted.started_at,
             finished_at=self.finished_at,
             usage=attempted.usage,
-            context_version=attempted.context_version,
+            context_version=self._context.version if self._context is not None else 0,
         )
         if not self.result_future.done():
             self.result_future.set_result(failed)

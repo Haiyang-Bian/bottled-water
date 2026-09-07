@@ -35,6 +35,8 @@ class ContextStore(Protocol):
 class RunJournal(Protocol):
     """Durable, ordered source of truth for Run state and events."""
 
+    async def list_scope_runs(self, scope_id: str) -> list: ...
+
     async def create_run(self, request: RunRequest, snapshot: RunSnapshot) -> None: ...
 
     async def append_event(self, event: EventEnvelope) -> None: ...
@@ -80,9 +82,7 @@ class TeamMessenger(Protocol):
         expects_reply: bool = False,
     ) -> TeamMessage: ...
 
-    async def resolve_thread(
-        self, *, agent_id: str, thread_id: str, conclusion: str
-    ) -> None: ...
+    async def resolve_thread(self, *, agent_id: str, thread_id: str, conclusion: str) -> None: ...
 
 
 class ExecutionRootPort(Protocol):

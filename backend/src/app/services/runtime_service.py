@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.services.execution_extension import WebExecutionExtension
 
-from agent_runtime import AgentConfig, RunRequest, AgentContextBuildRequest, AgentContextBuildResult, ToolCall, RuntimeEngine, RuntimeLimits
+from agent_runtime import (
+    AgentConfig,
+    RunRequest,
+    AgentContextBuildRequest,
+    AgentContextBuildResult,
+    ToolCall,
+    RuntimeEngine,
+    RuntimeLimits,
+)
 from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_runtime.strategies.collaborative import CollaborativeTeamPolicy
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
@@ -32,6 +40,8 @@ from app.persistence.runtime_journal import SQLRunJournal
 from app.persistence.team_journal import SQLTeamJournal
 from app.services.execution_roots import SQLExecutionRootPort
 from app.persistence.runtime_store import SQLContextStore
+from app.persistence.runtime_completion import SQLRunCompletion
+from agent_subsystems.context.continuation import JournalContinuationReader
 from app.events import SseSink, WebSocketSink
 from app.services.context.builder import ContextBuilder
 from app.services.agents.capability_permissions import (
@@ -181,7 +191,9 @@ class OrchestratorService:
             ).all()
             if item.agent_id
         ]
-        base_query = select(Agent).where(Agent.deleted_at.is_(None), Agent.status.in_(["online", "degraded"]))
+        base_query = select(Agent).where(
+            Agent.deleted_at.is_(None), Agent.status.in_(["online", "degraded"])
+        )
         if participant_agent_ids:
             agents = (await db.scalars(base_query.where(Agent.id.in_(participant_agent_ids)))).all()
             order = {agent_id: index for index, agent_id in enumerate(participant_agent_ids)}
@@ -192,7 +204,10 @@ class OrchestratorService:
     async def create_provider_from_config(db: AsyncSession, model_config_id: str) -> Any:
         """根据 ModelConfig 创建模型提供者"""
         from db.models import ModelConfig as DBModelConfig
-        from app.services.model_config_resolver import create_provider_from_env_fallback, resolve_api_key
+        from app.services.model_config_resolver import (
+            create_provider_from_env_fallback,
+            resolve_api_key,
+        )
 
         config = await db.scalar(
             select(DBModelConfig)
@@ -300,8 +315,7 @@ class OrchestratorService:
                 raw_workflow,
                 conversation_id=str(conversation.id),
                 available_agents=[
-                    {"id": agent.id, "name": agent.name, "type": agent.type}
-                    for agent in agents
+                    {"id": agent.id, "name": agent.name, "type": agent.type} for agent in agents
                 ],
             )
 
@@ -342,6 +356,8 @@ class OrchestratorService:
                 use_streaming=True,
             ),
             context_store=SQLContextStore(session_factory),
+            completion_port=SQLRunCompletion(session_factory),
+            continuation_reader=JournalContinuationReader(journal),
             run_journal=journal,
             team_journal=SQLTeamJournal(session_factory),
             limits=RuntimeLimits(
@@ -360,7 +376,13 @@ class OrchestratorService:
         )
 
     @staticmethod
-    async def run(db: AsyncSession, conversation: Conversation, message: Message, strategy: str, model_config_id: str | None = None) -> None:
+    async def run(
+        db: AsyncSession,
+        conversation: Conversation,
+        message: Message,
+        strategy: str,
+        model_config_id: str | None = None,
+    ) -> None:
         """运行编排（SSE 兼容路径，deprecated）。
 
         Args:
@@ -452,6 +474,7 @@ class _ToolExecutorAdapter(ToolExecutor):
 
     async def list_tools(self) -> list[dict]:
         from app.services.agents.async_tool_loop import build_tools_for_agent
+
         if self._test_db_override is not None:
             return await build_tools_for_agent(self._test_db_override, self._test_agent)
         async with AsyncSessionLocal() as db:
@@ -462,6 +485,7 @@ class _ToolExecutorAdapter(ToolExecutor):
 
     async def execute(self, tool_call: ToolCall) -> Any:
         from app.services.agents.async_tool_loop import execute_tool_by_name
+
         execution_root = (
             await self.execution_root_port.resolve(self.conversation_id, self.agent_id)
             if self.execution_root_port is not None
@@ -509,7 +533,9 @@ class _ToolExecutorAdapter(ToolExecutor):
         sink = WebSocketSink(self.conversation_id)
         artifact = await db.get(Artifact, artifact_id)
         if artifact:
-            await sink.emit(RuntimeEvent(type="artifact:created", payload=artifact_to_dict(artifact)))
+            await sink.emit(
+                RuntimeEvent(type="artifact:created", payload=artifact_to_dict(artifact))
+            )
 
         # The preview card is persisted by the artifact tool itself. Do not
         # emit it here: agent_runtime will publish persisted preview cards

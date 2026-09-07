@@ -1,6 +1,6 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.3`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.4`，主要验证平台为 Windows、Python 3.11。
 
 ## 安装与首次使用
 
@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.3-py3-none-any.whl[cli]"
+uv tool install --python 3.11 ".\dist\agenthub_system-0.1.4-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -147,6 +147,14 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 | 130 | 用户取消 |
 
 ## 开发验证
+
+### 0.1.4 起的升级与续接
+
+保留原 `.agenthub`，退出使用该状态目录的 CLI 后，用 `uv tool install --force` 安装目标 wheel。旧配置、profile、凭据引用及信任记录不重新初始化。首次打开 v1 数据库时自动生成 `state.sqlite3.v1-时间戳.bak` 一致性备份，并事务化升级到 schema v2；其他会话仍被占用时返回退出码 3。
+
+`--continue`、`--resume ID` 和交互模式下一次输入都会开始新的 Run，载入成功历史与尚未消费的失败/取消观察。工具已经开始但没有保存结果时标为未知，需要先核实当前文件或进程状态；不会自动重放副作用。成功上下文、续接游标和成功终态一起提交。
+
+升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v2，备份不包含升级后的会话。Web 使用 Alembic 迁移 `b8c9d0e1f2a3`。
 
 ```powershell
 uv sync --all-packages --all-extras

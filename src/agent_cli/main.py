@@ -13,7 +13,7 @@ from .config import Profile, home_directory, load_config, save_config, select_pr
 
 def parser():
     root = argparse.ArgumentParser(prog="agenthub", description="AgentHub local coding agent")
-    root.add_argument("--version", action="version", version="agenthub 0.1.3")
+    root.add_argument("--version", action="version", version="agenthub 0.1.4")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
     session.add_argument("--continue", dest="continue_session", action="store_true")
@@ -125,6 +125,7 @@ async def dispatch(args):
         if args.max_turns is not None:
             value = None if args.max_turns == "unlimited" else int(args.max_turns)
             from agent_contracts.harness import ExecutionLimits
+
             ExecutionLimits(max_model_turns=value)
             config.setdefault("execution", {})["max_model_turns"] = value
         _, profile = select_profile(config, args.profile)

@@ -9,6 +9,7 @@ from dataclasses import asdict
 from logging.handlers import RotatingFileHandler
 
 from agent_contracts.context import ContextBudget
+from agent_subsystems.context.continuation import JournalContinuationReader
 from agent_contracts.harness import ExecutionLimits
 from agent_contracts.execution import ResourceGrant, WorkspaceSpec
 from agent_contracts.errors import ConfigurationError, OperationError
@@ -66,7 +67,8 @@ class Renderer:
             print("" if self.wrote_tokens else self.redactor.text(result.output))
             print(
                 f"[{result.state.value}: {result.reason_code}] run={result.run_id} "
-                f"usage={result.usage.total_tokens} counters={result.counters}", file=sys.stderr
+                f"usage={result.usage.total_tokens} counters={result.counters}",
+                file=sys.stderr,
             )
 
 
@@ -139,13 +141,19 @@ async def run_turn(
         context_provider=LocalContextProvider(workspace, profile.max_history_chars),
         use_streaming=True,
         run_journal=store,
-        context_budget=ContextBudget(profile.max_context_chars, profile.context_window_tokens,
-                                     profile.max_tokens),
-        execution_limits=ExecutionLimits(request_timeout_seconds=profile.timeout_seconds,
-                                         **config.get("execution", {})),
+        context_budget=ContextBudget(
+            profile.max_context_chars, profile.context_window_tokens, profile.max_tokens
+        ),
+        execution_limits=ExecutionLimits(
+            request_timeout_seconds=profile.timeout_seconds, **config.get("execution", {})
+        ),
     )
     engine = RuntimeEngine(
-        agent_executor=executor, context_store=store, run_journal=store, limits=limits
+        agent_executor=executor,
+        context_store=store,
+        run_journal=store,
+        limits=limits,
+        continuation_reader=JournalContinuationReader(store),
     )
     previous = signal.getsignal(signal.SIGINT)
     try:

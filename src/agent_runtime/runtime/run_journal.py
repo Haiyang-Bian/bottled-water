@@ -70,7 +70,9 @@ def _sanitize_value(value: Any, key: str = "") -> Any:
     if any(part in normalized for part in _CREDENTIAL_KEY_PARTS):
         return "[redacted]"
     if isinstance(value, dict):
-        return {str(item_key): _sanitize_value(item, str(item_key)) for item_key, item in value.items()}
+        return {
+            str(item_key): _sanitize_value(item, str(item_key)) for item_key, item in value.items()
+        }
     if isinstance(value, list):
         return [_sanitize_value(item) for item in value]
     if isinstance(value, tuple):
@@ -82,6 +84,7 @@ class InMemoryRunJournal:
     """Deterministic journal used by Runtime unit tests and embedding clients."""
 
     def __init__(self) -> None:
+        self.requests: dict[str, RunRequest] = {}
         self.created: dict[str, RunSnapshot] = {}
         self.finished: dict[str, RunResult] = {}
         self.events: dict[str, list[EventEnvelope]] = {}
@@ -92,8 +95,26 @@ class InMemoryRunJournal:
         async with self._lock:
             if request.run_id in self.created:
                 raise ValueError(f"Run already exists: {request.run_id}")
+            self.requests[request.run_id] = request
             self.created[request.run_id] = snapshot
             self.events[request.run_id] = []
+
+    async def list_scope_runs(self, scope_id):
+        from agent_contracts.persistence import ContinuationRun
+
+        async with self._lock:
+            return [
+                ContinuationRun(
+                    key,
+                    scope_id,
+                    self.requests[key].input,
+                    result.state.value,
+                    result.reason_code,
+                    self.events[key][-1].sequence,
+                )
+                for key, result in self.finished.items()
+                if result.context_scope_id == scope_id
+            ]
 
     async def append_event(self, event: EventEnvelope) -> None:
         persisted = sanitize_event_for_persistence(event)

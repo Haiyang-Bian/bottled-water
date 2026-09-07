@@ -96,8 +96,16 @@ async def _database(tmp_path):
 
 
 def _binding(executor, journal) -> RuntimeBinding:
+    from app.persistence.runtime_store import SQLContextStore
+    from app.persistence.runtime_completion import SQLRunCompletion
+
     return RuntimeBinding(
-        engine=RuntimeEngine(agent_executor=executor, run_journal=journal),
+        engine=RuntimeEngine(
+            agent_executor=executor,
+            run_journal=journal,
+            context_store=SQLContextStore(journal._session_factory),
+            completion_port=SQLRunCompletion(journal._session_factory),
+        ),
         agents=(AgentConfig(id="agent", name="Agent", system_prompt="work"),),
         policy_factory=SingleAgentPolicy,
         scheduling_strategy="single_agent",
@@ -123,12 +131,15 @@ async def test_runtime_provider_preserves_deepseek_model_options():
     )
     db = SimpleNamespace(scalar=AsyncMock(return_value=config))
 
-    with patch(
-        "app.services.model_config_resolver.resolve_api_key",
-        new=AsyncMock(return_value="stored-key"),
-    ), patch(
-        "app.services.runtime_service.create_provider",
-        side_effect=lambda value: value,
+    with (
+        patch(
+            "app.services.model_config_resolver.resolve_api_key",
+            new=AsyncMock(return_value="stored-key"),
+        ),
+        patch(
+            "app.services.runtime_service.create_provider",
+            side_effect=lambda value: value,
+        ),
     ):
         runtime_config = await OrchestratorService.create_provider_from_config(
             db,
@@ -149,18 +160,22 @@ async def _prepare_manager(tmp_path, executor):
     agent = SimpleNamespace(id="agent", name="Agent", type="worker")
     async with factory() as db:
         conversation = await db.get(Conversation, "conversation")
-        with patch.object(
-            manager,
-            "_recover_abandoned_generation_if_needed",
-            new=AsyncMock(return_value=False),
-        ), patch.object(
-            OrchestratorService,
-            "_get_conversation_agents",
-            new=AsyncMock(return_value=[agent]),
-        ), patch.object(
-            OrchestratorService,
-            "create_engine",
-            new=AsyncMock(return_value=binding),
+        with (
+            patch.object(
+                manager,
+                "_recover_abandoned_generation_if_needed",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                OrchestratorService,
+                "_get_conversation_agents",
+                new=AsyncMock(return_value=[agent]),
+            ),
+            patch.object(
+                OrchestratorService,
+                "create_engine",
+                new=AsyncMock(return_value=binding),
+            ),
         ):
             assert await manager.get_or_create_engine(db, conversation) is binding
     return engine, factory, manager
@@ -300,9 +315,9 @@ async def test_generation_projection_skips_duplicates_and_rejects_sequence_gaps(
             if isinstance(event.payload, dict) and event.payload.get("runtime_sequence")
         )
         generation_id = str(durable.payload["runtime_run_id"])
-        assert await manager._record_generation_event(
-            "conversation", generation_id, durable
-        ) is False
+        assert (
+            await manager._record_generation_event("conversation", generation_id, durable) is False
+        )
 
         async with factory() as db:
             consumer = await db.get(
@@ -370,9 +385,7 @@ async def test_generation_projection_rolls_back_read_model_and_cursor_together(t
             new=AsyncMock(side_effect=RuntimeError("projection failed")),
         ):
             with pytest.raises(RuntimeError, match="projection failed"):
-                await manager._record_generation_event(
-                    "conversation", generation_id, next_event
-                )
+                await manager._record_generation_event("conversation", generation_id, next_event)
 
         async with factory() as db:
             conversation = await db.get(Conversation, "conversation")
@@ -407,9 +420,7 @@ async def test_generation_projection_catches_up_from_durable_journal(tmp_path):
             generation["event_counts"] = {}
             conversation.extra = extra
             await db.execute(
-                delete(RuntimeEventConsumer).where(
-                    RuntimeEventConsumer.run_id == generation_id
-                )
+                delete(RuntimeEventConsumer).where(RuntimeEventConsumer.run_id == generation_id)
             )
             await db.commit()
 

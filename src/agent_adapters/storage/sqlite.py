@@ -10,6 +10,9 @@ from datetime import datetime
 from uuid import uuid4
 
 from agent_runtime.core.ports import ContextConflictError
+from agent_contracts.persistence import ContinuationRun
+from .session_lock import SessionLock
+from .migration import migrate_v1
 from agent_runtime.core.run_types import (
     AgentMemory,
     ContextSnapshot,
@@ -28,17 +31,39 @@ from agent_subsystems.observability.redaction import Redactor
 
 
 class SQLiteStore:
-    def __init__(self, path, redactor=None):
+    def __init__(self, path, redactor=None, *, readonly=False):
         self.redactor = redactor or Redactor()
+        self.path = path
+        self.backup_path = None
+        if readonly:
+            self.db = sqlite3.connect(
+                path.resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None
+            )
+            self.db.row_factory = sqlite3.Row
+            self.schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            if self.schema_version not in (1, 2):
+                self.db.close()
+                raise ValueError("Unsupported state database version")
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, timeout=1, isolation_level=None)
+        with SessionLock(path.parent / "locks", "__migration__", guard=False):
+            self.db = sqlite3.connect(path, timeout=1, isolation_level=None)
+            try:
+                self._initialize(path)
+            except BaseException:
+                self.db.close()
+                raise
+
+    def _initialize(self, path):
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             self.db.close()
             raise ValueError(f"Unsupported state database version: {version}")
+        if version == 1:
+            self.backup_path = migrate_v1(self.db, path)
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS trusted(path TEXT PRIMARY KEY, created TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions(
@@ -53,8 +78,10 @@ class SQLiteStore:
         CREATE INDEX IF NOT EXISTS runs_scope ON runs(scope);
         CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, run TEXT NOT NULL REFERENCES runs(id),
           sequence INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE(run, sequence));
-        PRAGMA user_version=1;
+        CREATE TABLE IF NOT EXISTS continuation_metadata(scope TEXT PRIMARY KEY, body TEXT NOT NULL);
+        PRAGMA user_version=2;
         """)
+        self.schema_version = 2
 
     @contextmanager
     def transaction(self):
@@ -135,6 +162,7 @@ class SQLiteStore:
             version=data["version"],
             messages=tuple(data["messages"]),
             blackboard=data["blackboard"],
+            continuation=self._continuation(scope_id),
             agent_memories={
                 k: AgentMemory(
                     **{
@@ -149,27 +177,73 @@ class SQLiteStore:
             },
         )
 
+    def _continuation(self, scope_id):
+        if self.schema_version < 2:
+            return {}
+        row = self.db.execute(
+            "SELECT body FROM continuation_metadata WHERE scope=?", (scope_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    async def _commit_in_transaction(self, scope_id, delta):
+        current = await self.load(scope_id)
+        if current.version != delta.expected_version:
+            raise ContextConflictError("Context changed since this Run started")
+        updated = ContextSnapshot(
+            scope_id,
+            current.version + 1,
+            tuple(delta.messages),
+            delta.blackboard,
+            {**current.agent_memories, **delta.agent_memories},
+            delta.continuation,
+        )
+        self.db.execute(
+            "INSERT OR REPLACE INTO contexts VALUES(?,?,?)",
+            (scope_id, updated.version, self.redactor.dumps(updated)),
+        )
+        self.db.execute(
+            "INSERT OR REPLACE INTO continuation_metadata VALUES(?,?)",
+            (scope_id, self.redactor.dumps(delta.continuation)),
+        )
+        return updated
+
     async def commit(self, scope_id, delta):
         with self.transaction():
-            current = await self.load(scope_id)
-            if current.version != delta.expected_version:
-                raise ContextConflictError("Context changed since this Run started")
-            updated = ContextSnapshot(
-                scope_id,
-                current.version + 1,
-                tuple(delta.messages),
-                delta.blackboard,
-                {**current.agent_memories, **delta.agent_memories},
-            )
-            self.db.execute(
-                "INSERT OR REPLACE INTO contexts VALUES(?,?,?)",
-                (
-                    scope_id,
-                    updated.version,
-                    self.redactor.dumps(updated),
-                ),
-            )
+            await self._commit_in_transaction(scope_id, delta)
         return await self.load(scope_id)
+
+    async def try_complete(self, delta, result, terminal_event):
+        with self.transaction():
+            row = self.db.execute(
+                "SELECT result,scope FROM runs WHERE id=?", (result.run_id,)
+            ).fetchone()
+            if row is None or row["scope"] != result.context_scope_id:
+                raise KeyError(result.run_id)
+            if row["result"] is not None:
+                return None
+            await self._commit_in_transaction(result.context_scope_id, delta)
+            self._append(terminal_event)
+            self.db.execute(
+                "UPDATE runs SET state=?,result=? WHERE id=?",
+                (result.state.value, self.redactor.dumps(result), result.run_id),
+            )
+        return await self.load(result.context_scope_id)
+
+    async def list_scope_runs(self, scope_id):
+        rows = self.db.execute(
+            "SELECT * FROM runs WHERE scope=? ORDER BY created,id", (scope_id,)
+        ).fetchall()
+        return [
+            ContinuationRun(
+                row["id"],
+                scope_id,
+                json.loads(row["request"]).get("input", ""),
+                row["state"],
+                (json.loads(row["result"]) if row["result"] else {}).get("reason_code"),
+                row["sequence"],
+            )
+            for row in rows
+        ]
 
     async def create_run(self, request, snapshot):
         self.db.execute(
@@ -264,6 +338,19 @@ class SQLiteStore:
             "SELECT * FROM runs WHERE scope=? AND result IS NULL", (scope_id,)
         ).fetchall()
         for row in rows:
+            usage = Usage(incomplete=True)
+            saved = self.db.execute(
+                "SELECT body FROM events WHERE run=? ORDER BY sequence DESC", (row["id"],)
+            ).fetchall()
+            for item in saved:
+                data = json.loads(item[0])
+                if data["type"] == "execution.usage":
+                    fields = data["payload"].get("run_usage", {})
+                    usage = Usage(
+                        **{k: v for k, v in fields.items() if k in Usage.__dataclass_fields__}
+                    )
+                    usage.incomplete = True
+                    break
             result = RunResult(
                 row["id"],
                 scope_id,
@@ -271,7 +358,7 @@ class SQLiteStore:
                 "process_lost",
                 datetime.fromisoformat(row["created"]),
                 utc_now(),
-                Usage(),
+                usage,
                 (await self.load(scope_id)).version,
             )
             event = EventEnvelope(

@@ -9,12 +9,20 @@ class SessionBusyError(RuntimeError):
 
 
 class SessionLock:
-    def __init__(self, directory, session_id):
+    def __init__(self, directory, session_id, *, guard=True):
+        self.directory = directory
+        self.guard = guard
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / (hashlib.sha256(session_id.encode()).hexdigest() + ".lock")
         self.file = None
 
     def __enter__(self):
+        if self.guard:
+            with SessionLock(self.directory, "__migration__", guard=False):
+                return self._acquire()
+        return self._acquire()
+
+    def _acquire(self):
         handle = self.path.open("a+b")
         try:
             if self.path.stat().st_size == 0:

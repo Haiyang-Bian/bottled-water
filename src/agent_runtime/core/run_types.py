@@ -88,7 +88,9 @@ class Usage:
         self.completion_tokens += max(0, other.completion_tokens)
         self.estimated = self.estimated or other.estimated
         if other.cached_prompt_tokens is not None:
-            self.cached_prompt_tokens = (self.cached_prompt_tokens or 0) + other.cached_prompt_tokens
+            self.cached_prompt_tokens = (
+                self.cached_prompt_tokens or 0
+            ) + other.cached_prompt_tokens
         self.cache_usage_incomplete = self.cache_usage_incomplete or other.cache_usage_incomplete
         self.incomplete = self.incomplete or other.incomplete
 
@@ -121,6 +123,7 @@ class ContextSnapshot:
     messages: tuple[dict[str, Any], ...] = ()
     blackboard: dict[str, Any] = field(default_factory=dict)
     agent_memories: dict[str, AgentMemory] = field(default_factory=dict)
+    continuation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,7 @@ class ContextDelta:
     blackboard: dict[str, Any]
     messages: tuple[dict[str, Any], ...] = ()
     agent_memories: dict[str, AgentMemory] = field(default_factory=dict)
+    continuation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
