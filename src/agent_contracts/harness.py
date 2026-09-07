@@ -15,14 +15,18 @@ class ExecutionLimits:
         if turns is not None and (type(turns) is not int or turns <= 0):
             raise ValueError("max_model_turns must be a positive integer or omitted")
         timeout = self.request_timeout_seconds
-        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-                or not math.isfinite(timeout) or timeout <= 0):
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
             raise ValueError("request_timeout_seconds must be finite and positive")
 
 
 class ExecutionObserver(Protocol):
     async def phase_started(self, phase_id: str, phase: str, deadline: float) -> None: ...
-    async def phase_finished(self, phase_id: str) -> None: ...
+    async def phase_finished(self, phase_id: str, *, interrupted: bool = False) -> None: ...
     async def usage_reported(self, request_id: str, usage: dict, counters: dict) -> None: ...
 
 

@@ -26,8 +26,15 @@ class Profile:
     max_tokens: int = 4096
     timeout_seconds: float = 120
     max_history_chars: int = 64000
+    max_context_chars: int = 64000
+    context_window_tokens: int | None = None
 
     def __post_init__(self):
+        from agent_contracts.context import ContextBudget
+        try:
+            ContextBudget(self.max_context_chars, self.context_window_tokens, self.max_tokens)
+        except ValueError as exc:
+            raise ConfigurationError(str(exc)) from exc
         if not all(
             isinstance(value, str)
             for value in (self.provider, self.model, self.credential_ref, self.base_url)

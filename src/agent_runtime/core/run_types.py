@@ -75,6 +75,9 @@ class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     estimated: bool = False
+    cached_prompt_tokens: int | None = None
+    cache_usage_incomplete: bool = False
+    incomplete: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -84,6 +87,10 @@ class Usage:
         self.prompt_tokens += max(0, other.prompt_tokens)
         self.completion_tokens += max(0, other.completion_tokens)
         self.estimated = self.estimated or other.estimated
+        if other.cached_prompt_tokens is not None:
+            self.cached_prompt_tokens = (self.cached_prompt_tokens or 0) + other.cached_prompt_tokens
+        self.cache_usage_incomplete = self.cache_usage_incomplete or other.cache_usage_incomplete
+        self.incomplete = self.incomplete or other.incomplete
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +98,9 @@ class Usage:
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "estimated": self.estimated,
+            "cached_prompt_tokens": self.cached_prompt_tokens,
+            "cache_usage_incomplete": self.cache_usage_incomplete,
+            "incomplete": self.incomplete,
         }
 
 

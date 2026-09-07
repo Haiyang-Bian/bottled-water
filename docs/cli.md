@@ -1,6 +1,6 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.2`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.3`，主要验证平台为 Windows、Python 3.11。
 
 ## 安装与首次使用
 
@@ -17,7 +17,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --python 3.11 ".\dist\agenthub_system-0.1.2-py3-none-any.whl[cli]"
+uv tool install --python 3.11 ".\dist\agenthub_system-0.1.3-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。

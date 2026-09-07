@@ -331,8 +331,10 @@ class OrchestratorService:
             if primary_agent and user
             else None
         )
+        journal = SQLRunJournal(session_factory)
         engine = RuntimeEngine(
             agent_executor=AgentLoopExecutor(
+                run_journal=journal,
                 extension_factory=WebExecutionExtension,
                 model_provider=provider,
                 tool_executor=tool_executor,
@@ -340,7 +342,7 @@ class OrchestratorService:
                 use_streaming=True,
             ),
             context_store=SQLContextStore(session_factory),
-            run_journal=SQLRunJournal(session_factory),
+            run_journal=journal,
             team_journal=SQLTeamJournal(session_factory),
             limits=RuntimeLimits(
                 max_collaboration_messages=team_settings["max_collaboration_messages"],

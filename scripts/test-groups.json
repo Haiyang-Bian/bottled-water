@@ -119,6 +119,9 @@
     ]
   },
   "system": {
+    "context:unit": [
+      "tests/test_harness_context.py"
+    ],
     "runtime:unit": [
       "tests/test_package_boundary.py",
       "tests/test_harness_execution.py"

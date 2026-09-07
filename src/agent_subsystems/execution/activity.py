@@ -14,15 +14,17 @@ async def execution_phase(observer, phase, timeout, deadline=None):
     expires = min(time.monotonic() + timeout, deadline or float("inf"))
     if observer:
         await observer.phase_started(phase_id, phase, expires)
+    completed = False
     try:
         async with asyncio.timeout_at(expires):
             yield
+        completed = True
     except TimeoutError as exc:
         reason = "wall_time_exceeded" if expires == deadline else f"{phase}_timeout"
         raise ExecutionStopped(reason) from exc
     finally:
         if observer:
-            await observer.phase_finished(phase_id)
+            await observer.phase_finished(phase_id, interrupted=not completed)
 
 
 class ProtocolFrameGuard:
@@ -42,8 +44,9 @@ class ProtocolFrameGuard:
         while self.pending and not self.invalid:
             if self.line_start:
                 stripped = self.pending.lstrip(" \t")
-                if not final and ("```".startswith(stripped)
-                                  or any(m.startswith(stripped) for m in self.markers)):
+                if not final and (
+                    "```".startswith(stripped) or any(m.startswith(stripped) for m in self.markers)
+                ):
                     break
                 if stripped.startswith("```"):
                     self.fenced = not self.fenced

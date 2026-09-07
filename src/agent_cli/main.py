@@ -13,7 +13,7 @@ from .config import Profile, home_directory, load_config, save_config, select_pr
 
 def parser():
     root = argparse.ArgumentParser(prog="agenthub", description="AgentHub local coding agent")
-    root.add_argument("--version", action="version", version="agenthub 0.1.2")
+    root.add_argument("--version", action="version", version="agenthub 0.1.3")
     root.add_argument("-p", "--prompt")
     session = root.add_mutually_exclusive_group()
     session.add_argument("--continue", dest="continue_session", action="store_true")
@@ -69,7 +69,9 @@ def initialize(args, home):
     )
     profile = Profile(provider, model, reference, base_url)
     config = load_config(home) if (home / "config.toml").exists() else {}
-    config.setdefault("profiles", {})[args.profile] = asdict(profile)
+    config.setdefault("profiles", {})[args.profile] = {
+        key: value for key, value in asdict(profile).items() if value is not None
+    }
     config["default_profile"] = args.profile
     save_config(home, config)
     for name in ("credentials", "locks", "logs", "tmp"):

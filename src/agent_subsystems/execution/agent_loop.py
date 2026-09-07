@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import re
 import uuid
+from dataclasses import asdict
 from typing import Dict, Any, Optional, List
 
 from model_provider.core.interfaces import BaseModelProvider, ChatMessage, ChatResponse
@@ -38,6 +39,7 @@ from agent_runtime.context.agent_ctx import AgentContext
 from agent_runtime.runtime.status_report import parse_agent_status_report
 
 from .extensions import ExecutionExtension
+from agent_subsystems.context.assembler import ContextAssembler
 from .activity import execution_phase, ProtocolFrameGuard
 from agent_contracts.harness import ExecutionLimits, ExecutionStopped
 
@@ -164,9 +166,12 @@ class AgentLoop:
         execution_limits=None,
         observer=None,
         deadline=None,
+        context_budget=None,
+        run_id="",
     ):
         self.execution_limits = execution_limits or ExecutionLimits()
         self.observer, self.deadline = observer, deadline
+        self.context_budget, self.run_id = context_budget, run_id
         self.counters = {"model_requests": 0, "tool_rounds": 0, "tool_calls": 0}
         self.extension = extension_factory(agent_config)
         self.context_snapshot = None
@@ -177,6 +182,8 @@ class AgentLoop:
         self.max_output_tokens = max_output_tokens
         self.usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
         self.usage_estimated = False
+        self.cached_prompt_tokens = None
+        self.cache_usage_incomplete = False
         self._state = AgentState.IDLE
         self._step_data: Dict[str, Any] = {}
 
@@ -317,6 +324,7 @@ class AgentLoop:
                     if (
                         tool.get("function", {}).get("name") in allowed
                         or str(tool.get("function", {}).get("name") or "").startswith("team.")
+                        or tool.get("function", {}).get("name") == "run.read_tool_result"
                     )
                 ]
             else:
@@ -330,16 +338,22 @@ class AgentLoop:
         tool_round = 0
         stream_message_id = f"stream-{self.agent.id}-{uuid.uuid4().hex[:12]}"
 
+        current_request = next((m for m in reversed(messages) if m.role == "user"), messages[-1])
+        assembler = ContextAssembler(self.context_budget, self._estimate_tokens)
         while True:
             limit = self.execution_limits.max_model_turns
             if limit is not None and self.counters["model_requests"] >= limit:
                 raise ExecutionStopped("model_turn_budget_exhausted")
+            tools_for_round = self.extension.tools_for_round(tools, tool_results)
+            async with self._phase("context"):
+                messages, diagnostics = assembler.prepare(messages, system_prompt, tools_for_round,
+                    current_request=current_request, run_id=self.run_id)
+            await _emit("agent.context_budget", diagnostics)
             tool_round += 1
             self.counters["model_requests"] += 1
             await self._run_checkpoint(checkpoint, "before_llm", {"round": tool_round})
 
             try:
-                tools_for_round = self.extension.tools_for_round(tools, tool_results)
                 remaining_tokens = self._remaining_token_budget()
                 async with self._phase("model"):
                     if self.use_streaming:
@@ -361,10 +375,10 @@ class AgentLoop:
                             tools=tools_for_round,
                             max_tokens=remaining_tokens,
                         )
-                self._record_usage(response, system_prompt, messages)
+                self._record_usage(response, system_prompt, messages, tools_for_round)
                 if self.observer:
                     await self.observer.usage_reported(str(tool_round),
-                        {**self.usage, "estimated": self.usage_estimated}, dict(self.counters))
+                        self.usage_snapshot(), dict(self.counters))
                 self._remaining_token_budget()
                 if response.finish_reason == "length":
                     raise ExecutionStopped("output_token_limit_exceeded")
@@ -401,7 +415,6 @@ class AgentLoop:
                 break
 
             self.counters["tool_rounds"] += 1
-            self.counters["tool_calls"] += len(tool_calls)
             tool_calls = self._normalize_tool_calls(tool_calls)
 
             # 处理工具调用
@@ -437,7 +450,13 @@ class AgentLoop:
                 if not active_tool_executor:
                     break
 
+                self.counters["tool_calls"] += 1
+                if self.observer:
+                    await self.observer.usage_reported(str(tool_round), self.usage_snapshot(),
+                                                       dict(self.counters))
                 tool_call, err = ToolCall.new(tc)
+                await _emit("agent.tool_started", {"call_id": tool_call.call_id,
+                    "tool": tool_call.tool_name, "agent_id": self.agent.id})
                 await self._run_checkpoint(
                     checkpoint,
                     "before_tool_call",
@@ -567,7 +586,7 @@ class AgentLoop:
             )
             if self.observer:
                 await self.observer.usage_reported(str(tool_round),
-                    {**self.usage, "estimated": self.usage_estimated}, dict(self.counters))
+                    self.usage_snapshot(), dict(self.counters))
 
         final_content = messages[-1].content if messages else ""
         status_report = self._extract_status_report(final_content)
@@ -615,16 +634,33 @@ class AgentLoop:
         response: ChatResponse,
         system_prompt: str,
         messages: list[ChatMessage],
+        tools=None,
     ) -> None:
         usage = response.usage or {}
-        if usage:
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+        if cached is None:
+            cached = usage.get("prompt_cache_hit_tokens")
+        if type(cached) is int and cached >= 0:
+            self.cached_prompt_tokens = (self.cached_prompt_tokens or 0) + cached
+        else:
+            self.cache_usage_incomplete = True
+        if "prompt_tokens" in usage and "completion_tokens" in usage:
             self.usage["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
             self.usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
         else:
-            prompt = system_prompt + "\n" + "\n".join(message.content or "" for message in messages)
+            prompt = json.dumps({"system": system_prompt,
+                                 "messages": [asdict(m) for m in messages], "tools": tools},
+                                ensure_ascii=False, default=str)
             self.usage["prompt_tokens"] += self._estimate_tokens(prompt)
-            self.usage["completion_tokens"] += self._estimate_tokens(response.content or "")
+            completion = json.dumps({"content": response.content, "calls": response.tool_calls,
+                                     "reasoning": response.reasoning_content}, ensure_ascii=False)
+            self.usage["completion_tokens"] += self._estimate_tokens(completion)
             self.usage_estimated = True
+    def usage_snapshot(self):
+        return {**self.usage, "estimated": self.usage_estimated,
+                "cached_prompt_tokens": self.cached_prompt_tokens,
+                "cache_usage_incomplete": self.cache_usage_incomplete}
+
     def _phase(self, name, timeout=None):
         return execution_phase(self.observer, name,
                                timeout or self.execution_limits.request_timeout_seconds,

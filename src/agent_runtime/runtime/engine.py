@@ -258,11 +258,7 @@ class RunKernel:
             sequence=self.sequence,
             decision_count=self.decision_count,
             no_progress_count=self.no_progress_count,
-            usage=Usage(
-                prompt_tokens=self.usage.prompt_tokens,
-                completion_tokens=self.usage.completion_tokens,
-                estimated=self.usage.estimated,
-            ),
+            usage=replace(self.usage),
             context_version=self._context.version if self._context is not None else 0,
             limits=self.limits,
             started_at=self.started_at,
@@ -1077,11 +1073,7 @@ class RunKernel:
                 reason_code=reason_code,
                 started_at=self.started_at or self.finished_at,
                 finished_at=self.finished_at,
-                usage=Usage(
-                    prompt_tokens=self.usage.prompt_tokens,
-                    completion_tokens=self.usage.completion_tokens,
-                    estimated=self.usage.estimated,
-                ),
+                usage=replace(self.usage),
                 context_version=self._context.version if self._context is not None else 0,
                 output=output,
                 counters={name: sum(c.get(name, 0) for c in self._execution_counters.values())

@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict
 from logging.handlers import RotatingFileHandler
 
+from agent_contracts.context import ContextBudget
 from agent_contracts.harness import ExecutionLimits
 from agent_contracts.execution import ResourceGrant, WorkspaceSpec
 from agent_contracts.errors import ConfigurationError, OperationError
@@ -137,6 +138,9 @@ async def run_turn(
         ),
         context_provider=LocalContextProvider(workspace, profile.max_history_chars),
         use_streaming=True,
+        run_journal=store,
+        context_budget=ContextBudget(profile.max_context_chars, profile.context_window_tokens,
+                                     profile.max_tokens),
         execution_limits=ExecutionLimits(request_timeout_seconds=profile.timeout_seconds,
                                          **config.get("execution", {})),
     )

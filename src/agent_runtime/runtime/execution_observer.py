@@ -16,20 +16,32 @@ class KernelExecutionObserver:
         k.lease.require_valid()
         self.started[phase_id] = (phase, time.monotonic())
         k._watchdog.phase_started(phase_id, phase, deadline)
-        await k._emit("execution.phase_started", {
-            "execution_id": self.execution_id, "phase_id": phase_id,
-            "phase": phase, "timeout_seconds": max(0, deadline - time.monotonic()),
-        })
+        await k._emit(
+            "execution.phase_started",
+            {
+                "execution_id": self.execution_id,
+                "phase_id": phase_id,
+                "phase": phase,
+                "timeout_seconds": max(0, deadline - time.monotonic()),
+            },
+        )
 
-    async def phase_finished(self, phase_id):
+    async def phase_finished(self, phase_id, *, interrupted=False):
         k = self.kernel
         phase, started = self.started.pop(phase_id, ("unknown", time.monotonic()))
+        if interrupted and phase == "model":
+            k.usage.incomplete = True
         k._watchdog.phase_finished(phase_id)
         if k.lease.valid:
-            await k._emit("execution.phase_finished", {
-                "execution_id": self.execution_id, "phase_id": phase_id,
-                "phase": phase, "elapsed_seconds": time.monotonic() - started,
-            })
+            await k._emit(
+                "execution.phase_finished",
+                {
+                    "execution_id": self.execution_id,
+                    "phase_id": phase_id,
+                    "phase": phase,
+                    "elapsed_seconds": time.monotonic() - started,
+                },
+            )
 
     async def usage_reported(self, request_id, usage, counters):
         k = self.kernel
@@ -41,15 +53,29 @@ class KernelExecutionObserver:
         k._accounted_requests.add(key)
         previous = k._execution_usage.get(self.execution_id, Usage())
         current = Usage(**usage)
-        k.usage.add(Usage(
-            max(0, current.prompt_tokens - previous.prompt_tokens),
-            max(0, current.completion_tokens - previous.completion_tokens), current.estimated,
-        ))
+        k.usage.add(
+            Usage(
+                max(0, current.prompt_tokens - previous.prompt_tokens),
+                max(0, current.completion_tokens - previous.completion_tokens),
+                current.estimated,
+                cached_prompt_tokens=None
+                if current.cached_prompt_tokens is None
+                else max(0, current.cached_prompt_tokens - (previous.cached_prompt_tokens or 0)),
+                cache_usage_incomplete=current.cache_usage_incomplete,
+                incomplete=current.incomplete,
+            )
+        )
         k._execution_usage[self.execution_id] = current
         k._execution_counters[self.execution_id] = dict(counters)
-        await k._emit("execution.usage", {
-            "execution_id": self.execution_id, "request_id": request_id,
-            "usage": current.to_dict(), "run_usage": k.usage.to_dict(), "counters": counters,
-        })
+        await k._emit(
+            "execution.usage",
+            {
+                "execution_id": self.execution_id,
+                "request_id": request_id,
+                "usage": current.to_dict(),
+                "run_usage": k.usage.to_dict(),
+                "counters": counters,
+            },
+        )
         if k._watchdog.check_tokens(k.usage.total_tokens):
             raise ExecutionStopped("token_budget_exhausted")

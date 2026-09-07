@@ -10,6 +10,7 @@ from agent_contracts.errors import ModelInvocationError, OutputTokenLimitExceede
 from agent_runtime.core.run_types import AgentExecutionResult, AgentMemory, Usage
 from agent_runtime.core.types import Event
 from .agent_loop import AgentLoop
+from agent_subsystems.tools.history import HistoryToolExecutor, JournalResultReader
 from .extensions import ExecutionExtension
 from agent_runtime.runtime.team_tools import TeamToolExecutor
 
@@ -24,7 +25,10 @@ class AgentLoopExecutor:
         use_streaming: bool = True,
         extension_factory=ExecutionExtension,
         execution_limits=None,
+        context_budget=None,
+        run_journal=None,
     ) -> None:
+        self.context_budget, self.run_journal = context_budget, run_journal
         self.execution_limits = execution_limits or ExecutionLimits()
         self.model_provider = model_provider
         self.tool_executor = tool_executor
@@ -42,6 +46,8 @@ class AgentLoopExecutor:
             execution_limits=self.execution_limits,
             observer=request.observer,
             deadline=request.deadline,
+            context_budget=self.context_budget,
+            run_id=request.run_id,
         )
         loop.context_snapshot = request.context
 
@@ -65,6 +71,10 @@ class AgentLoopExecutor:
         bind_execution = getattr(tool_executor, "bind_execution", None)
         if callable(bind_execution):
             tool_executor = bind_execution(request, cancellation, lease)
+        if self.run_journal is not None:
+            tool_executor = HistoryToolExecutor(
+                tool_executor, JournalResultReader(self.run_journal, request.context_scope_id)
+            )
         task = request.task
         metadata = dict(request.metadata)
         if request.inbox:
@@ -77,7 +87,7 @@ class AgentLoopExecutor:
             metadata["visible_content"] = f"{visible}\n\n团队收件箱：\n{inbox_text}"
         if request.team_messenger is not None:
             tool_executor = TeamToolExecutor(
-                self.tool_executor,
+                tool_executor,
                 request.team_messenger,
                 request.agent.id,
             )
@@ -97,16 +107,21 @@ class AgentLoopExecutor:
                 loop.usage_estimated = True
             return AgentExecutionResult(
                 agent_id=request.agent.id,
-                report=AgentReport(agent_id=request.agent.id, state=AgentState.FAILED,
-                                   will=AgentWill.BLOCKED, blockers=[exc.reason_code]),
-                reason_code=exc.reason_code, execution_id=request.execution_id,
-                usage=Usage(**loop.usage, estimated=loop.usage_estimated),
+                report=AgentReport(
+                    agent_id=request.agent.id,
+                    state=AgentState.FAILED,
+                    will=AgentWill.BLOCKED,
+                    blockers=[exc.reason_code],
+                ),
+                reason_code=exc.reason_code,
+                execution_id=request.execution_id,
+                usage=Usage(**loop.usage_snapshot()),
                 counters=dict(loop.counters),
             )
         except (ModelInvocationError, OutputTokenLimitExceeded) as exc:
             exc.usage_accounted = request.observer is not None
             exc.usage = {
-                **loop.usage,
+                **loop.usage_snapshot(),
                 "estimated": loop.usage_estimated
                 or isinstance(exc, ModelInvocationError)
                 or not any(loop.usage.values()),
@@ -120,11 +135,7 @@ class AgentLoopExecutor:
             agent_id=request.agent.id,
             report=report,
             output=output,
-            usage=Usage(
-                prompt_tokens=int((result.get("usage") or {}).get("prompt_tokens") or 0),
-                completion_tokens=int((result.get("usage") or {}).get("completion_tokens") or 0),
-                estimated=bool(result.get("usage_estimated")),
-            ),
+            usage=Usage(**loop.usage_snapshot()),
             memory=AgentMemory(
                 agent_id=request.agent.id,
                 summary=output[:2000],
