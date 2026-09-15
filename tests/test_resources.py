@@ -157,3 +157,19 @@ def test_v4_upgrade_preserves_memory_and_rolls_back(tmp_path, monkeypatch):
         assert memory.read(memory.access(), saved.id).content.body == "中文"
     finally:
         store.close()
+
+
+def test_relocated_source_reprocessing_does_not_recreate_old_record(catalog, tmp_path):
+    access = catalog.access()
+    path = str(tmp_path / "old.txt")
+    source = ResourceSource("verification", operation_id="same-source")
+    saved = catalog.observe(access, path, {"exists": True, "sha256": "original"}, source)
+    moved = catalog.revise(
+        access, saved.id, 1, replace(saved.content, path=str(tmp_path / "new.txt"))
+    )
+    assert moved.observation is None
+    catalog.observe(access, path, {"exists": True}, source)
+    assert len(catalog.search(access)) == 1
+    catalog.set_status(access, moved.id, 2, "disabled")
+    catalog.observe(access, path, {"exists": True}, source)
+    assert not catalog.search(access)

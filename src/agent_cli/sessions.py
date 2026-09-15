@@ -60,9 +60,17 @@ class SessionCatalogReader:
         finally:
             store.close()
 
-    def list(self, root=None):
+    def list(self, root=None, query="", *, since=None, until=None):
         with self.queries() as queries:
             rows = queries.catalog(root) if queries else []
+        if query or since or until:
+            from agent_adapters.storage.tasks import TaskCatalog
+            if self.path.exists():
+                store = SQLiteStore(self.path, self.redactor, readonly=True)
+                try:
+                    rows = TaskCatalog(store).rows(query, root=root, since=since, until=until)
+                finally:
+                    store.close()
         return [SessionSummary(
             id=r["id"], origin_root=r["origin_root"], cwd=r["cwd"],
             workspace_version=r["workspace_version"], environment_id=r["environment_id"],

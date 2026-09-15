@@ -120,7 +120,8 @@
   },
     "system": {
       "resources:unit": [
-        "tests/test_resources.py"
+        "tests/test_resources.py",
+        "tests/test_resource_continuity.py"
       ],
     "memory:unit": [
       "tests/test_foundational_memory.py",

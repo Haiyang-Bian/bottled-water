@@ -97,10 +97,11 @@ class Selector:
         return await self.app.run_async()
 
 
-async def choose_session(catalog, root=None, current=None, *, color=True):
+async def choose_session(catalog, root=None, current=None, *, color=True, query="", since=None, until=None):
     choices = [Choice(s.id, ("[当前] " if s.id == current else "") + s.label(),
                       f"{s.preview}\n位置：{s.cwd}\n创建位置：{s.origin_root}\nID：{s.id}")
-               for s in catalog.list(root)]
+               for s in (catalog.list(root, query, since=since, until=until)
+                         if query or since or until else catalog.list(root))]
     return await Selector(choices, "选择任务 · " + (str(root) if root else "本机环境"),
                           color=color).run()
 

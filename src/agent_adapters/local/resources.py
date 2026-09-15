@@ -143,6 +143,12 @@ class LocalSoftware:
         version = (output["stdout"] or output["stderr"]).strip()[:400]
         if not version:
             raise OperationError("software_probe_failed", "Version command returned no version")
+        prefix = {"python": "Python ", "uv": "uv ", "git": "git version "}[kind]
+        if not version.startswith(prefix):
+            raise OperationError(
+                "software_kind_mismatch",
+                "Version response does not match the selected software type",
+            )
         after = await probe(path, context, hash_limit=None)
         if before["sha256"] != after.get("sha256"):
             raise OperationError("software_changed", "Executable changed during verification")

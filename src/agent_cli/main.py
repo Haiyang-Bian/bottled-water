@@ -31,8 +31,13 @@ def parser():
     commands = root.add_subparsers(dest="command")
     from .memory import add_parser as add_memory_parser
     add_memory_parser(commands)
+    from .resources import add_parser as add_resources_parser
+    add_resources_parser(commands)
     resume = commands.add_parser("resume", help="Choose a saved task in this local environment")
     resume.add_argument("resume_id", nargs="?", default="")
+    resume.add_argument("--query", default="")
+    resume.add_argument("--since")
+    resume.add_argument("--until")
     resume.add_argument("--here", action="store_true", default=argparse.SUPPRESS)
     resume.add_argument("--cwd", default=argparse.SUPPRESS)
     history = commands.add_parser("history", help="Read saved task history without executing")
@@ -101,9 +106,14 @@ def initialize(args, home):
 
 async def dispatch(args):
     home = home_directory()
+    if args.command in {"resources", "software"}:
+        from .resources import command
+        return await command(args, home)
     if args.command == "memory":
         from .memory import command
         return await command(args, home)
+    if args.command == "resume" and args.resume_id and (args.query or args.since or args.until):
+        raise ConfigurationError("查询/日期筛选不能与显式任务 ID 同用。")
     identifier = args.resume or getattr(args, "resume_id", "") or getattr(args, "history_id", "")
     if args.here and identifier:
         raise ConfigurationError("--here 不能与显式任务 ID 同用。")
