@@ -78,19 +78,28 @@ def emit(args, redactor, value):
         print(data)
     else:
         rows = json.loads(data)
-        if sys.stdout.isatty() and not getattr(args, "plain", False) and isinstance(rows, list) and rows:
+        if (
+            sys.stdout.isatty()
+            and not getattr(args, "plain", False)
+            and isinstance(rows, list)
+            and rows
+        ):
             from rich.console import Console
             from rich.table import Table
             from rich.text import Text
+
             if all(isinstance(r, dict) and "content" in r for r in rows):
                 table = Table(title="记忆 · 来源与修订可在详情查看", expand=True)
                 for name in ("标题", "类型 / 状态", "修订", "适用范围"):
                     table.add_column(name)
                 for row in rows:
                     c = row["content"]
-                    table.add_row(Text(safe_text(c["title"])),
-                                  Text(c["kind"] + " / " + row["status"]),
-                                  str(row["revision"]), Text(safe_text(c["directory"] or "全局")))
+                    table.add_row(
+                        Text(safe_text(c["title"])),
+                        Text(c["kind"] + " / " + row["status"]),
+                        str(row["revision"]),
+                        Text(safe_text(c["directory"] or "全局")),
+                    )
                 Console(no_color=args.no_color).print(table)
                 return
         print(safe_text(json.dumps(rows, ensure_ascii=False, indent=2)))
@@ -103,8 +112,10 @@ async def choose(rows, title, *, color=True):
         Choice(
             r.id,
             f"{r.content.title} · {r.status} · v{r.revision}",
-            safe_text(f"{r.content.body[:240]}\nID：{r.id} · 来源："
-                      + ", ".join(s.kind for s in r.sources)),
+            safe_text(
+                f"{r.content.body[:240]}\nID：{r.id} · 来源："
+                + ", ".join(s.kind for s in r.sources)
+            ),
         )
         for r in rows
     ]
@@ -179,8 +190,12 @@ def content_values(args, current=None, cwd=None):
         fields["directory"] = None
     content = replace(content, **fields)
     if content.directory:
-        content = replace(content, directory=str((Path(cwd or Path.cwd()) /
-                                                   Path(content.directory).expanduser()).resolve()))
+        content = replace(
+            content,
+            directory=str(
+                (Path(cwd or Path.cwd()) / Path(content.directory).expanduser()).resolve()
+            ),
+        )
     if current is None and args.basic is None:
         content = replace(content, basic=content.kind == "preference" and not content.directory)
     return content
@@ -191,7 +206,9 @@ async def command(args, home, *, scope_id=None, cwd=None, interactive_override=F
     interactive = (
         interactive_override or sys.stdin.isatty() and sys.stdout.isatty()
     ) and not args.json
-    args.no_color = args.no_color or getattr(args, "plain", False) or bool(os.environ.get("NO_COLOR"))
+    args.no_color = (
+        args.no_color or getattr(args, "plain", False) or bool(os.environ.get("NO_COLOR"))
+    )
     readonly = operation in READ_ONLY
     path = home / "state.sqlite3"
     if readonly and not path.exists():
@@ -256,8 +273,13 @@ async def command(args, home, *, scope_id=None, cwd=None, interactive_override=F
                     "Explicit memory ID required; use agenthub --json memory list"
                 )
             reader = memory.candidates if operation in {"adopt", "reject"} else memory.search
-            rows = all_pages(lambda **page: reader(access, **page,
-                **({} if operation in {"adopt", "reject"} else {"management": True})))
+            rows = all_pages(
+                lambda **page: reader(
+                    access,
+                    **page,
+                    **({} if operation in {"adopt", "reject"} else {"management": True}),
+                )
+            )
             identifier = await choose(rows, "选择记忆", color=not args.no_color)
             if not identifier:
                 return 0
@@ -273,7 +295,11 @@ async def command(args, home, *, scope_id=None, cwd=None, interactive_override=F
         else:
             item = None
         if operation == "show":
-            emit(args, redactor, item)
+            emit(
+                args,
+                redactor,
+                {**asdict(item), "management_events": memory.audit(access, identifier)},
+            )
             return 0
         revision = getattr(args, "revision", None)
         if item and revision is None:
@@ -282,7 +308,9 @@ async def command(args, home, *, scope_id=None, cwd=None, interactive_override=F
             revision = item.revision
         if operation in {"add", "edit", "adopt"}:
             if interactive:
-                content = await form(args, item.content if item else None, cwd=cwd, redactor=redactor)
+                content = await form(
+                    args, item.content if item else None, cwd=cwd, redactor=redactor
+                )
                 if content is None:
                     return 0
             else:
@@ -390,8 +418,12 @@ async def interactive_command(text, controller, args):
     add_parser(root.add_subparsers(dest="command"))
     try:
         tokens = shlex.split(text[len("/memory") :], posix=False)
-        tokens = [token[1:-1] if len(token) >= 2 and token[0] == token[-1]
-                  and token[0] in {'"', "'"} else token for token in tokens]
+        tokens = [
+            token[1:-1]
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}
+            else token
+            for token in tokens
+        ]
         parsed = root.parse_args(["memory", *tokens])
     except (SystemExit, argparse.ArgumentError, ValueError):
         print("/memory [add|search|show|edit|candidates|disable|enable|forget|used|process]")

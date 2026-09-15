@@ -26,8 +26,16 @@ async def test_memory_selection_filter_page_and_cancel():
 
 
 def test_memory_applicability_path_is_not_file_authorization(tmp_path):
-    args = SimpleNamespace(title="经验", body="已知信息", kind="experience", basic=None,
-                           directory="中文 空格", global_scope=False, tag=None, alias=None)
+    args = SimpleNamespace(
+        title="经验",
+        body="已知信息",
+        kind="experience",
+        basic=None,
+        directory="中文 空格",
+        global_scope=False,
+        tag=None,
+        alias=None,
+    )
     content = content_values(args, cwd=tmp_path)
     assert content.directory == str((tmp_path / "中文 空格").resolve())
     assert not (tmp_path / "中文 空格").exists()

@@ -77,3 +77,14 @@ def test_memory_management_without_credentials_or_task_creation(cli_fixture):
     )
     assert '"enabled":false' in empty.stdout
     assert not os.path.exists(Path(foreign["AGENTHUB_HOME"]))
+
+
+def test_model_can_copy_host_generated_source_reference(cli_fixture):
+    run, project, _, requests = cli_fixture
+    run("trust", "add", str(project))
+    run("--json", "-p", "MEMORYOBSERVE")
+    candidate = json.loads(run("--json", "memory", "candidates").stdout)[0]
+    assert candidate["status"] == "ready"
+    assert candidate["sources"][0]["sha256"]
+    source = json.loads(requests[-2]["messages"][-1]["content"])["result"]["source_ref"]
+    assert candidate["sources"][0]["call_id"] == source["call_id"]

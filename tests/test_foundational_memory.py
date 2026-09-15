@@ -87,7 +87,8 @@ def test_user_lifecycle_cas_identity_and_no_file_grant(memory):
 
 
 @pytest.mark.parametrize(
-    "table", ["memory_revisions", "memory_sources", "memory_terms", "memory_events", "memory_lineage"]
+    "table",
+    ["memory_revisions", "memory_sources", "memory_terms", "memory_events", "memory_lineage"],
 )
 def test_save_and_revision_failures_are_atomic(memory, table):
     access = memory.access()
@@ -295,6 +296,7 @@ async def test_terminal_outbox_failure_rolls_back(memory, terminal):
 def test_v3_upgrade_preserves_binding_and_rolls_back_all_new_tables(tmp_path, monkeypatch):
     from test_local_environment import legacy
     from agent_adapters.storage import migration
+
     path = tmp_path / "state.sqlite3"
     identity = PlatformIdentity("o", "m", "test")
     legacy(path, 2)
@@ -322,6 +324,7 @@ def test_v3_upgrade_preserves_binding_and_rolls_back_all_new_tables(tmp_path, mo
 async def test_cancel_and_process_lost_keep_proposals_without_activation(memory):
     from agent_runtime.core.types import ToolResult
     from agent_adapters.storage.session_lock import SessionLock
+
     access = run(memory)
     candidate = memory.propose(access, "p", preference(), [MemorySource(kind="request")])
     with SessionLock(memory.store.path.parent / "locks", access.scope_id):
@@ -350,15 +353,31 @@ async def test_cancel_and_process_lost_keep_proposals_without_activation(memory)
 
     class Model:
         async def chat_stream(self, **kwargs):
-            yield StreamChunk(tool_call={"index": 0, "id": "p", "type": "function",
-                                         "function": {"name": "block", "arguments": "{}"}})
+            yield StreamChunk(
+                tool_call={
+                    "index": 0,
+                    "id": "p",
+                    "type": "function",
+                    "function": {"name": "block", "arguments": "{}"},
+                }
+            )
             yield StreamChunk(finish_reason="stop")
 
-    engine = RuntimeEngine(context_store=memory.store, run_journal=memory.store,
-                           agent_executor=AgentLoopExecutor(model_provider=Model(), tool_executor=BlockingTool()))
+    engine = RuntimeEngine(
+        context_store=memory.store,
+        run_journal=memory.store,
+        agent_executor=AgentLoopExecutor(model_provider=Model(), tool_executor=BlockingTool()),
+    )
     try:
-        handle = await engine.start(RunRequest(session["id"], "记住：默认用中文解释",
-            (AgentConfig("local", "Local", ""),), SingleAgentPolicy(), metadata={"memory_enabled": True}))
+        handle = await engine.start(
+            RunRequest(
+                session["id"],
+                "记住：默认用中文解释",
+                (AgentConfig("local", "Local", ""),),
+                SingleAgentPolicy(),
+                metadata={"memory_enabled": True},
+            )
+        )
         await asyncio.wait_for(started.wait(), 5)
         result = await handle.cancel()
         assert result.state.value == "cancelled"
@@ -373,9 +392,21 @@ def test_memory_tool_result_revocation_and_limits(memory):
     access = memory.access()
     saved = memory.save(access, preference())
     from dataclasses import asdict
+
     context = RunMemoryContext(memory, access, "task", memory.store.path.parent)
-    message = ChatMessage("tool", json.dumps({"result": {"memory_records": [asdict(saved)]}}), tool_call_id="c")
+    message = ChatMessage(
+        "tool", json.dumps({"result": {"memory_records": [asdict(saved)]}}), tool_call_id="c"
+    )
     assert context.filter_results([message])[1][0]["id"] == saved.id
+    current = ChatMessage("user", "current request")
+    oversized = replace(
+        message, content=json.dumps({"result": {"memory_records": [asdict(saved)] * 20}})
+    )
+    filtered, _ = context.filter_results([current, oversized])
+    prepared = ContextAssembler(ContextBudget(650)).prepare(
+        filtered, "", [], current_request=current, run_id="r"
+    )
+    assert not context.filter_results(prepared.messages)[1]
     memory.set_status(access, saved.id, 1, "forgotten")
     filtered, used = context.filter_results([message])
     assert not used and filtered[0].tool_call_id == "c"
@@ -401,11 +432,17 @@ def test_duplicate_adoption_retains_all_suppression_lineage(memory):
         ids.append(memory.decide(access, candidate.id, 1, adopt=True)["memory_id"])
     assert ids[0] == ids[1]
     memory.set_status(memory.access(), ids[0], 1, "forgotten")
-    memory.db.execute("INSERT INTO runs VALUES('retry-second',?,'running','2026-01-02','{}',NULL,0)",
-                      (second.scope_id,))
+    memory.db.execute(
+        "INSERT INTO runs VALUES('retry-second',?,'running','2026-01-02','{}',NULL,0)",
+        (second.scope_id,),
+    )
     retry = replace(second, run_id="retry-second")
-    proposed = memory.propose(retry, "p", replace(preference(), title="renamed"),
-                              [MemorySource(kind="request", run_id=second.run_id)])
+    proposed = memory.propose(
+        retry,
+        "p",
+        replace(preference(), title="renamed"),
+        [MemorySource(kind="request", run_id=second.run_id)],
+    )
     finish(memory, retry.run_id)
     memory.process(retry)
     assert memory.candidate(retry, proposed.id).reason == "suppressed"

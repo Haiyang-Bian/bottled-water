@@ -1,6 +1,6 @@
 """Read/propose tools only. Approval and identity are never model-controlled."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from agent_contracts.errors import OperationError
 from agent_contracts.memory import MemoryAccessContext, MemoryRevision, MemorySource
@@ -65,7 +65,7 @@ SPECS = [
     ),
     spec(
         "memory.propose",
-        "Save a candidate awaiting user approval, never active memory. For 'remember' requests propose a user_stated quote from the request. Observed content must quote saved tool facts; conclusions are inferred. Use tool call_id (sequence optional). At most 10 per Run. Never claim permanently remembered until user adoption.",
+        "Save a candidate awaiting user approval, never active memory. For 'remember' requests propose a user_stated quote from the request. Observed content must quote saved tool facts; conclusions are inferred. Copy the source_ref object from the tool result into sources. Never invent call IDs; sequence is optional. At most 10 per Run. Never claim permanently remembered until user adoption.",
         FIELDS,
         ("title", "body", "kind", "evidence", "sources"),
     ),
@@ -94,7 +94,20 @@ class MemoryToolExecutor:
             None,
         )
         if schema is None:
-            return await self.delegate.execute(call)
+            result = await self.delegate.execute(call)
+            if isinstance(result.result, dict) and self.access.run_id:
+                result = replace(
+                    result,
+                    result={
+                        **result.result,
+                        "source_ref": {
+                            "kind": "tool",
+                            "run_id": self.access.run_id,
+                            "call_id": call.call_id,
+                        },
+                    },
+                )
+            return result
         try:
             if self.context:
                 self.context.check()

@@ -39,8 +39,11 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     assert seed.returncode == 0, seed.stderr
     identity = json.loads(seed.stdout)
     with sqlite3.connect(home / "state.sqlite3") as old_db:
-        original_environment = (old_db.execute("SELECT environment_id FROM local_environment").fetchone()[0]
-                                if identity["schema"] >= 3 else None)
+        original_environment = (
+            old_db.execute("SELECT environment_id FROM local_environment").fetchone()[0]
+            if identity["schema"] >= 3
+            else None
+        )
     assert identity["schema"] == int(os.environ["AGENTHUB_LEGACY_SCHEMA"])
     config_before = hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     credentials_before = {
@@ -63,7 +66,12 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     assert not list(home.glob("*.bak"))
     upgraded = subprocess.run(
         [new_python, "-B", "-m", "agent_cli.main", "state", "upgrade"],
-        env=env, cwd=project, capture_output=True, text=True, encoding="utf-8", timeout=45,
+        env=env,
+        cwd=project,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=45,
     )
     assert upgraded.returncode == 0, upgraded.stderr
     assert json.loads(upgraded.stdout)["database_version"] == 4

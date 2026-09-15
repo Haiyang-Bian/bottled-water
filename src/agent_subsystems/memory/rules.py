@@ -64,6 +64,24 @@ def applicable(directory, cwd):
         return False
 
 
+def verify_claim(content, source_kind, saved_text):
+    if content.evidence == "observed" and (source_kind != "tool" or content.body not in saved_text):
+        raise OperationError(
+            "unverified_claim",
+            "Observed content must quote saved tool facts; use inferred for conclusions",
+        )
+    if content.evidence == "user_stated" and (
+        source_kind != "request" or content.body not in saved_text
+    ):
+        raise OperationError(
+            "unverified_claim", "User-stated content must quote a saved user request"
+        )
+    if content.kind == "preference" and content.evidence != "user_stated":
+        raise OperationError(
+            "unverified_preference", "External observations cannot become user preferences"
+        )
+
+
 def rank(record, query, cwd):
     content = record.content
     wanted = terms(query)
@@ -84,7 +102,8 @@ def selection(records, query, cwd, *, basic_chars=2000, retrieval_chars=8000):
         content = record.content
         normalized_query = unicodedata.normalize("NFKC", query).casefold().replace("\\", "/")
         explicit = any(
-            name and unicodedata.normalize("NFKC", name).casefold().replace("\\", "/")
+            name
+            and unicodedata.normalize("NFKC", name).casefold().replace("\\", "/")
             in normalized_query
             for name in [content.title, *content.aliases, content.directory or ""]
         )

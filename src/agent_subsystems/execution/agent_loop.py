@@ -370,6 +370,10 @@ class AgentLoop:
                     memory_items=memory_items,
                 )
             messages = prepared.working_messages
+            if memory_context:
+                # Compaction may have removed the knowledge inside a tool result.
+                # Report only records remaining in the actual outgoing messages.
+                prepared.messages, memory_tool_used = memory_context.filter_results(prepared.messages)
             await _emit("agent.context_budget", prepared.diagnostics)
             tool_round += 1
             self.counters["model_requests"] += 1

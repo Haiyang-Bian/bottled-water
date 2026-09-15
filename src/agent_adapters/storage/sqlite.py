@@ -93,7 +93,10 @@ class SQLiteStore:
     def memory_outbox(self, run_id):
         # Part of the caller's terminal transaction; no memory business in Kernel.
         row = self.db.execute("SELECT request FROM runs WHERE id=?", (run_id,)).fetchone()
-        if json.loads(row[0]).get("metadata", {}).get("memory_enabled"):
+        has_proposal = self.db.execute(
+            "SELECT 1 FROM memory_candidates WHERE run=? LIMIT 1", (run_id,)
+        ).fetchone()
+        if json.loads(row[0]).get("metadata", {}).get("memory_enabled") or has_proposal:
             self.db.execute(
                 "INSERT OR IGNORE INTO memory_jobs(run,state) VALUES(?,'pending')", (run_id,)
             )
