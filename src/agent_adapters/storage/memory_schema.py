@@ -13,6 +13,8 @@ MEMORY_SCHEMA = (
     "CREATE TABLE memory_terms(memory TEXT NOT NULL REFERENCES memories(id), term TEXT NOT NULL, "
     "PRIMARY KEY(memory,term))",
     "CREATE INDEX memory_term_lookup ON memory_terms(term,memory)",
+    "CREATE TABLE memory_lineage(memory TEXT NOT NULL REFERENCES memories(id), "
+    "source_key TEXT NOT NULL, PRIMARY KEY(memory,source_key))",
     "CREATE TABLE memory_candidates(id TEXT PRIMARY KEY, environment TEXT NOT NULL, "
     "agent TEXT NOT NULL, run TEXT NOT NULL REFERENCES runs(id), call_id TEXT NOT NULL, "
     "revision INTEGER NOT NULL, status TEXT NOT NULL, body TEXT NOT NULL, sources TEXT NOT NULL, "

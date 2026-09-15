@@ -29,6 +29,8 @@ def parser():
     root.add_argument("--no-color", action="store_true")
     root.add_argument("--verbose", action="store_true", help="Detailed tool and phase output")
     commands = root.add_subparsers(dest="command")
+    from .memory import add_parser as add_memory_parser
+    add_memory_parser(commands)
     resume = commands.add_parser("resume", help="Choose a saved task in this local environment")
     resume.add_argument("resume_id", nargs="?", default="")
     resume.add_argument("--here", action="store_true", default=argparse.SUPPRESS)
@@ -99,6 +101,9 @@ def initialize(args, home):
 
 async def dispatch(args):
     home = home_directory()
+    if args.command == "memory":
+        from .memory import command
+        return await command(args, home)
     identifier = args.resume or getattr(args, "resume_id", "") or getattr(args, "history_id", "")
     if args.here and identifier:
         raise ConfigurationError("--here 不能与显式任务 ID 同用。")

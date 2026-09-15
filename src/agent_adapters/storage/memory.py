@@ -167,6 +167,8 @@ class SQLiteMemory:
         )
         for source in sources:
             data = asdict(source)
+            self.db.execute("INSERT OR IGNORE INTO memory_lineage VALUES(?,?)",
+                            (memory_id, fingerprint(data)))
             self.db.execute(
                 "INSERT OR IGNORE INTO memory_sources VALUES(?,?,?,?)",
                 (memory_id, revision, fingerprint(data), dumps(data)),
@@ -183,6 +185,9 @@ class SQLiteMemory:
         ).fetchone()
         if duplicate:
             # Explicit enable is required for disabled duplicates.
+            self.db.executemany("INSERT OR IGNORE INTO memory_lineage VALUES(?,?)", [
+                (duplicate["id"], fingerprint(asdict(source))) for source in sources
+            ])
             return self._record(duplicate)
         memory_id = str(uuid4())
         self.db.execute(
@@ -239,7 +244,7 @@ class SQLiteMemory:
                 keys = [
                     s[0]
                     for s in self.db.execute(
-                        "SELECT source_key FROM memory_sources WHERE memory=?", (memory_id,)
+                    "SELECT source_key FROM memory_lineage WHERE memory=?", (memory_id,)
                     )
                 ]
                 # Remember lineage, not plaintext, including all historical revisions.
@@ -470,8 +475,9 @@ class SQLiteMemory:
         for job in jobs:
             with self.store.transaction():
                 rows = self.db.execute(
-                    "SELECT * FROM memory_candidates WHERE run=? AND status='pending'",
-                    (job["run"],),
+                    "SELECT * FROM memory_candidates WHERE run=? AND status='pending' "
+                    "AND environment=? AND agent=?",
+                    (job["run"], access.environment_id, access.agent_id),
                 ).fetchall()
                 for row in rows:
                     candidate = self._candidate(row)
@@ -505,10 +511,13 @@ class SQLiteMemory:
             if candidate.revision != revision:
                 raise OperationError("memory_conflict", "Candidate changed; read again")
             if not adopt:
+                if candidate.status == "adopted":
+                    raise OperationError("candidate_already_adopted", "Use memory disable or forget for adopted knowledge")
                 self.db.execute(
                     "UPDATE memory_candidates SET status='rejected',revision=revision+1 WHERE id=?",
                     (candidate_id,),
                 )
+                self._event(access, candidate_id, "candidate_rejected", revision + 1)
                 return {"id": candidate_id, "status": "rejected"}
             if candidate.status != "ready":
                 raise OperationError(
@@ -524,9 +533,10 @@ class SQLiteMemory:
                 raise OperationError("suppressed", "Forgotten source cannot be adopted again")
             record = self._save(access, candidate.content, sources)
             self.db.execute(
-                "UPDATE memory_candidates SET status='adopted',memory=?,revision=revision+1 WHERE id=?",
-                (record.id, candidate_id),
+                "UPDATE memory_candidates SET status='adopted',memory=?,revision=revision+1,body=?,sources=? WHERE id=?",
+                (record.id, dumps(asdict(candidate.content)), dumps([asdict(s) for s in sources]), candidate_id),
             )
+            self._event(access, record.id, "candidate_adopted", record.revision)
             return {
                 "memory_id": record.id,
                 "revision": record.revision,

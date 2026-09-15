@@ -21,6 +21,9 @@ from agent_subsystems.context.local import LocalContextProvider
 from agent_subsystems.workspaces.paths import canonical_directory, effective_roots, resolve_resource
 from agent_adapters.local.processes import LocalProcessDriver
 from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
+from agent_adapters.storage.memory import SQLiteMemory
+from agent_subsystems.memory.tools import MemoryToolExecutor
+from agent_subsystems.memory.context import RunMemoryContext
 
 
 from .rendering import renderer_for
@@ -92,11 +95,13 @@ async def run_turn(
     renderer = renderer_for(redactor, json_mode=json_mode, interactive=interactive,
                             plain=plain, no_color=no_color, verbose=verbose)
     grant = ResourceGrant(workspace, frozenset({"files", "process"}))
+    memory = SQLiteMemory(store)
+    memory_access = memory.access(scope_id=session["id"])
     executor = AgentLoopExecutor(
         model_provider=provider,
-        tool_executor=LocalToolExecutor(
+        tool_executor=MemoryToolExecutor(LocalToolExecutor(
             grant, location, TrustAuthorization(store), driver, redactor, shell=config.get("powershell")
-        ),
+        ), memory, memory_access),
         context_provider=LocalContextProvider(workspace, location, profile.max_history_chars),
         use_streaming=True,
         run_journal=store,
@@ -104,6 +109,7 @@ async def run_turn(
             profile.max_context_chars, profile.context_window_tokens, profile.max_tokens
         ),
         execution_limits=execution_limits,
+        memory_context=RunMemoryContext(memory, memory_access, prompt, location.cwd),
     )
     engine = RuntimeEngine(
         agent_executor=executor,
@@ -122,6 +128,7 @@ async def run_turn(
                                     "You are a local coding assistant."),),
                 policy=SingleAgentPolicy(),
                 metadata={
+                    "memory_enabled": True,
                     "session_id": session["id"],
                     "environment_id": store.environment.environment_id,
                     "agent_id": store.environment.default_agent_id,
@@ -154,6 +161,15 @@ async def run_turn(
             renderer.event(event)
         result = await handle.result()
         renderer.result(result)
+        try:
+            memory.process(memory_access)
+            count = memory.candidate_count(memory_access, result.run_id)
+            if count and not json_mode:
+                print(f"记忆候选：{count} · /memory candidates 查看并采纳。",
+                      file=sys.stderr)
+        except Exception:
+            print("记忆待处理队列未完成；运行 agenthub memory process 重试。Run 终态未改变。",
+                  file=sys.stderr)
         return {"completed": 0, "failed": 1, "cancelled": 130}[result.state.value]
     finally:
         renderer.close()

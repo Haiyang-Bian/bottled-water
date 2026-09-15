@@ -36,7 +36,7 @@ def doctor(home, store, config, profile_name):
         "home": str(home),
         "config_source": str(home / "config.toml"),
         "database_version": store.schema_version if store else None,
-        "upgrade_required": bool(store and store.schema_version < 3),
+        "upgrade_required": bool(store and store.schema_version < 4),
         "environment_id": store.environment.environment_id if store and store.environment else None,
         "identity_binding": "matched" if store and store.environment else "unbound",
         "binding_kind": store.identity.binding_kind if store and store.identity else None,

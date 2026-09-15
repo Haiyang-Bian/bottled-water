@@ -38,6 +38,9 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     )
     assert seed.returncode == 0, seed.stderr
     identity = json.loads(seed.stdout)
+    with sqlite3.connect(home / "state.sqlite3") as old_db:
+        original_environment = (old_db.execute("SELECT environment_id FROM local_environment").fetchone()[0]
+                                if identity["schema"] >= 3 else None)
     assert identity["schema"] == int(os.environ["AGENTHUB_LEGACY_SCHEMA"])
     config_before = hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     credentials_before = {
@@ -63,7 +66,7 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
         env=env, cwd=project, capture_output=True, text=True, encoding="utf-8", timeout=45,
     )
     assert upgraded.returncode == 0, upgraded.stderr
-    assert json.loads(upgraded.stdout)["database_version"] == 3
+    assert json.loads(upgraded.stdout)["database_version"] == 4
     assert "upgrade-test-private-key" not in upgraded.stdout + upgraded.stderr
     assert config_before == hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     assert credentials_before == {
@@ -75,6 +78,8 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     try:
         assert store.session(identity["session_id"]) and store.is_trusted(project)
         assert store.environment.default_agent_id == "local"
+        if original_environment:
+            assert store.environment.environment_id == original_environment
         row = store.queries().catalog()[0]
         assert row["id"] == identity["session_id"] and row["cwd"] == str(project)
         import asyncio
@@ -86,7 +91,7 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     assert list(home.glob("*.bak"))
     with sqlite3.connect(next(home.glob("*.bak"))) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == identity["schema"]
-    # Old binaries refuse v3 instead of silently overwriting it.
+    # Old binaries refuse v4 instead of silently overwriting it.
     old = subprocess.run(
         [old_python, "-B", "-m", "agent_cli.main", "sessions"],
         env=env,

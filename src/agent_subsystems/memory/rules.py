@@ -82,8 +82,11 @@ def selection(records, query, cwd, *, basic_chars=2000, retrieval_chars=8000):
     result = MemorySelection()
     for record in sorted(records, key=lambda r: (not r.content.basic, rank(r, query, cwd))):
         content = record.content
-        explicit = terms(query) & terms(
-            " ".join([content.title, *content.aliases, content.directory or ""])
+        normalized_query = unicodedata.normalize("NFKC", query).casefold().replace("\\", "/")
+        explicit = any(
+            name and unicodedata.normalize("NFKC", name).casefold().replace("\\", "/")
+            in normalized_query
+            for name in [content.title, *content.aliases, content.directory or ""]
         )
         if content.directory and not applicable(content.directory, cwd) and not explicit:
             continue

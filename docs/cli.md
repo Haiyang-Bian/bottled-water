@@ -6,6 +6,12 @@
 
 ## 安装与首次使用
 
+L2 基础记忆正在开发验收，接口及边界见[0.2.1 实施文档](./architecture/foundational-memory-l2.md)。
+`/memory` 浏览，`/memory add` 直接保存，`/memory candidates` 采纳模型候选；
+`edit` 创建新修订，`disable`/`enable` 停用或恢复，`forget` 遗忘，`used` 查看实际使用清单。
+脚本入口为 `agenthub memory …`；保存须提供 `--title`、`--body`，修改须提供 ID 和 `--revision`，
+遗忘还须提供 `--yes`。记忆许可不授予文件权限；遗忘保留原会话、Run 和备份。
+
 在源码根目录运行：
 
 ```powershell
