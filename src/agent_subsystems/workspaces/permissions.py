@@ -25,6 +25,20 @@ _OPERATIONS = {
 }
 
 
+class PermissionLayoutError(ValueError):
+    """A requested exception would require changing the user's ACL inheritance."""
+
+    reason_code = "permission_layout_conflict"
+
+    def __init__(self, path, ancestor):
+        self.path, self.ancestor = path, ancestor
+        super().__init__(
+            f"Permission at {path} is narrower than inherited access from {ancestor}. "
+            "Move protected material outside that grant or narrow the ancestor grant; "
+            "AgentHub does not change Windows ACL inheritance."
+        )
+
+
 def _path(path):
     return PathPermission(path, PathAccess.READ).path
 
@@ -73,11 +87,46 @@ def freeze_policy(policy: StandingPermissionPolicy,
     data["selection"]["roots"] = sorted(data["selection"]["roots"],
                                           key=lambda row: str(row["path"]))
     encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
-    return ExecutionPolicySnapshot(policy, selection, hashlib.sha256(encoded).hexdigest())
+    snapshot = ExecutionPolicySnapshot(policy, selection, hashlib.sha256(encoded).hexdigest())
+    inheritable_roots(snapshot)
+    return snapshot
 
 
 def access_at(snapshot: ExecutionPolicySnapshot, path) -> PathAccess:
     return _effective(snapshot.policy, snapshot.selection, _path(path))[0]
+
+
+def inheritable_roots(snapshot: ExecutionPolicySnapshot) -> tuple[PathPermission, ...]:
+    """Compile only monotonic grants; no DENY ACEs or inheritance barriers.
+
+    A child can gain rights (read parent, modify child), but cannot remove rights
+    inherited from an allowed ancestor. Validate before any ACL preparation. This
+    is logical validation, not a substitute for NTFS/alias/identity checks.
+    """
+    policy = snapshot.policy
+    requested = (*policy.grants, *snapshot.selection.roots)
+    for rule in requested:
+        # An explicit "read" child must not silently become writable because a
+        # parent grant wins the union. Selecting a wholly read-only task is safe.
+        if _RANK[access_at(snapshot, rule.path)] > _RANK[rule.access]:
+            ancestor = max((r.path for r in requested if r.path != rule.path
+                            and rule.path.is_relative_to(r.path)
+                            and _RANK[r.access] > _RANK[rule.access]),
+                           key=lambda item: len(item.parts))
+            raise PermissionLayoutError(rule.path, ancestor)
+    paths = {rule.path for rules in (policy.grants, policy.protections, policy.mandatory,
+                                     snapshot.selection.roots) for rule in rules}
+    roots = []
+    for path in sorted(paths, key=lambda item: (len(item.parts), str(item))):
+        access = access_at(snapshot, path)
+        inherited = _grant_at(roots, path)
+        if _RANK[access] < _RANK[inherited]:
+            ancestor = max((r.path for r in roots if path.is_relative_to(r.path)),
+                           key=lambda item: len(item.parts))
+            raise PermissionLayoutError(path, ancestor)
+        if _RANK[access] > _RANK[inherited]:
+            roots.append(PathPermission(path, access))
+    return tuple(roots)
 
 
 def is_anchor(snapshot, path):

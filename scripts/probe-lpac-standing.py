@@ -1,4 +1,8 @@
-"""Native P1b gate for broad grants containing protected regions. No production use."""
+"""Native standing-policy gate; separate roots by default. No production use.
+
+Old nested-protection attempts remain explicit diagnostic options for reproducing
+historical failures. They are not available in the product policy compiler.
+"""
 
 import argparse
 import ctypes
@@ -24,8 +28,8 @@ from lpac_probe.standing import (
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
-    parser.add_argument("--acl-mode", choices=("deny-aces", "allow-only", "inheritance-barrier"),
-                        default="deny-aces")
+    parser.add_argument("--acl-mode", choices=("separate-roots", "deny-aces", "allow-only",
+                                              "inheritance-barrier"), default="separate-roots")
     args = parser.parse_args()
     if ctypes.windll.shell32.IsUserAnAdmin():
         parser.error("Execute native attempts as the ordinary user")
@@ -40,9 +44,11 @@ def main():
         parser.error("The probe requires local NTFS")
     output.mkdir(parents=True)
     root, runtime = output / "Tree", output / "Runtime"
-    for path in (root / "Work", root / "Group/Archive", root / "Private", runtime):
+    separated = args.acl_mode == "separate-roots"
+    archive = root / ("Archive" if separated else "Group/Archive")
+    for path in (root / "Work", root / "Group", archive, root / "Private", runtime):
         path.mkdir(parents=True)
-    for path, text in ((root / "Work", "work"), (root / "Group/Archive", "archive"),
+    for path, text in ((root / "Work", "work"), (archive, "archive"),
                        (root / "Private", "private")):
         for name in ("sample.txt", "delete.txt", "rename.txt"):
             (path / name).write_text(text)
@@ -89,14 +95,37 @@ def main():
     save()
     try:
         start = time.monotonic()
-        # Add protection first, then inherited permissions to the broad tree.
-        grant(root / "Group/Archive", sids[0], [(1, 3, CONTENT_WRITE)])
-        grant(root / "Private", sids[0], [(1, 3, ALL)])
-        grant(root / "Group", sids[0], [(1, 0, 0x10000)])
-        grant(root, sids[0], [(1, 0, 0x10000), (1, 3, SECURITY_WRITE), (0, 3, MODIFY)])
-        grant(root / "Work", sids[1], [(1, 3, CONTENT_WRITE), (0, 3, READ_EXECUTE)])
-        targets = [root, root / "Work", root / "Group", root / "Group/Archive",
-                   root / "Group/Archive/sample.txt", root / "Private", root / "Private/sample.txt"]
+        if separated:
+            # Use the public compiler: no independent, more permissive ACL policy.
+            sys.path.insert(0, str(repo / "src"))
+            from agent_contracts.permissions import (
+                PathPermission, StandingPermissionPolicy, TaskPermissionSelection,
+            )
+            from agent_subsystems.workspaces.permissions import freeze_policy, inheritable_roots
+
+            policy = StandingPermissionPolicy("probe", "local", 1,
+                (PathPermission(root / "Work", "modify"), PathPermission(archive, "read")),
+                (PathPermission(root / "Private", "deny"),), enabled=True)
+            selections = (TaskPermissionSelection(), TaskPermissionSelection("custom",
+                          (PathPermission(root / "Work", "read"),)))
+            report["compiled_roots"] = []
+            for sid, selection in zip(sids, selections):
+                roots = inheritable_roots(freeze_policy(policy, selection))
+                report["compiled_roots"].append([
+                    {"path": str(rule.path), "access": rule.access} for rule in roots])
+                for rule in roots:
+                    entries = ([(0, 0, MODIFY & ~0x10000), (0, 11, MODIFY)]
+                               if rule.access == "modify" else [(0, 3, READ_EXECUTE)])
+                    grant(rule.path, sid, entries)
+        else:
+            # Historical diagnostics: demonstrate why nested protection was withdrawn.
+            grant(archive, sids[0], [(1, 3, CONTENT_WRITE)])
+            grant(root / "Private", sids[0], [(1, 3, ALL)])
+            grant(root / "Group", sids[0], [(1, 0, 0x10000)])
+            grant(root, sids[0], [(1, 0, 0x10000), (1, 3, SECURITY_WRITE), (0, 3, MODIFY)])
+            grant(root / "Work", sids[1], [(1, 3, CONTENT_WRITE), (0, 3, READ_EXECUTE)])
+        targets = [root, root / "Work", root / "Group", archive,
+                   archive / "sample.txt", root / "Private", root / "Private/sample.txt"]
         report["before_repair"] = {str(p.relative_to(root)): describe(p, sids[0]) for p in targets}
         save()
         if args.acl_mode == "allow-only":
@@ -132,9 +161,17 @@ def main():
         limits = {str(p.relative_to(root)): (
             0 if p.is_relative_to(root / "Private") else READ_EXECUTE
         ) for p in targets if p.is_relative_to(root / "Private")
-                  or p.is_relative_to(root / "Group/Archive")}
+                  or p.is_relative_to(archive)}
         report["preparation_violations"] = audit_allow_masks(report["prepared_acl"], limits)
         report["preparation_usable"] = not report["preparation_violations"]
+        if separated:
+            # Parent inheritance and every unrelated ACE must remain exactly intact.
+            report["unrelated_acl_preserved_while_prepared"] = all(
+                {**fixture_acl(output / path), "aces": [ace for ace in
+                  fixture_acl(output / path)["aces"] if ace[-1] not in sids]} == original
+                for path, original in report["original_acl"].items())
+            if not report["unrelated_acl_preserved_while_prepared"]:
+                raise RuntimeError("Preparation changed unrelated ACL entries or inheritance")
         # Diagnostic execution intentionally demonstrates rejection/bypass against
         # disposable fixtures. A production launcher must refuse an unusable policy.
         report["preparation_seconds"] = time.monotonic() - start
@@ -161,6 +198,7 @@ def main():
                 [str(python / "python.exe"), "-I", "-S", "-B", str(runtime / "payload.py"),
                  "--root", str(root), "--scratch", str(scratch),
                  "--other-scratch", str(output / f"Scratch{(index + 1) % 3}"),
+                 *(["--separate-roots"] if separated else []),
                  *(["--narrow"] if narrow else [])],
                 scratch, environment=environment(scratch), registry_read=True,
                 policy_experiment=policies[policy_index], timeout=30,
@@ -168,7 +206,7 @@ def main():
             report["results"].append(outcome)
             save()
             values = json.loads(outcome["stdout"])
-            checks = evaluate(values, narrow)
+            checks = evaluate(values, narrow, separated=separated)
             report["checks"][f"run_{index}"] = (
                 outcome["exit_code"] == 0 and outcome["job_drained"]
                 and all(checks.values()) and sids[policy_index] in outcome["token"]["capabilities"]
@@ -183,7 +221,7 @@ def main():
                 break
         report["checks"]["protected_content_unchanged"] = all(
             path.is_file() and path.read_text() == expected
-            for path, expected in ((root / "Group/Archive/sample.txt", "archive"),
+            for path, expected in ((archive / "sample.txt", "archive"),
                                    (root / "Private/sample.txt", "private"))
         )
         report["checks"]["business_acl_prepared_once"] = (
@@ -204,7 +242,7 @@ def main():
                     restore_fixture_inheritance(output / change["path"],
                                                 report["original_acl"][change["path"]])
                     change["state"] = "restored"
-                if report["inheritance_changes"]:
+                if report["inheritance_changes"] or separated:
                     report["unrelated_acl_preserved"] = all(
                         (output / path).exists() and fixture_acl(output / path) == original
                         for path, original in report["original_acl"].items()

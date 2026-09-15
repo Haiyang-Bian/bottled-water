@@ -35,9 +35,10 @@ def main():
     parser.add_argument("--scratch", required=True)
     parser.add_argument("--other-scratch", required=True)
     parser.add_argument("--narrow", action="store_true")
+    parser.add_argument("--separate-roots", action="store_true")
     args = parser.parse_args()
     root = Path(args.root)
-    archive = root / "Group/Archive"
+    archive = root / ("Archive" if args.separate_roots else "Group/Archive")
     private = root / "Private"
     result = {}
 
@@ -64,6 +65,18 @@ def main():
     record("create_work", lambda: (root / "Work/new.txt").write_text("created"))
     record("rename_work_file", lambda: (root / "Work/rename.txt").rename(root / "Work/renamed.txt"))
     record("delete_work_file", lambda: (root / "Work/delete.txt").unlink())
+    if args.separate_roots:
+        record("delete_work_root_access", lambda: open_access(root / "Work", 0x10000))
+        record("delete_child_work", lambda: open_access(root / "Work", 0x40))
+        record("rename_work_root", lambda: (root / "Work").rename(root / "Work-moved"))
+        # A new child directory and its contents must inherit normal modify rights.
+        folder = root / "Work" / ("nested-" + Path(args.scratch).name)
+        record("create_work_directory", folder.mkdir)
+        if result["create_work_directory"]["allowed"]:
+            record("create_nested_file", lambda: (folder / "file.txt").write_text("nested"))
+            record("read_nested_file", lambda: (folder / "file.txt").read_text())
+            record("delete_nested_file", lambda: (folder / "file.txt").unlink())
+            record("delete_work_directory", folder.rmdir)
     # Creating a file must not grant security-management authority via ownership.
     if result["create_work"]["allowed"]:
         record("write_dac_new", lambda: open_access(root / "Work/new.txt", 0x40000))

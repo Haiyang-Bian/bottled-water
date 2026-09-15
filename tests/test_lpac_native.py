@@ -56,8 +56,8 @@ def test_lpac_native_identity_and_lifecycle_subset():
     sys.platform != "win32" or os.environ.get("AGENTHUB_RUN_LPAC_NATIVE") != "1",
     reason="Requires Windows and explicit AGENTHUB_RUN_LPAC_NATIVE=1",
 )
-def test_lpac_standing_protected_regions_subset():
-    """Intentionally remains red while the protected-region native gate is unmet."""
+def test_lpac_standing_separate_roots_subset():
+    """The revised product uses separate roots and leaves ACL inheritance intact."""
     repo = Path(__file__).resolve().parents[1]
     output = repo / "var" / ("l4a-standing-test-" + uuid4().hex)
     process = subprocess.run(
@@ -70,4 +70,8 @@ def test_lpac_standing_protected_regions_subset():
     assert report["preparation_usable"] is True
     assert all(report["checks"].values())
     assert report["cleanup_verified"] is True
+    assert report["acl_mode"] == "separate-roots"
+    assert report["inheritance_changes"] == []
+    assert report["unrelated_acl_preserved_while_prepared"] is True
+    assert report["unrelated_acl_preserved"] is True
     assert report["gate"] == "not_passed"  # Complete lifecycle/toolchain acceptance is separate.

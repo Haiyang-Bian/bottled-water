@@ -191,7 +191,7 @@ def environment(scratch):
             "USERPROFILE": str(scratch), "APPDATA": str(scratch), "LOCALAPPDATA": str(scratch)}
 
 
-def evaluate(result, narrow=False):
+def evaluate(result, narrow=False, *, separated=False):
     positive = {"read_work", "read_own_scratch"}
     if not narrow:
         positive |= {"write_work", "read_archive", "create_work", "rename_work_file",
@@ -205,10 +205,19 @@ def evaluate(result, narrow=False):
                      "delete_work_file"}
     else:
         negative |= {"write_dac_new", "write_owner_new"}
+    if separated:
+        negative |= {"delete_work_root_access", "delete_child_work", "rename_work_root"}
+        if narrow:
+            negative.add("create_work_directory")
+        else:
+            positive |= {"create_work_directory", "create_nested_file", "read_nested_file",
+                         "delete_nested_file", "delete_work_directory"}
     checks = {key: result.get(key, {}).get("allowed") is True for key in positive}
     checks["read_work"] &= result.get("read_work", {}).get("value") == "work"
     if not narrow:
         checks["read_archive"] &= result.get("read_archive", {}).get("value") == "archive"
+        if separated:
+            checks["read_nested_file"] &= result.get("read_nested_file", {}).get("value") == "nested"
     for key in negative:
         item = result.get(key, {})
         checks[key] = item.get("allowed") is False and (

@@ -69,3 +69,17 @@ def test_inherited_write_must_be_caught_after_read_only_repair():
     assert standing.audit_allow_masks(acl, {"Archive": standing.READ_EXECUTE})
     acl["Archive"]["policy_aces"].pop()
     assert not standing.audit_allow_masks(acl, {"Archive": standing.READ_EXECUTE})
+
+
+def test_separate_roots_require_anchor_denials_and_new_child_inheritance():
+    data = successful_fixture()
+    checks = standing.evaluate(data, separated=True)
+    assert not checks["delete_work_root_access"]
+    assert not checks["read_nested_file"]
+    for key in ("delete_work_root_access", "delete_child_work", "rename_work_root"):
+        data[key] = {"allowed": False, "winerror": 5}
+    for key in ("create_work_directory", "create_nested_file", "read_nested_file",
+                "delete_nested_file", "delete_work_directory"):
+        data[key] = {"allowed": True}
+    data["read_nested_file"]["value"] = "nested"
+    assert all(standing.evaluate(data, separated=True).values())
