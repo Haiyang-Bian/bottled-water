@@ -86,7 +86,7 @@ agenthub resume --query '昨天的实验'
 schema v5 一次备份、单事务升级；L2 表与抑制标记保留。回退必须匹配旧 wheel 与升级前备份，
 不包含升级后新增任务。已生成本地 wheel、校验值及标签 `agenthub-v0.2.2`；未上传包或创建远程 Release。
 
-远程交付尚未完成：自动审批拒绝向公开仓库 `Haiyang-Bian/bottled-water` 推送开发分支，要求用户明确确认这个公开目的地；重新核对仓库 ADMIN 权限和 PR #27 归属后仍被拒绝。因此没有绕过限制，分支未推送、PR 未创建；完整文案已准备在本地 `var/l3-pr-body.md`。这不改变上面已通过的实现与安装验收结果。
+远程交付已完成：用户明确确认公开目的地后，开发分支 `codex/resource-continuity-l3` 已推送至 `Haiyang-Bian/bottled-water`，并创建 [PR #28](https://github.com/Haiyang-Bian/bottled-water/pull/28)，尚未合入。此前自动审批拒绝推送的记录保留在提交 `c49e06c`；后续授权解决了该阻塞，没有改变实现及安装验收结果。标签仍只在本地，未上传 wheel 或发布 Release。
 
 OpenAI-compatible 没有配置，真实调用未执行。Docker、完整 NSIS 安装器未执行；桌面门槛是 sidecar 构建与启动。
 不宣称大规模索引性能、语义检索、GUI 操作或 OS 隔离已通过。版本与 hash 检查不能证明软件及其所有动态依赖安全。

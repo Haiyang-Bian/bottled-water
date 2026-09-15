@@ -18,7 +18,7 @@ P4：隔离安装、v1–v4 升级、真实 DeepSeek/ConPTY、Web/sidecar、文�
 
 P1 开发检查：资源、L2 记忆、环境和失败续接共 43 项通过（`var/l3-p1.xml`）。
 
-P1–P3 已完成；P4 实现、安装和实测已完成，本地标签已创建，远程推送与 PR 因自动审批要求明确公开目的地而待用户确认。详见[最终验收记录](../acceptance/resource-continuity-0.2.2.md)和[操作说明](../resources.md)。
+P1–P4 已完成：实现、安装和实测证据已记录，本地标签已创建，开发分支已推送并创建 [PR #28](https://github.com/Haiyang-Bian/bottled-water/pull/28)，尚未合入。详见[最终验收记录](../acceptance/resource-continuity-0.2.2.md)和[操作说明](../resources.md)。
 提交边界：`c4be552` 资源/schema，`5e59ffb` 公共执行与任务资料，`fcac01c` CLI，
 `233e273` 停用验证与回归补充，`9de5f6d` 0.2.2 发行源码与验收脚本。
 源码文件、最终 wheel 和隔离安装文件由 `record-cli-release.py` 逐一核对；文档提交不改发行源码。
