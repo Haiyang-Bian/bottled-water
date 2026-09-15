@@ -119,6 +119,9 @@
     ]
   },
     "system": {
+      "sandbox:unit": [
+        "tests/test_lpac_probe.py"
+      ],
       "resources:unit": [
         "tests/test_resources.py",
         "tests/test_resource_continuity.py"
