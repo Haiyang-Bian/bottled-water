@@ -4,11 +4,12 @@ This directory contains the current documentation for AgentHub. Current-state do
 
 The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
-The next direction is a [local agent environment with persistent memory](./architecture/local-agent-environment.md): task continuity and foundational memory across directories, with working locations and resource permissions modeled separately. L1 global task recovery and working locations are implemented in 0.2.0; [acceptance evidence](./acceptance/local-environment-0.2.0.md) records the validated scope. L2–L4 remain planned.
+The [local agent environment with persistent memory](./architecture/local-agent-environment.md) separates task continuity, working locations and resource permissions. L1 global task recovery and working locations are implemented in 0.2.0. L2 foundational memory is implemented in 0.2.1; its [acceptance evidence](./acceptance/foundational-memory-0.2.1.md) records validated behavior, an initial failure and remaining limits. L3–L4 remain planned.
 
 ## Start Here
 
 - [Local CLI](./cli.md): installation, configuration, trust, sessions, tools and JSONL.
+- [Foundational memory](./architecture/foundational-memory-l2.md): explicit saves, candidate adoption, cross-task recall, revisions and forgetting in 0.2.1.
 - [CLI acceptance](./architecture/cli-mvp.md): implementation milestones, measured tests and pending live-service checks.
 - [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.
 - [Local agent environment design](./architecture/local-agent-environment.md): persistent identity, cross-task memory, resource discovery, working locations, sharing and authority boundaries.
@@ -38,7 +39,7 @@ The next direction is a [local agent environment with persistent memory](./archi
 
 ## Current Architecture At A Glance
 
-The diagram below describes the Web host. The implemented local CLI uses the shared root `src` directly; a standalone eval host remains planned. Desktop currently packages the full backend. Cross-task foundational memory and global task recovery are the next design, not current CLI behavior.
+The diagram below describes the Web host. The implemented local CLI uses the shared root `src` directly and supports global task recovery and approved cross-task memory. A standalone eval host remains planned. Desktop currently packages the full backend; this release does not enable Web memory management.
 
 ```text
 React Workbench
