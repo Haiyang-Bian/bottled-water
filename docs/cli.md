@@ -1,8 +1,8 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码发行版本为 `agenthub-system 0.1.7`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码发行版本为 `agenthub-system 0.2.0`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
 
-> 下一方向是[本机持续记忆的智能体环境](./architecture/local-agent-environment.md)，包括跨目录恢复、可变工作位置和基础记忆；其[开发阶段](./architecture/local-agent-roadmap.md)尚未实施。本文下面的目录隔离和命令说明仍描述当前行为，不能将设计中的 `/cd`、`/memory` 或全局 `-c` 当作已有功能。
+> 0.2.0 实现 L1：本机环境中的全局任务恢复、独立工作位置和 schema v3。`-c` 的范围已从当前目录改为当前本机环境；用 `--here` 限定目录。基础记忆、资源知识库及强隔离仍待后续阶段，详见[阶段计划](./architecture/local-agent-roadmap.md)和[本版验收](./acceptance/local-environment-0.2.0.md)。
 
 ## 安装与首次使用
 
@@ -19,7 +19,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --force --python 3.11 ".\dist\agenthub_system-0.1.7-py3-none-any.whl[cli]"
+uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.0-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -34,7 +34,7 @@ uv tool install --force --python 3.11 ".\dist\agenthub_system-0.1.7-py3-none-any
 .agenthub/
   config.toml       命名模型 profile、默认 profile、运行限制
   credentials/      当前用户 DPAPI 密文
-  state.sqlite3     信任、会话、已提交上下文、Run 和有序事件
+  state.sqlite3     环境身份、信任、任务位置、上下文、Run 和有序事件（v3）
   locks/            持有会话的跨进程文件锁
   logs/             脱敏轮转诊断日志
   tmp/              预留的受管理临时目录
@@ -55,7 +55,7 @@ agenthub doctor
 agenthub model check --profile work
 ```
 
-再次 `init --profile NAME` 更新该 profile，并将其设为默认。运行时用 `--profile NAME` 选择其他配置。`doctor` 检查配置、凭据、PowerShell、Git 和状态目录，不调用模型。
+再次 `init --profile NAME` 更新该 profile，并将其设为默认。运行时用 `--profile NAME` 选择其他配置。`doctor` 只读检查 schema、环境绑定、升级需求、配置、凭据及驱动，不调用模型、不创建或升级状态。显式运行 `agenthub state upgrade` 可创建环境或升级旧库。
 
 配置示例（只保存引用）：
 
@@ -95,23 +95,34 @@ cancellation_grace_seconds = 5
 
 ```powershell
 agenthub                                      # 新会话草稿，提交任务后保存
-agenthub -c                                    # 当前目录最近有执行记录的会话
+agenthub -c                                    # 本机环境最近有执行记录的任务
 agenthub -r                                    # 列表选择，不需要记住会话 ID
 agenthub resume                                # 同样打开选择器
 agenthub --continue                           # 与 -c 相同
-agenthub --resume SESSION_ID                  # 当前目录指定会话
+agenthub --resume SESSION_ID                  # 环境内指定任务，在其保存位置执行
 agenthub --continue --add-dir D:\Work\shared   # 添加第二个根目录
 agenthub -p "修复问题并执行相关测试"             # 一次任务后退出
 agenthub --continue --json -p "检查 Git diff"  # JSONL
-agenthub sessions                            # 当前目录会话表
+agenthub sessions                            # 本机环境任务表，展示保存位置
 agenthub --json sessions                     # 脚本使用的会话索引
 agenthub sessions --all                       # 所有目录的会话索引
-agenthub replay RUN_ID                        # 已保存的事件 JSONL
+agenthub -c --here                           # 保存位置精确匹配启动目录的最近任务
+agenthub sessions --here                     # 只列出该保存位置的任务
+agenthub history                            # 列表选择后只读查看历史
+agenthub history SESSION_ID                 # 无须信任原目录即可读取
+agenthub --resume SESSION_ID --cwd D:\Work\shared # 显式改变位置，必须已获授权
+agenthub replay RUN_ID                        # 当前环境内的已保存事件 JSONL
 ```
 
-交互命令：`/help`、`/session`、`/add-dir PATH`、`/exit`。运行时 `Ctrl+C` 取消当前 Run 并返回输入界面；输入时 `Ctrl+D` 退出。取消不回滚已经发生的文件修改或命令副作用。
+交互命令：`/help`、`/session`、`/resume [--here]`、`/new`、`/history`、`/cd [PATH]`、`/add-dir PATH`、`/exit`。运行时 `Ctrl+C` 取消当前 Run 并返回输入界面；输入时 `Ctrl+D` 退出。取消不回滚已经发生的文件修改或命令副作用。
 
-目录身份使用启动目录的规范化实际路径，不自动提升到 Git 根。不同目录拥有独立历史；信任一个父目录不会自动信任其所有子目录。附加目录保存在该会话中，后续恢复仍检查其信任。符号链接和 junction 按实际目标验证，不能借链接扩大文件工具的授权范围。
+每个 `AGENTHUB_HOME` 有独立环境 UUID；默认助手为该环境的 `local`，切换模型不会更换助手。Windows 绑定当前用户 SID 与机器标识的摘要；不匹配时拒绝接管。非 Windows 开发路径用 UID/主机名作提示性绑定。绑定不替代 ACL 或 OS 沙箱。
+
+任务历史始终独立。全局发现不会把其他任务全文自动加入上下文，也不会增加目录授权。位置使用规范化实际路径，不自动提升到 Git 根；`--here` 按保存位置精确匹配，不包括子目录，不能与显式任务 ID 同用。打开任务、`/cd`、增加目录不改变基于最近 Run 的排序。
+
+`/cd` 显示位置与修订号；`/cd PATH` 在现有授权根内切换，`/add-dir PATH` 才能增加授权。交互相对路径以当前任务位置解析，`--cwd` 相对路径以启动位置解析；空格路径可加引号。`/new` 保留位置与显式授权，创建无历史的草稿。每个 Run 冻结位置和有效根集合，模型单次命令的 cwd 或 PowerShell 内的 cd 不修改任务位置。
+
+授权根不会随 cwd 扩缩。每次执行重新检查存在性、实际路径及信任；失效记录保留并显示，cwd 必须处于有效根内。符号链接与 junction 按实际目标校验。`trust add` 不会单独将目录加入已有任务的授权集合。
 
 批处理不会隐式接受信任。预先由用户明确管理：
 
@@ -123,7 +134,7 @@ agenthub trust remove D:\Work\shared
 
 授权入口只由用户命令维护，模型没有修改信任表的工具。当前用户脚本仍能触达用户可读写资源，不能把应用层授权接口当作对恶意脚本的隔离。
 
-同一会话只允许一个持有者，不同会话可并行。崩溃后再次取得会话锁，才将该会话未结束的 Run 标为 `failed/process_lost`。`--continue` 从已提交历史发起新 Run，不恢复执行位置，也不自动重做副作用。
+同一会话只允许一个持有者，不同会话可并行。崩溃后再次取得会话锁，才将该会话未结束的 Run 标为 `failed/process_lost`。`--continue` 从已提交历史发起新 Run，不恢复崩溃时的指令位置，也不自动重做副作用。保存的工作目录会恢复。
 
 ## 工具与输出
 
@@ -154,13 +165,17 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 
 ## 开发验证
 
-### 0.1.4 起的升级与续接
+### 0.2.0 升级、位置修复与续接
 
-保留原 `.agenthub`，退出使用该状态目录的 CLI 后，用 `uv tool install --force` 安装目标 wheel。旧配置、profile、凭据引用及信任记录不重新初始化。首次打开 v1 数据库时自动生成 `state.sqlite3.v1-时间戳.bak` 一致性备份，并事务化升级到 schema v2；其他会话仍被占用时返回退出码 3。
+保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.0 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay 或 doctor 不升级。
+
+从 v1 或 v2 直接升至 v3：持有迁移锁及现有会话锁，使用 SQLite backup API 保存包含 WAL 的一致性 `.v1-时间戳.bak` 或 `.v2-时间戳.bak`，在单个事务中升级。其他会话占用返回 3，不中断运行者。旧 `root` 成为创建/保存位置，`root + dirs` 成为显式授权，初始修订为 0。
+
+保存位置失效时，可先运行 `agenthub history SESSION_ID` 查看，再执行 `agenthub --resume SESSION_ID --add-dir "有效目录" --cwd "有效目录"` 修复。非交互模式需先 `agenthub trust add "有效目录"`；若修复位置已经获准，不必重复添加。位置变更事务失败时保留原任务及位置。
 
 `--continue`、`--resume ID` 和交互模式下一次输入都会开始新的 Run，载入成功历史与尚未消费的失败/取消观察。工具已经开始但没有保存结果时标为未知，需要先核实当前文件或进程状态；不会自动重放副作用。成功上下文、续接游标和成功终态一起提交。
 
-升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v2，备份不包含升级后的会话。Web 使用 Alembic 迁移 `b8c9d0e1f2a3`。
+升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v3，备份不包含升级后的会话。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
 
 ```powershell
 uv sync --all-packages --all-extras
@@ -178,7 +193,7 @@ uv sync --all-packages --all-extras
 ## 会话与界面（0.1.6—0.1.7）
 
 直接运行 `agenthub` 进入新会话草稿，首次提交任务后才保存。`agenthub -r`、
-`agenthub resume` 或交互命令 `/resume` 打开当前目录的选择列表，无需记忆 ID。
+`agenthub resume` 或交互命令 `/resume` 打开本机环境的选择列表，无需记忆 ID。
 输入文字过滤，方向键选择，PageUp/PageDown 翻页，Enter 确认，Esc 返回。
 `agenthub -c` 继续最近有执行记录的会话；失败、取消会话也可以继续，空会话不参与排序。
 恢复后回显最近 3 轮，超过 12,000 字符会提示截断；`/history` 分页查看完整保存记录。
@@ -189,14 +204,14 @@ uv sync --all-packages --all-extras
 原结果被驱动截断时，未保存部分不能通过详情恢复。
 
 - Enter 发送，Alt+Enter 或 Ctrl+J 换行；支持多行粘贴。
-- Tab 补全命令及 `/add-dir` 路径；上下键浏览当前会话输入。
+- Tab 补全命令及 `/add-dir`、`/cd` 路径；上下键浏览当前会话输入。
 - `--verbose` 或 `/verbose on|off` 控制详细工具输出和内部阶段信息。
 - `--plain` 禁用装饰、颜色及运行动画；`--no-color` 或 `NO_COLOR` 禁用颜色。
 - 重定向自动使用纯文本；`--json` 保持 JSONL，不混入界面或历史回显。
 - 执行中 Ctrl+C 取消当前任务并清理工具进程，然后恢复输入；已产生的文件修改保留。
 
 `agenthub --json sessions` 用于脚本查询；非交互恢复必须提供 `--resume ID`。
-普通恢复列表限定当前实际目录；`sessions --all` 只读显示其他目录的位置，不自动切换授权。
+恢复列表默认覆盖本机环境；`--here` 显式限定保存位置。`sessions --all` 是本机环境全部任务的只读索引，不合并其他 home 或扩大授权。
 界面使用 prompt_toolkit 与 Rich，未引入全屏 TUI，也未改变本机工具的非交互进程模型。
 
 ## Harness 0.1.1—0.1.5

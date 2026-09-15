@@ -2,7 +2,7 @@
 
 > 文档状态：目标架构与 CLI MVP 迁移现状，2026-09-04。MVP 执行链已迁入根级 `src`；未迁移领域仍按原宿主实现。实测结果及剩余验收见 [CLI 实施记录](./cli-mvp.md)。
 
-> 2026-09-15 设计增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。这一方向尚未实现；它扩展身份、长期记忆和工作位置，不改变已有 Run 生命周期。
+> 2026-09-15 设计增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。L1 身份与工作位置已在 0.2.0 实现，长期记忆仍待 L2；该方向扩展身份、长期记忆和工作位置，不改变已有 Run 生命周期。
 
 AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统。Runtime 是控制运行的内核；模型、上下文、工具、文件与进程、MCP、Skill 等是可组合的子系统；Web、命令行和评测程序负责组织这些能力并呈现结果。
 
@@ -15,8 +15,9 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 | 本文 | 整个系统如何分层，谁拥有状态，宿主如何组装系统 | 目标设计 |
 | [子系统与模块目录](./subsystems.md) | 每个子系统包含什么模块、提供什么能力、当前代码在哪里 | 目标职责与现状映射 |
 | [新旧架构差异与迁移](./migration.md) | 旧结构有什么问题，如何逐步拆分，怎样判断拆分有效 | 源码证据、迁移计划与验收标准 |
-| [本机持续记忆设计](./local-agent-environment.md) | 智能体如何跨目录、任务和软件连续工作，记忆与权限如何分工 | 新方向与目标设计，待实现 |
-| [本机环境开发阶段](./local-agent-roadmap.md) | L1–L4 怎样增量交付、迁移、验证及判定不能放行 | 开发与验收计划，未执行 |
+| [本机持续记忆设计](./local-agent-environment.md) | 智能体如何跨目录、任务和软件连续工作，记忆与权限如何分工 | L1 已实现，其余为目标设计 |
+| [本机环境开发阶段](./local-agent-roadmap.md) | L1–L4 怎样增量交付、迁移、验证及判定不能放行 | L1 验收入口，L2–L4 开发计划 |
+| [L1 0.2.0 实施计划](./local-environment-l1.md) | 本轮如何分阶段实现身份、迁移、位置和全局任务入口 | 已实施，验收记录分别列出通过及限制 |
 | [Backend architecture](../backend-architecture.md) | 当前 FastAPI 后端的真实组织方式 | 当前实现说明 |
 | [Runtime 架构](../runtime/architecture.md)与[不变量](../runtime/invariants.md) | 生命周期、调度权限、Journal、协作和隔离的精确语义 | 内核契约 |
 | [Runtime 当前实现](../runtime/current-state.md)与[项目状态](../implementation-status.md) | 哪些契约已经实现，哪些还存在差距 | 当前状态 |
