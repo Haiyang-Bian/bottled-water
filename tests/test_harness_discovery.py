@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agent_adapters.local.files import LocalFiles
-from agent_contracts.execution import WorkspaceSpec
+from agent_contracts.execution import ExecutionLocation, WorkspaceSpec
 from agent_contracts.errors import OperationError
 from agent_subsystems.workspaces.paths import canonical_directory
 
@@ -23,7 +23,7 @@ async def test_shallow_listing_and_recursive_source_discovery(tmp_path):
             write(root, f"{folder}/{index}.json")
     write(root, "源码 文件/app.py")
     write(root, "README.md")
-    files = LocalFiles(WorkspaceSpec(root))
+    files = LocalFiles(WorkspaceSpec((root,)), ExecutionLocation(root))
     shallow = await files.list()
     assert [p.lower() for p in shallow["files"]] == ["readme.md"]
     assert shallow["directories"] == ["源码 文件"]
@@ -52,7 +52,7 @@ async def test_nested_ignore_negation_and_tracked_generated_files(tmp_path):
     async def index(directory):
         return ["target/tracked.py"], "complete"
 
-    files = LocalFiles(WorkspaceSpec(root), index_reader=index)
+    files = LocalFiles(WorkspaceSpec((root,)), ExecutionLocation(root), index_reader=index)
     names = (await files.list(recursive=True))["files"]
     assert "src/keep.log" in names and "target/tracked.py" in names
     assert not {"src/drop.log", "src/private/hidden.py", "target/untracked.py"} & set(names)
@@ -64,7 +64,7 @@ async def test_pagination_and_include_ignored_preserve_authorization(tmp_path):
     root = canonical_directory(tmp_path)
     for index in range(9):
         write(root, f"src/{index}.py")
-    files = LocalFiles(WorkspaceSpec(root))
+    files = LocalFiles(WorkspaceSpec((root,)), ExecutionLocation(root))
     offset = 0
     names = []
     while True:
@@ -85,7 +85,7 @@ async def test_failed_index_read_is_visible_in_discovery_diagnostics(tmp_path):
         raise OSError("index unavailable")
 
     write(root, "main.py")
-    result = await LocalFiles(WorkspaceSpec(root), index_reader=broken).list()
+    result = await LocalFiles(WorkspaceSpec((root,)), ExecutionLocation(root), index_reader=broken).list()
     assert result["files"] == ["main.py"]
     assert result["discovery"]["discovery_degraded"]
     assert result["discovery"]["index_state"] == "failed"
@@ -128,7 +128,7 @@ async def test_real_git_index_preserves_tracked_source_in_generated_directory(tm
             metadata={"execution_deadline": time.monotonic() + 20},
         )
         executor = LocalToolExecutor(
-            ResourceGrant(WorkspaceSpec(root), frozenset({"files"})), Allow(), driver, redactor
+            ResourceGrant(WorkspaceSpec((root,)), frozenset({"files"})), ExecutionLocation(root), Allow(), driver, redactor
         ).bind_execution(request, CancellationScope(), RunLease("run"))
         call, error = ToolCall.new(
             {"id": "c", "function": {"name": "file.list", "arguments": '{"recursive":true}'}}

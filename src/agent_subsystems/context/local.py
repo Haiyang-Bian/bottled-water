@@ -6,8 +6,9 @@ from agent_runtime.core.interfaces import AgentContextBuildResult
 class LocalContextProvider:
     fallback_on_error = False
 
-    def __init__(self, workspace, max_history_chars=64000):
+    def __init__(self, workspace, location, max_history_chars=64000):
         self.workspace = workspace
+        self.location = location
         self.max_history_chars = max_history_chars
 
     async def build_agent_context(self, request):
@@ -22,7 +23,10 @@ class LocalContextProvider:
                 history.pop(0)
         roots = "\n".join(str(p) for p in self.workspace.roots)
         system = request.base_system_prompt + (
-            f"\nCurrent working directory: {self.workspace.root}\nAccessible file tool roots:\n{roots}\n"
+            f"\nCurrent working directory: {self.location.cwd}\n"
+            f"Workspace version: {self.location.version}\nAccessible file tool roots:\n{roots}\n"
+            "Earlier messages may describe another working location. Use the current location "
+            "for relative paths. A command's cwd applies only to that command. "
             "PowerShell uses the current Windows user's permissions. No OS sandbox is provided. "
             "Begin with a shallow file.list, then locate and read relevant sources. "
             "Generated content is excluded from discovery unless explicitly included. "

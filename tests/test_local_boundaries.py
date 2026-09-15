@@ -11,7 +11,7 @@ from agent_adapters.local.files import LocalFiles
 from agent_adapters.storage.sqlite import SQLiteStore
 from agent_cli.config import Profile
 from agent_contracts.errors import ConfigurationError, OperationError
-from agent_contracts.execution import WorkspaceSpec
+from agent_contracts.execution import ExecutionLocation, WorkspaceSpec
 from agent_runtime import AgentConfig, RunRequest, RuntimeEngine, RunState
 from agent_runtime.core.run_types import (
     AgentExecutionResult,
@@ -50,7 +50,7 @@ def test_interactive_trust_is_asked_once_across_restarts(tmp_path, monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_history_budget_preserves_whole_recent_turn_and_current_input(tmp_path):
-    provider = LocalContextProvider(WorkspaceSpec(tmp_path), max_history_chars=12)
+    provider = LocalContextProvider(WorkspaceSpec((tmp_path,)), ExecutionLocation(tmp_path), max_history_chars=12)
     history = tuple(
         {"role": role, "content": text}
         for role, text in [
@@ -83,7 +83,7 @@ def test_invalid_profile_limits_are_configuration_errors(value):
 @pytest.mark.asyncio
 async def test_search_pagination_stays_bounded_without_losing_matches(tmp_path):
     (tmp_path / "large.txt").write_text(("命中" * 1000 + "\n") * 200, encoding="utf-8")
-    files = LocalFiles(WorkspaceSpec(tmp_path))
+    files = LocalFiles(WorkspaceSpec((tmp_path,)), ExecutionLocation(tmp_path))
     lines, offset = [], 0
     while True:
         page = await files.search("命中", limit=1000, offset=offset)
@@ -109,8 +109,8 @@ async def test_junction_cannot_expand_file_grant(tmp_path):
     _winapi.CreateJunction(str(outside), str(junction))
     try:
         with pytest.raises(OperationError):
-            await LocalFiles(WorkspaceSpec(root)).read("linked/secret.txt")
-        allowed = LocalFiles(WorkspaceSpec(root, (outside,)))
+            await LocalFiles(WorkspaceSpec((root,)), ExecutionLocation(root)).read("linked/secret.txt")
+        allowed = LocalFiles(WorkspaceSpec((root, outside)), ExecutionLocation(root))
         assert (await allowed.read("linked/secret.txt"))["content"] == "outside resource"
     finally:
         junction.rmdir()  # Remove only this junction, never its target.

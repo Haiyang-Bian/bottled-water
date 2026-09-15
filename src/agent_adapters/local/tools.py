@@ -23,8 +23,9 @@ class TrustAuthorization:
 
 
 class LocalToolExecutor:
-    def __init__(self, grant, authorization, process_driver, redactor, *, shell=None):
+    def __init__(self, grant, location, authorization, process_driver, redactor, *, shell=None):
         self.grant = grant
+        self.location = location
         self.authorization = authorization
         self.process_driver = process_driver
         self.redactor = redactor
@@ -39,6 +40,7 @@ class LocalToolExecutor:
             float(request.metadata["execution_deadline"]),
             cancellation,
             lease,
+            self.location,
         )
         registry, specs = ToolRegistry(), {}
 
@@ -60,7 +62,7 @@ class LocalToolExecutor:
             names = outcome.get("stdout", "").split("\0")[:-1]
             return names, "truncated" if outcome.get("truncated") else "complete"
 
-        files = LocalFiles(self.grant.workspace, index_reader=read_index)
+        files = LocalFiles(self.grant.workspace, self.location, index_reader=read_index)
 
         def register(name, description, handler, properties, required, capability):
             schema = {
@@ -70,7 +72,24 @@ class LocalToolExecutor:
                 "additionalProperties": False,
             }
             specs[name] = ToolSpec(name, description, schema, capability)
-            registry.register(name, description, schema, handler)
+            async def invoke(**kwargs):
+                result = await handler(**kwargs)
+                if isinstance(result, dict):
+                    execution = {"default_cwd": str(context.location.cwd),
+                                 "workspace_version": context.location.version}
+                    if capability == "process":
+                        execution["cwd"] = str(resolve_resource(
+                            self.grant.workspace, context.location, kwargs.get("cwd", "."),
+                            directory=True,
+                        ))
+                    else:
+                        execution["path"] = str(resolve_resource(
+                            self.grant.workspace, context.location, kwargs.get("path", ".")
+                        ))
+                    result["execution"] = execution
+                return result
+
+            registry.register(name, description, schema, invoke)
 
         string = {"type": "string"}
         integer = {"type": "integer"}
@@ -131,7 +150,7 @@ class LocalToolExecutor:
         )
 
         async def powershell(script, cwd=".", timeout=120):
-            directory = resolve_resource(self.grant.workspace, cwd, directory=True)
+            directory = resolve_resource(self.grant.workspace, context.location, cwd, directory=True)
             prefix = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; $ErrorActionPreference = 'Stop'; $global:LASTEXITCODE = 0;\n"
             code = (
                 prefix
@@ -155,7 +174,7 @@ class LocalToolExecutor:
             )
 
         async def git(args, cwd=".", timeout=120):
-            directory = resolve_resource(self.grant.workspace, cwd, directory=True)
+            directory = resolve_resource(self.grant.workspace, context.location, cwd, directory=True)
             return await self.process_driver.run(
                 [executable("git"), "--no-pager", *args],
                 directory,

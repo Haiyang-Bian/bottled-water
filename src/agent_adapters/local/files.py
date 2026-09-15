@@ -47,9 +47,10 @@ def bounded(text):
 
 
 class LocalFiles:
-    def __init__(self, workspace, *, index_reader=None):
+    def __init__(self, workspace, location, *, index_reader=None):
         self.index_reader = index_reader
         self.workspace = workspace
+        self.location = location
 
     def _read(self, path):
         if path.stat().st_size > MAX_TEXT_BYTES:
@@ -61,7 +62,7 @@ class LocalFiles:
     async def read(self, path, start_line=1, limit=400):
         if start_line < 1 or not 1 <= limit <= 10000:
             raise OperationError("invalid_range", "Invalid line range")
-        target = resolve_resource(self.workspace, path)
+        target = resolve_resource(self.workspace, self.location, path)
         data, text, encoding = self._read(target)
         lines = text.splitlines(keepends=True)
         selected = "".join(lines[start_line - 1 : start_line - 1 + limit])
@@ -113,11 +114,11 @@ class LocalFiles:
             temporary.unlink(missing_ok=True)
 
     async def write(self, path, content, expected_hash):
-        target = resolve_resource(self.workspace, path)
+        target = resolve_resource(self.workspace, self.location, path)
         return self._replace(target, content, expected_hash)
 
     async def edit(self, path, old_text, new_text, expected_hash):
-        target = resolve_resource(self.workspace, path)
+        target = resolve_resource(self.workspace, self.location, path)
         data, text, _ = self._read(target)
         if digest(data) != expected_hash:
             raise OperationError("file_conflict", "Read the current file and provide its sha256")
@@ -134,7 +135,7 @@ class LocalFiles:
                 names, state = await self.index_reader(directory)
                 for name in names:
                     try:
-                        tracked.append(resolve_resource(self.workspace, str(directory / name)))
+                        tracked.append(resolve_resource(self.workspace, self.location, str(directory / name)))
                     except OperationError:
                         continue
             except (OSError, OperationError):
@@ -161,7 +162,7 @@ class LocalFiles:
         ignore_file = directory / ".gitignore"
         if ignore_file.exists():
             try:
-                target = resolve_resource(self.workspace, str(ignore_file))
+                target = resolve_resource(self.workspace, self.location, str(ignore_file))
                 _, text, _ = self._read(target)
                 policy.add_rules(directory, text)
             except (OperationError, OSError, UnicodeError):
@@ -185,7 +186,7 @@ class LocalFiles:
                     if policy.visible(path, directory=True):
                         visible_dirs.append(name)
                         if directories:
-                            yield resolve_resource(self.workspace, str(path)), True
+                            yield resolve_resource(self.workspace, self.location, str(path)), True
                 except (OSError, OperationError):
                     continue
             dirs[:] = visible_dirs if recursive else []
@@ -195,7 +196,7 @@ class LocalFiles:
                 if not policy.visible(path):
                     continue
                 try:
-                    yield resolve_resource(self.workspace, str(path)), False
+                    yield resolve_resource(self.workspace, self.location, str(path)), False
                 except OperationError:
                     continue
 
@@ -204,7 +205,7 @@ class LocalFiles:
     ):
         if offset < 0 or not 1 <= limit <= 1000:
             raise OperationError("invalid_range", "Invalid pagination")
-        directory = resolve_resource(self.workspace, path, directory=True)
+        directory = resolve_resource(self.workspace, self.location, path, directory=True)
         policy = await self._policy(directory, include_ignored)
         result = {"files": [], "directories": [], "next_offset": None, "truncated": False}
         seen = output_bytes = 0
@@ -237,7 +238,7 @@ class LocalFiles:
     ):
         if not query or offset < 0 or not 1 <= limit <= 1000:
             raise OperationError("invalid_range", "Invalid search or pagination")
-        directory = resolve_resource(self.workspace, path, directory=True)
+        directory = resolve_resource(self.workspace, self.location, path, directory=True)
         policy = await self._policy(directory, include_ignored)
         results = []
         seen = output_bytes = 0

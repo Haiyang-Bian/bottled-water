@@ -7,12 +7,13 @@ from typing import Any, Literal, Protocol
 
 @dataclass(frozen=True)
 class WorkspaceSpec:
-    root: Path
-    additional_roots: tuple[Path, ...] = ()
+    roots: tuple[Path, ...]
 
-    @property
-    def roots(self):
-        return (self.root, *self.additional_roots)
+
+@dataclass(frozen=True)
+class ExecutionLocation:
+    cwd: Path
+    version: int = 0
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class ExecutionContext:
     deadline: float
     cancellation: Any
     lease: Any
+    location: ExecutionLocation
 
     def check(self):
         self.cancellation.raise_if_cancelled()
