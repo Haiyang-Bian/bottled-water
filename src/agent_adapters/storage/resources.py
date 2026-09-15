@@ -205,6 +205,14 @@ class SQLiteResources:
         if not Path(path).is_absolute():
             raise OperationError("invalid_observation", "Saved observation path is not absolute")
         path = os.path.normcase(os.path.normpath(path))
+        key = fingerprint({"source": asdict(source), "path": path})
+        prior = self.db.execute(
+            "SELECT r.* FROM resource_observations o JOIN resources r ON r.id=o.resource "
+            "WHERE o.source_key=? AND r.environment=? AND r.agent=? LIMIT 1",
+            (key, access.environment_id, access.agent_id),
+        ).fetchone()
+        if prior:
+            return self._record(prior)
         safe = self.store.redactor.value({k: v for k, v in facts.items() if k in FACTS})
         value = ResourceRevision(
             Path(path).name or path,
@@ -214,7 +222,6 @@ class SQLiteResources:
         record = self._save(access, value)
         if record.status != "active":
             return record
-        key = fingerprint({"source": asdict(source), "path": path})
         observation = ResourceObservation(
             str(uuid4()), record.id, path, safe, source, observed_at or utc_now().isoformat()
         )
@@ -345,6 +352,12 @@ class SQLiteResources:
                 "software_not_registered", "Register and verify this executable first"
             )
         cfg = SoftwareSpec(**json.loads(row[0]))
+        if not management and (
+            record.content.kind != "software" or cfg.executable != record.content.path
+        ):
+            raise OperationError(
+                "software_changed", "Location changed; verify the registration again"
+            )
         if not management and not cfg.enabled:
             raise OperationError("software_disabled", "Software execution is not enabled")
         return record, cfg
