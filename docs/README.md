@@ -4,11 +4,12 @@ This directory contains the current documentation for AgentHub. Current-state do
 
 The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
-The [local agent environment with persistent memory](./architecture/local-agent-environment.md) separates task continuity, working locations and resource permissions. L1 global task recovery and working locations are implemented in 0.2.0. L2 foundational memory is implemented in 0.2.1; its [acceptance evidence](./acceptance/foundational-memory-0.2.1.md) records validated behavior, an initial failure and remaining limits. L3–L4 remain planned.
+The [local agent environment with persistent memory](./architecture/local-agent-environment.md) separates task continuity, working locations and resource permissions. L1 global tasks and L2 foundational memory are implemented in 0.2.0 and 0.2.1. L3 resource/software continuity is implemented in 0.2.2; its [acceptance evidence](./acceptance/resource-continuity-0.2.2.md) records validated behavior and remaining limits. L4 remains planned.
 
 ## Start Here
 
 - [Local CLI](./cli.md): installation, configuration, trust, sessions, tools and JSONL.
+- [Resources and software](./resources.md): resource metadata, executable verification, task queries, upgrades and authority boundaries in 0.2.2.
 - [Foundational memory](./architecture/foundational-memory-l2.md): explicit saves, candidate adoption, cross-task recall, revisions and forgetting in 0.2.1.
 - [CLI acceptance](./architecture/cli-mvp.md): implementation milestones, measured tests and pending live-service checks.
 - [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.

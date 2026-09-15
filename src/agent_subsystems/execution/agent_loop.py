@@ -356,6 +356,11 @@ class AgentLoop:
                 raise ExecutionStopped("model_turn_budget_exhausted")
             tools_for_round = self.extension.tools_for_round(tools, tool_results)
             memory_context = getattr(self, "memory_context", None)
+            resource_context = getattr(self, "resource_context", None)
+            resource_items, resource_tool_used, task_used = [], [], []
+            if resource_context:
+                resource_items = resource_context.items()
+                messages, resource_tool_used, task_used = resource_context.filter_results(messages)
             memory_items, memory_tool_used = [], []
             if memory_context:
                 memory_items = memory_context.items()
@@ -368,8 +373,11 @@ class AgentLoop:
                     current_request=current_request,
                     run_id=self.run_id,
                     memory_items=memory_items,
+                    resource_items=resource_items,
                 )
             messages = prepared.working_messages
+            if resource_context:
+                prepared.messages, resource_tool_used, task_used = resource_context.filter_results(prepared.messages)
             if memory_context:
                 # Compaction may have removed the knowledge inside a tool result.
                 # Report only records remaining in the actual outgoing messages.
@@ -382,6 +390,14 @@ class AgentLoop:
             try:
                 remaining_tokens = self._remaining_token_budget()
                 async with self._phase("model"):
+                    if resource_context:
+                        await _emit("agent.resources_used", {
+                            "model_request": tool_round,
+                            "items": prepared.resource_used + resource_tool_used,
+                            "tasks": task_used,
+                            "removed": prepared.diagnostics["resources_removed_for_budget"],
+                            **resource_context.diagnostics,
+                        })
                     if memory_context:
                         await _emit("agent.memory_used", {
                             "model_request": tool_round,

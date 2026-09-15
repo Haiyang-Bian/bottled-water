@@ -74,7 +74,7 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
         timeout=45,
     )
     assert upgraded.returncode == 0, upgraded.stderr
-    assert json.loads(upgraded.stdout)["database_version"] == 4
+    assert json.loads(upgraded.stdout)["database_version"] == 5
     assert "upgrade-test-private-key" not in upgraded.stdout + upgraded.stderr
     assert config_before == hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     assert credentials_before == {
@@ -94,12 +94,21 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
 
         snapshot = asyncio.run(store.load(identity["session_id"]))
         assert snapshot.version == 1 and snapshot.messages[-1]["content"] == "Legacy answer"
+        if identity.get("memory_ids"):
+            from agent_adapters.storage.memory import SQLiteMemory
+            memory = SQLiteMemory(store)
+            ids = {r.id for r in memory.search(memory.access())}
+            assert identity["memory_ids"]["active"] in ids
+            assert identity["memory_ids"]["forgotten"] not in ids
+            memory.rebuild(memory.access())
+            assert identity["memory_ids"]["forgotten"] not in {r.id for r in memory.search(memory.access())}
+        assert not store.db.execute("SELECT 1 FROM resource_jobs").fetchone()
     finally:
         store.close()
     assert list(home.glob("*.bak"))
     with sqlite3.connect(next(home.glob("*.bak"))) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == identity["schema"]
-    # Old binaries refuse v4 instead of silently overwriting it.
+    # Old binaries refuse v5 instead of silently overwriting it.
     old = subprocess.run(
         [old_python, "-B", "-m", "agent_cli.main", "sessions"],
         env=env,

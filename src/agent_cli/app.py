@@ -30,6 +30,9 @@ HELP = """/resume       从本机环境列表恢复任务；/resume --here 按�
 /session      会话详情
 /tools        选择并查看已保存工具结果
 /memory       管理基础记忆；add / candidates / edit / disable / enable / forget / used
+/resources    资源目录；add / search / show / verify / index / process
+/software     软件目录；discover / add / verify / enable / disable
+/resume 查询  搜索旧任务，如 /resume 昨天的实验
 /verbose on|off 详细输出开关
 /add-dir PATH 添加目录
 /cd [PATH]    查看或切换默认工作位置（不会增加授权）
@@ -166,7 +169,9 @@ async def chat(args, home):
                 raise ConfigurationError("所选范围没有执行过任务的会话。运行 agenthub 开始新任务。")
             identifier = candidates[0].id
         elif identifier == "":
-            identifier = await choose_session(controller.catalog, filter_root, color=ui.color)
+            identifier = await choose_session(controller.catalog, filter_root, color=ui.color,
+                query=getattr(args, "query", ""), since=getattr(args, "since", None),
+                until=getattr(args, "until", None))
             if identifier is None:
                 return 0
         if identifier:
@@ -204,11 +209,15 @@ async def chat(args, home):
                     controller.new()
                     prompt_session = prompt_for_session()
                     print("新会话 · 提交任务后保存；/resume 恢复已有会话")
-                elif prompt in {"/resume", "/resume --here"}:
+                elif prompt == "/resume" or prompt.startswith("/resume "):
+                    query = prompt[len("/resume"):].strip()
+                    here = query == "--here" or query.startswith("--here ")
+                    if here:
+                        query = query[len("--here"):].strip()
                     target = await choose_session(
                         controller.catalog,
-                        Path(controller.session["cwd"]) if prompt.endswith("--here") else None,
-                        controller.session["id"], color=ui.color
+                        Path(controller.session["cwd"]) if here else None,
+                        controller.session["id"], color=ui.color, query=query
                     )
                     if target:
                         await controller.activate(target)
@@ -216,6 +225,10 @@ async def chat(args, home):
                         show_restored(controller, ui)
                 elif prompt == "/history":
                     await browse_history(controller)
+                elif any(prompt == name or prompt.startswith(name + " ")
+                         for name in ("/resources", "/software")):
+                    from .resources import interactive_command
+                    await interactive_command(prompt, controller, args)
                 elif prompt == "/memory" or prompt.startswith("/memory "):
                     from .memory import interactive_command
                     await interactive_command(prompt, controller, args)

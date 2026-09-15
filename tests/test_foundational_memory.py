@@ -314,7 +314,7 @@ async def test_reference_outbox_and_context_rollback_then_retry(monkeypatch, ter
         "remember this",
         (AgentConfig("local", "A", ""),),
         SingleAgentPolicy(),
-        metadata={"memory_enabled": True},
+        metadata={"memory_enabled": True, "resources_enabled": True},
     )
     now = utc_now()
     await journal.create_run(
@@ -351,13 +351,14 @@ async def test_reference_outbox_and_context_rollback_then_retry(monkeypatch, ter
     monkeypatch.setattr(journal, "_append_locked", fail_after_append)
     with pytest.raises(RuntimeError, match="injected"):
         await commit()
-    assert not journal.finished and not journal.memory_jobs
+    assert not journal.finished and not journal.memory_jobs and not journal.resource_jobs
     assert not (await journal.read_events(request.run_id)).items
     assert (await contexts.load("scope")).version == 0
     monkeypatch.setattr(journal, "_append_locked", append)
     assert await commit()
     assert not await commit()
     assert journal.memory_jobs == {request.run_id: "pending"}
+    assert journal.resource_jobs == {request.run_id: "pending"}
     assert len((await journal.read_events(request.run_id)).items) == 1
     assert (await contexts.load("scope")).version == int(terminal == "completed")
 
@@ -385,7 +386,7 @@ def test_v3_upgrade_preserves_binding_and_rolls_back_all_new_tables(tmp_path, mo
     store = SQLiteStore(path, identity=identity)
     try:
         assert store.environment.environment_id == environment_id
-        assert store.schema_version == 4
+        assert store.schema_version == 5
     finally:
         store.close()
 

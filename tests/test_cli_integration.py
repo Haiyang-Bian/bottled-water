@@ -82,6 +82,19 @@ def cli_fixture(tmp_path):
             }
             if scenario.startswith("LOCATION") and step == 0:
                 delta = call("Read text", {"path": "note.txt"})
+            elif scenario == "RESOURCECHECK":
+                resource_id, task_id = user.split()[1:3]
+                if step == 0:
+                    delta = call("Read saved resource location", {"id": resource_id})
+                elif step == 1:
+                    delta = call("Probe a resource", {"id": resource_id})
+                elif step == 2:
+                    delta = call("Read a bounded prior task", {"id": task_id})
+            elif scenario == "SOFTWARE" and step == 0:
+                delta = call("Execute an enabled software ID", {
+                    "id": user.split()[1], "args": ["-c", "from pathlib import Path; Path('result.txt').write_text('42')"],
+                    "outputs": ["result.txt"],
+                })
             elif scenario == "MEMORYPROPOSE" and step == 0:
                 delta = call("Save a candidate", {
                     "title": "语言约定", "body": "默认用中文解释", "kind": "preference",
@@ -332,6 +345,30 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
             timeout=20,
         )
         assert isolated.returncode == 0, isolated.stderr
+
+
+def test_installed_resources_software_and_cross_task_summaries(cli_fixture):
+    run, project, second, requests = cli_fixture
+    run("trust", "add", str(project))
+    run("trust", "add", str(second))
+    first = records(run("--json", "-p", "REPAIR"))[-1]
+    resources = json.loads(run("--json", "resources", "search", "calc").stdout)
+    assert len(resources) == 1
+    record = resources[0]
+    assert record["observation"]["facts"]["sha256"]
+    other = records(run("--json", "-p", f"RESOURCECHECK {record['id']} {first['context_scope_id']}", cwd=second))
+    results = [e["payload"] for e in other if e["type"] == "agent.tool_result"]
+    assert results[0]["success"] is True
+    assert results[1]["success"] is False and results[1]["result"]["error_code"] == "outside_workspace"
+    assert results[2]["result"]["task_records"][0]["id"] == first["context_scope_id"]
+    assert not any(m["role"] == "user" and m["content"] == "REPAIR" for m in requests[-1]["messages"])
+    software = json.loads(run("--json", "software", "add", "--kind", "python", "--path", run.python).stdout)
+    executed = records(run("--json", "-p", "SOFTWARE " + software["id"]))
+    result = next(e["payload"]["result"] for e in executed if e["type"] == "agent.tool_result")
+    assert result["outputs"][0]["after"]["sha256"]
+    assert (project / "result.txt").read_text() == "42"
+    assert json.loads(run("--json", "resources", "search", "result").stdout)
+    run("--json", "resume", "--query", "REPAIR", expected=2)
 
 
 def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture):

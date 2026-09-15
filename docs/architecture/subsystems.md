@@ -4,7 +4,7 @@
 
 模块按可维护的职责划分，不要求每行对应一个文件或一个发行包。每个子系统都应具备：通用输入/输出、明确依赖、资源关闭责任、可检查的失败状态和不依赖 Web 的契约测试。以下“迁出”指通用机制，“保留”指 AgentHub 业务适配；不能把一个现有大文件整体移动就视为完成。
 
-2026-09-15 增补的[本机持续记忆设计](./local-agent-environment.md)扩展 S4、S6 与宿主身份职责；L1 身份、全局任务与独立位置已在 0.2.0 实现，L2 基础记忆已在 0.2.1 实现。资源知识库和强隔离仍按[开发阶段](./local-agent-roadmap.md)追踪，不因已有接口而视为完成。
+2026-09-15 增补的[本机持续记忆设计](./local-agent-environment.md)扩展 S4、S6 与宿主身份职责；L1 身份与位置已在 0.2.0 实现，L2 基础记忆已在 0.2.1 实现，L3 资源和软件目录已在 0.2.2 实现。强隔离仍按[开发阶段](./local-agent-roadmap.md)追踪，不因已有接口而视为完成。
 
 ## 本次迁移现状
 
@@ -138,7 +138,8 @@
 | S6.5 仓库与工作树 | 仓库探测、基准提交、managed/adopted 工作树、生命周期 | [`worktrees.py`](../../backend/src/app/services/worktrees.py)；Conversation 绑定和归档策略留宿主 |
 | S6.6 Git 协作 | status/diff/commit/integrate、安全前置检查与冲突回传 | [`git_collaboration.py`](../../backend/src/app/services/tools/git_collaboration.py)；不引入隐式 push 或历史改写 |
 | S6.7 隔离与运行环境 | 声明本机/子进程/容器可用能力，解析依赖、执行取消与资源清理 | 当前 sandbox、terminal 与外部进程机制分散；统一契约不等于已实现生产沙箱 |
-| S6.8 资源与软件目录（计划） | 资源身份、别名、位置、关系、软件能力与验证时间 | 在既有 workspaces 内增量实现；登记不授予执行权，不默认扫描全盘 |
+| S6.8 资源与软件目录 | 资源身份、别名、位置、观察、任务关系、软件指纹与验证时间 | 0.2.2：`agent_contracts/resources.py`、`workspaces/resource_*`、`adapters/storage/resources.py`、`adapters/local/resources.py`；元数据不授予文件权，软件须用户验证启用 |
+| S6.10 任务资料查询 | 日期、名称、路径与关联资源查询，输出有来源的有界摘要 | 0.2.2：`workspaces/task_queries.py`、`adapters/storage/tasks.py`；不自动恢复任务或转移完整历史 |
 | S6.9 可变工作位置 | cwd 与 grants 解耦、位置持久事件、每调用不可变快照 | 0.2.0 已实现；禁止依赖宿主全局 chdir，具体见[本机环境](./local-agent-environment.md) |
 
 **状态与错误：** 活进程只能由持有驱动管理。路径越界、权限拒绝、命令缺失、超时、输出截断和取消需要区分；跨进程重启不能从旧记录恢复活句柄。用户文件和工作树不随 Run 终止自动删除。

@@ -22,6 +22,20 @@ class TrustAuthorization:
         return "allow"
 
 
+async def read_git_index(driver, directory, context):
+    outcome = await driver.run(
+        [executable("git"), "ls-files", "--cached", "-z"], directory,
+        timeout=10, context=context,
+        env={"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
+    )
+    if outcome.get("exit_code") != 0:
+        return [], ("not_repository" if "not a git repository" in
+                    outcome.get("stderr", "").lower() else "failed")
+    return outcome.get("stdout", "").split("\0")[:-1], (
+        "truncated" if outcome.get("truncated") else "complete"
+    )
+
+
 class LocalToolExecutor:
     def __init__(self, grant, location, authorization, process_driver, redactor, *, shell=None):
         self.grant = grant
@@ -45,22 +59,7 @@ class LocalToolExecutor:
         registry, specs = ToolRegistry(), {}
 
         async def read_index(directory):
-            outcome = await self.process_driver.run(
-                [executable("git"), "ls-files", "--cached", "-z"],
-                directory,
-                timeout=10,
-                context=context,
-                env={"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
-            )
-            if outcome.get("exit_code") != 0:
-                state = (
-                    "not_repository"
-                    if "not a git repository" in outcome.get("stderr", "").lower()
-                    else "failed"
-                )
-                return [], state
-            names = outcome.get("stdout", "").split("\0")[:-1]
-            return names, "truncated" if outcome.get("truncated") else "complete"
+            return await read_git_index(self.process_driver, directory, context)
 
         files = LocalFiles(self.grant.workspace, self.location, index_reader=read_index)
 

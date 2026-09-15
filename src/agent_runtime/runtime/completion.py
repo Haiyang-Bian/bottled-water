@@ -31,6 +31,7 @@ class InMemoryRunCompletion:
             old_events = list(self.journal.events[result.run_id])
             old_ids = dict(self.journal._event_ids)
             old_jobs = dict(self.journal.memory_jobs)
+            old_resources = dict(self.journal.resource_jobs)
             try:
                 self.journal._terminal_outbox(result.run_id)
                 self.journal._append_locked(sanitize_event_for_persistence(terminal_event))
@@ -40,6 +41,7 @@ class InMemoryRunCompletion:
                 self.journal.events[result.run_id] = old_events
                 self.journal._event_ids = old_ids
                 self.journal.memory_jobs = old_jobs
+                self.journal.resource_jobs = old_resources
                 self.contexts._snapshots[result.context_scope_id] = current
                 self.journal.finished.pop(result.run_id, None)
                 raise

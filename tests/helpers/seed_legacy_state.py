@@ -51,12 +51,23 @@ async def main():
             json.dumps({"output": "Legacy answer", "reason_code": "completed"}), 0,
         ))
         store.db.commit()
+        memory_ids = {}
+        if store.db.execute("PRAGMA user_version").fetchone()[0] >= 4:
+            from agent_adapters.storage.memory import SQLiteMemory
+            from agent_contracts.memory import MemoryRevision
+            memory = SQLiteMemory(store)
+            access = memory.access()
+            active = memory.save(access, MemoryRevision("旧偏好", "默认中文", basic=True))
+            forgotten = memory.save(access, MemoryRevision("已遗忘", "不可召回"))
+            memory.set_status(access, forgotten.id, 1, "forgotten")
+            memory_ids = {"active": active.id, "forgotten": forgotten.id}
         print(
             json.dumps(
                 {
                     "session_id": session["id"],
                     "credential_ref": reference,
                     "schema": store.db.execute("PRAGMA user_version").fetchone()[0],
+                    "memory_ids": memory_ids,
                 }
             )
         )
