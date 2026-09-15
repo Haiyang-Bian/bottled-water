@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from agent_adapters.storage.session_queries import SessionQueries, decode
+from agent_adapters.storage.session_queries import decode
 from agent_adapters.storage.session_lock import SessionLock
 from agent_adapters.storage.sqlite import SQLiteStore
 from agent_contracts.errors import ConfigurationError
@@ -20,7 +20,10 @@ def short(text, length=100):
 @dataclass(frozen=True)
 class SessionSummary:
     id: str
-    root: str
+    origin_root: str
+    cwd: str
+    workspace_version: int
+    environment_id: str | None
     title: str
     preview: str
     last_active: str
@@ -51,7 +54,7 @@ class SessionCatalogReader:
             return
         store = SQLiteStore(self.path, readonly=True)
         try:
-            yield SessionQueries(store.db)
+            yield store.queries()
         finally:
             store.close()
 
@@ -59,7 +62,8 @@ class SessionCatalogReader:
         with self.queries() as queries:
             rows = queries.catalog(root) if queries else []
         return [SessionSummary(
-            id=r["id"], root=r["root"],
+            id=r["id"], origin_root=r["origin_root"], cwd=r["cwd"],
+            workspace_version=r["workspace_version"], environment_id=r["environment_id"],
             title=short(self.redactor.text(str(decode(r["first_request"]).get("input", ""))), 60),
             preview=short(self.redactor.text(str(decode(r["last_request"]).get("input", "")))),
             last_active=r["last_active"], run_count=r["run_count"], state=r["state"],
@@ -67,7 +71,7 @@ class SessionCatalogReader:
             last_run_id=r["last_run_id"],
         ) for r in rows]
 
-    def resolve(self, identifier, root):
+    def resolve(self, identifier):
         with self.queries() as queries:
             session = queries.session(identifier) if queries else None
             if session is None:
@@ -77,10 +81,6 @@ class SessionCatalogReader:
                         f"这是 Run ID，不是会话 ID。所属会话：{scope}；请用 agenthub -r 从列表选择。"
                     )
                 raise ConfigurationError("会话不存在。请用 agenthub -r 从列表选择。")
-        if session["root"] != str(root):
-            raise ConfigurationError(
-                f"会话属于其他目录：{session['root']}。请切换到该目录后运行 agenthub -r。"
-            )
         return session
 
 

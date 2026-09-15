@@ -119,6 +119,9 @@
     ]
   },
   "system": {
+    "storage:unit": [
+      "tests/test_local_environment.py"
+    ],
     "context:unit": [
       "tests/test_harness_context.py",
       "tests/test_harness_continuation.py"
