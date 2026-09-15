@@ -325,6 +325,7 @@ class LpacProfile:
         registry_read=False,
         instrumentation=False,
         namespace_experiment=None,
+        cancel_event=None,
     ):
         """Run with an LPAC token, explicit stdio handles and a kill-on-close Job."""
         import pywintypes
@@ -351,7 +352,7 @@ class LpacProfile:
         sid, attributes = w.LPVOID(), None
         capability_pointers = []
         process, assigned, initialized = None, False, False
-        timed_out = False
+        timed_out = cancelled = False
         started = time.monotonic()
 
         def drain(handle, index):
@@ -516,10 +517,13 @@ class LpacProfile:
                 worker.start()
                 readers.append(worker)
             while win32event.WaitForSingleObject(process, 30) == win32con.WAIT_TIMEOUT:
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
                 if time.monotonic() - started > timeout:
                     timed_out = True
                     break
-            code = None if timed_out else win32process.GetExitCodeProcess(process)
+            code = None if timed_out or cancelled else win32process.GetExitCodeProcess(process)
         finally:
             if process is not None and not assigned:
                 win32process.TerminateProcess(process, 1)
@@ -552,6 +556,7 @@ class LpacProfile:
         return {
             "exit_code": code,
             "timed_out": timed_out,
+            "cancelled": cancelled,
             "pid": pi.dwProcessId,
             "token": token,
             "job_drained": True,

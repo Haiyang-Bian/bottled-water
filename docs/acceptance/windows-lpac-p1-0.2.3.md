@@ -1,6 +1,6 @@
 # L4a / 0.2.3 目标版本：P1 原生实验记录
 
-日期：2026-09-15。**当前：最小系统查询权限修复了 Git；工具链基础矩阵通过，完整 P1 仍未通过。**
+更新：2026-09-16。**当前：工具链基础矩阵及并行/生命周期原生子集通过，完整 P1 仍未通过。**
 0.2.3 尚未交付。本记录包含原型成功与失败证据，不是安装验收或安全认证。
 实施范围见[设计与阶段状态](../architecture/windows-permissions-l4a.md)。
 
@@ -161,13 +161,59 @@ Git for Windows 的 `mingw_getcwd` 先调用 DOS 形式，再回退到 GetLongPa
 
 ## 代码检查与未执行项
 
+2026-09-16 增加普通用户侧 `scripts/probe-lpac-isolation.py`：每次新建夹具和两个独立 LPAC，
+不提权、不改系统 ACL。最终从显式启用的 pytest 入口执行，27 项判定测试 + 1 项原生子集测试
+共 **28 通过**（11.97 秒）；原生子集内部 13 个检查点通过。
+
+| 本轮原生检查 | 结果与范围 |
+| --- | --- |
+| 两个并行身份 | 用单调时钟窗口确认执行重叠；各自目录读写成功，另一个身份目录读写为 errno 13 |
+| 宿主进程访问 | PROCESS_VM_READ、DUP_HANDLE、CREATE_THREAD、TERMINATE 都为 WinError 5 |
+| 显式句柄列表 | 宿主故意持有可继承的私有文件句柄；LPAC 访问该未列入句柄时报无效句柄 |
+| 工具环境 | 宿主注入的测试用私有环境变量没有进入工具进程；没有使用真实凭据 |
+| 取消与超时 | 确认子进程、孙进程活着后取消/超时；之前取得的进程句柄均变为已退出，Job 清空 |
+| 宿主强制退出 | 终止普通测试宿主后，持有的子/孙进程句柄确认退出；没有仅按 PID 或时间推断 |
+| 启动半途失败 | 注入 Job 分配失败及令牌验证失败；挂起进程均已终止，不恢复执行 |
+| 子进程回环网络 | 父子 IPv4/IPv6 TCP/UDP 都为 WinError 10013；相同监听器的宿主正对照成功 |
+| junction、硬链接、位置替换 | 通过受授权目录内的别名读取 C 均为 errno 13；子进程新建指向 C 的硬链接被拒绝 |
+| 授权前检查与清理 | fixture walker 拒绝已有 junction/多硬链接；仅移除已知测试别名，C 未修改；两个身份及 ACE 清理核实 |
+
+`var/l4a-isolation-04` 样本中，从测试取消信号到确认进程退出约 31 毫秒。这不是尚未实现的
+权限撤销接口的延迟保证。部分宿主退出样本的计时为 0，表示低于当时的时钟分辨率，不表示瞬时终止。
+
+| 证据 | SHA-256 |
+| --- | --- |
+| `var/l4a-isolation-04/report.json` | `5921d65968f9f4b70e0026cd7d04b82373581268271a572537d31fa85f9eb1ce` |
+| `var/l4a-isolation-test-eec078607fa9450a9fe77d46e0b78db1/report.json` | `126881d9d8d63bde99d5b878b4eed30126f318f1a74bfcef9594d6f05e847658` |
+| `var/l4a-p1-expanded-tests.xml` | `41c9de4016dcc7b53cb976d016bf6e1989e74c9a9ddd34b470cad26c63486fe9` |
+
+原始失败保留：`l4a-isolation-01` 未处理 ctypes 的 STATUS_INVALID_HANDLE，导致探针提前退出；
+修正仅接受明确无效句柄代码，其余异常仍失败。`l4a-isolation-03` 创建真实符号链接夹具时返回
+WinError 1314。后续没有开启 Developer Mode 或提权，而是将该项明确记录为 `not_executed`。
+真实符号链接、动态竞态和所有重解析标签的安全性不能由 junction 子集结果代替。
+
+可从项目测试分组运行（必须明确启用本机原生操作）：
+
+```powershell
+$env:AGENTHUB_RUN_LPAC_NATIVE = '1'
+.\scripts\run-tests.ps1 -Stack system -Module sandbox -Type integration
+```
+
+该组有意称为 subset，仍要求 `p1_release_gate=not_passed`，不能拿 pytest 成功代表完整 P1。
+最小系统初始化已保存于提交 `46f5fff`；本轮新增探针与代码哈希随报告及后续源码提交保留。
+
+开机初始化与保护设计见[待确认的安装行为](../architecture/windows-sandbox-initialization-review.md)。
+当前没有安装计划任务、服务或开机组件，临时系统 ACE 已移除。
+
+先前检查（与新增测试重叠，不相加）：
+
 - P0 额外 L1/L3 针对性回归：15 通过。
 - 新判定测试与同组回归：31 通过（16 新增 + 15 已有）。
 - 最终 Git 假阳性修正后的判定测试：16 通过。这些与上一组重叠，不相加当作独立覆盖数。
 - 相关 Ruff 与 `git diff --check` 通过。判定测试是实验判定逻辑测试，不能代替原生权限测试。
 
-**未执行 / 未实现：**并行 LPAC 身份、继承句柄与宿主内存攻击、完整硬链接/junction/路径替换攻击、
-网络子进程、宿主强制退出和崩溃 repair、环境授权与撤销、完成事务竞争、文件 worker、v6 迁移、
+**未执行 / 未实现：**真实符号链接、完整路径竞态与继承句柄攻击覆盖、嵌套桌面 Job、外网/全部网络 API、
+重启初始化与受保护安装组件、ACL 清理失败/崩溃 repair、环境授权与撤销、完成事务竞争、文件 worker、v6 迁移、
 真实 DeepSeek/OpenAI-compatible、ConPTY、独立 wheel 安装、Web 和 sidecar 的 0.2.3 回归。
 既有 L3 的通过记录不能转为这些检查的通过结果。
 

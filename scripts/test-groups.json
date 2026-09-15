@@ -122,6 +122,9 @@
       "sandbox:unit": [
         "tests/test_lpac_probe.py"
       ],
+      "sandbox:integration": [
+        "tests/test_lpac_native.py"
+      ],
       "resources:unit": [
         "tests/test_resources.py",
         "tests/test_resource_continuity.py"

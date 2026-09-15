@@ -3,7 +3,7 @@ param(
     [ValidateSet("system", "backend", "frontend", "e2e")]
     [string]$Stack,
 
-    [ValidateSet("cli", "auth", "security", "providers", "agents", "runtime", "models", "chat", "workflow", "desktop", "collaboration", "worktrees")]
+    [ValidateSet("cli", "auth", "security", "providers", "agents", "runtime", "models", "chat", "workflow", "desktop", "collaboration", "worktrees", "sandbox")]
     [string]$Module,
 
     [ValidateSet("unit", "integration", "component", "live")]
