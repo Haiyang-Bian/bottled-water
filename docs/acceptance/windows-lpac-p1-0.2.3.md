@@ -1,7 +1,8 @@
 # L4a / 0.2.3 目标版本：P1 原生实验记录
 
-日期：2026-09-15。**结论：P1 未通过，停止后续发行推进。0.2.3 尚未交付。**
-本记录是原型和失败证据，不是安装验收或安全认证。实施范围见[设计与阶段状态](../architecture/windows-permissions-l4a.md)。
+日期：2026-09-15。**当前：最小系统查询权限修复了 Git；工具链基础矩阵通过，完整 P1 仍未通过。**
+0.2.3 尚未交付。本记录包含原型成功与失败证据，不是安装验收或安全认证。
+实施范围见[设计与阶段状态](../architecture/windows-permissions-l4a.md)。
 
 ## 基线与源码
 
@@ -18,7 +19,7 @@
 选定工具为 PowerShell 7.6.5、Git 2.55.0.windows.3、uv 0.11.21；另测试系统 PowerShell 5.1。
 这些版本仅代表本机本次结果，不扩展到其他 OS build 或工具版本。
 
-## 最终原始证据
+## 首轮保留的失败证据
 
 证据保存在本地忽略目录，不提交原始日志、身份 SID、数据库或复制的程序。
 
@@ -48,12 +49,52 @@ Codex 对本机测试的沙箱外执行许可不等同于 Windows 提权。
 
 为核实后续初始化条件，另发起一次 UAC 管理员只读预检：仅尝试以 READ_CONTROL / WRITE_DAC
 打开 `\GLOBAL??`、`\GLOBAL??\D:`、`\GLOBAL??\MountPointManager`，读取权限并关闭句柄，
-不调用权限修改 API。当前等待用户处理系统 UAC，未计为通过；目标结果文件为
+不调用权限修改 API。用户确认 UAC 后，已读取实际结果：三个对象均以状态 0 打开，
+`elevated=true`、`acl_mutations=0`。目标结果文件为
 `var/l4a-init-access-admin.json`。预检脚本 SHA-256 为
 `abf7b274b0b58180279829946150291c917ef34bd5d12bcc563702c6c3cf27ec`。
-后续应先读取该结果，再决定最小初始化实现，不把尚未执行的管理员检查推断为成功或失败。
+该结果只证明本机管理员可取得所需句柄，后续实际修改与工具测试单独记录如下。
 
-## 已观察的结果
+## 受控系统对象初始化与 Git 复测
+
+使用独立能力 `AgentHub.Probe.Namespace.<随机 UUID>`，与业务目录的 LPAC package SID 分离。
+管理员 helper 不启动程序，只为下面五个固定对象添加不继承的查询 ACE；普通用户宿主运行工具。
+
+| 对象 | 掩码 | 目的 |
+| --- | --- | --- |
+| `\GLOBAL??` | `0x20003` | 查询和遍历命名空间 |
+| `\GLOBAL??\C:`、`\GLOBAL??\D:` | `0x20001` | 查询选定盘符映射 |
+| `\GLOBAL??\MountPointManager` | `0x20001` | 查询系统链接 |
+| `\\.\MountPointManager` | `0x120089` | FILE_GENERIC_READ，用于卷名转换 |
+
+只改 DACL，不修改所有者，不授权个人目录，不添加网络能力或使用通用 AppContainer SID。
+所有句柄在首个修改前核实，意图先落盘；退出或十分钟超时仅移除精确匹配的本次 ACE。
+如果本次 ACE 被其他写入者改动，拒绝猜测清理。没有创建服务、启动项或计划任务。
+这是短时实验，尚未证明系统重启后的初始化、安装保护和崩溃修复；不视为正式 `sandbox setup`。
+
+已执行 `scripts/probe-lpac-namespace.ps1`，实验编号 `a89eb72a4c73488288adcff743124737`：
+
+- Git 读 A 返回 0，改 A 返回 255 并报告 Permission denied；改 B 返回 0；读 C 返回 128 并拒绝访问。
+- Git diff 返回 0，真实输出包含 `-B-fixture` 和 `+powershell-fixture`。
+- Python、其子进程、PowerShell 7 和 uv 的 A/B/C 矩阵仍通过；A 内容未变，B 修改核实存在。
+- DOS/GUID 路径查询修复；IPv4/IPv6 TCP/UDP 回环仍被 OS 拒绝，宿主正对照成功。
+- 工具宿主未提权；每个工具实际 LPAC 身份和 Job 清空核实通过；业务 ACE/profile 清理完成。
+- 五个系统 ACE 均核实移除，`cleanup_errors=[]`；本次读回的每个 DACL 与修改前一致。
+  清理使用当前 ACL 精确删项，并未用旧完整 DACL 恢复。
+- 脚本退出 0、基础检查全部通过；`p1_release_gate=not_passed` 仍保留，因为对抗/生命周期组尚未补齐。
+- 系统 PowerShell 5.1 仍超时，本结论仅支持本机 PowerShell 7.6.5，不将 5.1 标成可用。
+
+| 新证据文件 | SHA-256 |
+| --- | --- |
+| `var/l4a-namespace-a89eb72a4c73488288adcff743124737.json` | `e8ad2292022a07b5c5121383a9e2a480375c0c3f09065de2829cca462e8969ad` |
+| `var/l4a-lpac-namespace-a89eb72a4c73488288adcff743124737/probe.json` | `568a46efffc9796dd771c3487bbf142d205728a55b8b49e8cf18d929599b209b` |
+| `var/l4a-namespace-tests.xml` | `436a0012ea259f1131cd6a4ea571ee0f10effb4012840d7fa7033bd3cef637d4` |
+
+复测报告记录源文件哈希；helper 的 SHA-256 为
+`ab6d2c40e229398f9babeb43e210b5541e44466e0a6c59512eb7d602d5eb6283`。
+初始化清单及清理判定测试 27 项通过，其中包含原有 16 项，不能相加计算。
+
+## 首轮已观察的结果（保留原结论）
 
 | 检查 | 实际结果 | 可支持的结论 |
 | --- | --- | --- |

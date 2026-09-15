@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -86,10 +87,21 @@ def main():
     parser.add_argument("--registry-read", action="store_true")
     parser.add_argument("--full-toolchain", action="store_true")
     parser.add_argument("--instrumentation", action="store_true")
+    parser.add_argument("--namespace-experiment")
     args = parser.parse_args()
+    if ctypes.windll.shell32.IsUserAnAdmin():
+        parser.error("Native tool probes must run from the ordinary user, not an elevated host")
     if args.full_toolchain and not args.toolchain:
         parser.error("--full-toolchain requires --toolchain")
     repo = Path(__file__).resolve().parents[1]
+    if args.namespace_experiment is not None:
+        from lpac_probe.namespace import capability_name
+
+        capability_name(args.namespace_experiment)
+        namespace_report = repo / "var" / ("l4a-namespace-" + args.namespace_experiment + ".json")
+        prepared = json.loads(namespace_report.read_text(encoding="utf-8"))
+        if prepared.get("status") != "ready" or not prepared.get("elevated"):
+            raise RuntimeError("Namespace initialization has not been verified")
     output = Path(args.output).resolve()
     if not output.is_relative_to(repo / "var"):
         raise ValueError("Use a new output directory under this repository's var")
@@ -157,7 +169,9 @@ def main():
         "cleanup": [],
         "os_build": str(sys.getwindowsversion()),
         "python": sys.version,
+        "host_elevated": False,
         "scope": "toolchain" if args.full_toolchain else "partial_smoke",
+        "namespace_experiment": args.namespace_experiment,
         "source_revision": subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=repo,
@@ -375,6 +389,17 @@ $results | ConvertTo-Json -Compress
                             [str(git / "git.exe"), "-C", str(fixture / "C"), "show", ":sample.txt"],
                         ),
                         (
+                            "git_diff_B",
+                            [
+                                str(git / "git.exe"),
+                                "-C",
+                                str(fixture / "B"),
+                                "diff",
+                                "--",
+                                "sample.txt",
+                            ],
+                        ),
+                        (
                             "uv_matrix",
                             [
                                 str(runtime / "uv.exe"),
@@ -405,6 +430,7 @@ $results | ConvertTo-Json -Compress
                     environment=environment,
                     registry_read=args.registry_read,
                     instrumentation=args.instrumentation,
+                    namespace_experiment=args.namespace_experiment,
                 )
             except Exception as exc:
                 result = {
@@ -468,6 +494,7 @@ $results | ConvertTo-Json -Compress
                     environment=environment,
                     registry_read=args.registry_read,
                     instrumentation=args.instrumentation,
+                    namespace_experiment=args.namespace_experiment,
                 )
                 manifest["results"].append({"name": "python_network", **result})
                 save()

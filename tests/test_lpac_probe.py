@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -11,6 +13,13 @@ SOURCE = Path(__file__).resolve().parents[1] / "scripts/lpac_probe/validation.py
 spec = importlib.util.spec_from_file_location("lpac_validation", SOURCE)
 validation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validation)
+
+namespace_spec = importlib.util.spec_from_file_location(
+    "lpac_namespace", SOURCE.with_name("namespace.py")
+)
+namespace = importlib.util.module_from_spec(namespace_spec)
+sys.modules[namespace_spec.name] = namespace
+namespace_spec.loader.exec_module(namespace)
 
 
 def result(name, code=0, stdout="", stderr=""):
@@ -121,3 +130,58 @@ def test_duplicate_results_fail():
     assert not validation.evaluate(basic() + [result("read_A", stdout="A-fixture")])[
         "unique_results"
     ]
+
+
+@pytest.mark.parametrize("value", ["", "..", "a" * 31, "A" * 32, "internetClient", "0/" * 16])
+def test_namespace_capability_cannot_select_an_arbitrary_identity(value):
+    with pytest.raises(ValueError):
+        namespace.capability_name(value)
+
+
+def test_namespace_manifest_only_grants_fixed_read_query_rights():
+    assert namespace.capability_name("0" * 32) == "AgentHub.Probe.Namespace." + "0" * 32
+    assert [(target.kind, target.mask) for target in namespace.TARGETS] == [
+        ("Directory", 0x20003),
+        ("SymbolicLink", 0x20001),
+        ("SymbolicLink", 0x20001),
+        ("SymbolicLink", 0x20001),
+        ("Device", 0x120089),
+    ]
+    assert [target.path for target in namespace.TARGETS] == [
+        "\\GLOBAL??",
+        "\\GLOBAL??\\C:",
+        "\\GLOBAL??\\D:",
+        "\\GLOBAL??\\MountPointManager",
+        "\\\\.\\MountPointManager",
+    ]
+    assert all(not target.mask & 0xD0000 for target in namespace.TARGETS)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows ACL representation")
+def test_namespace_cleanup_preserves_concurrent_unrelated_entries():
+    import win32security as security
+
+    owned_sid = "S-1-5-21-100-200-300-400"
+    unrelated = security.ConvertStringSidToSid("S-1-5-21-100-200-300-401")
+    acl = security.ACL()
+    acl.AddAccessAllowedAceEx(2, 0, 0x20003, security.ConvertStringSidToSid(owned_sid))
+    acl.AddAccessAllowedAceEx(2, 0, 0x123, unrelated)
+    expected = acl.GetAce(1)
+    assert namespace.remove_owned_ace(acl, owned_sid, 0x20003)
+    assert acl.GetAceCount() == 1
+    assert acl.GetAce(0) == expected
+    assert not namespace.remove_owned_ace(acl, owned_sid, 0x20003)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows ACL representation")
+@pytest.mark.parametrize("mask,flags,count", [(0x20001, 0, 1), (0x20003, 3, 1), (0x20003, 0, 2)])
+def test_namespace_cleanup_refuses_modified_or_ambiguous_managed_ace(mask, flags, count):
+    import win32security as security
+
+    owned_sid = "S-1-5-21-100-200-300-400"
+    acl = security.ACL()
+    for _ in range(count):
+        acl.AddAccessAllowedAceEx(2, flags, mask, security.ConvertStringSidToSid(owned_sid))
+    with pytest.raises(RuntimeError, match="manual inspection"):
+        namespace.remove_owned_ace(acl, owned_sid, 0x20003)
+    assert acl.GetAceCount() == count

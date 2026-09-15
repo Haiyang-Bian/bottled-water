@@ -69,6 +69,9 @@ def evaluate(results, *, full=False):
         good("git_read_A") and by_name["git_read_A"]["stdout"].strip() == "A-fixture"
     )
     checks["git_write_B"] = good("git_write_B")
+    checks["git_diff_B"] = good("git_diff_B") and all(
+        text in by_name["git_diff_B"]["stdout"] for text in ("-B-fixture", "+powershell-fixture")
+    )
     for name in ("git_write_A", "git_read_C"):
         result = by_name.get(name, {})
         checks[name + "_denied"] = (

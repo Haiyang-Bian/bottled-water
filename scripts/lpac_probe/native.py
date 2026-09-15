@@ -204,7 +204,9 @@ def token_sid(token):
 
 def system_capability_sids(name):
     """Derive only explicitly investigated runtime capabilities, never network access."""
-    if name not in ("registryRead", "lpacInstrumentation"):
+    if name not in ("registryRead", "lpacInstrumentation") and not re.fullmatch(
+        r"AgentHub\.Probe\.Namespace\.[0-9a-f]{32}", name
+    ):
         raise ValueError("Capability is outside the P1 experiment allowlist")
     groups, capabilities = ctypes.POINTER(w.LPVOID)(), ctypes.POINTER(w.LPVOID)()
     group_count, capability_count = w.DWORD(), w.DWORD()
@@ -314,7 +316,15 @@ class LpacProfile:
             raise OSError(f"DeleteAppContainerProfile HRESULT 0x{result & 0xFFFFFFFF:08x}")
 
     def run(
-        self, argv, cwd, *, environment, timeout=15, registry_read=False, instrumentation=False
+        self,
+        argv,
+        cwd,
+        *,
+        environment,
+        timeout=15,
+        registry_read=False,
+        instrumentation=False,
+        namespace_experiment=None,
     ):
         """Run with an LPAC token, explicit stdio handles and a kill-on-close Job."""
         import pywintypes
@@ -373,6 +383,12 @@ class LpacProfile:
             capability_names = system_capability_sids("registryRead") if registry_read else []
             if instrumentation:
                 capability_names.extend(system_capability_sids("lpacInstrumentation"))
+            if namespace_experiment is not None:
+                from .namespace import capability_name
+
+                capability_names.extend(
+                    system_capability_sids(capability_name(namespace_experiment))
+                )
             capability_array = (SID_AND_ATTRIBUTES * len(capability_names))()
             for index, name in enumerate(capability_names):
                 pointer = w.LPVOID()
@@ -490,6 +506,7 @@ class LpacProfile:
                 raise RuntimeError("AppContainer SID differs from the prepared profile")
             token["registry_read_requested"] = registry_read
             token["instrumentation_requested"] = instrumentation
+            token["namespace_experiment"] = namespace_experiment
             win32process.ResumeThread(thread)
             for handle in (stdin, out_write, err_write):
                 handle.Close()
