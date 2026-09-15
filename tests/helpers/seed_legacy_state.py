@@ -1,4 +1,4 @@
-"""Run with the independently installed 0.1.0 Python to create authentic v1 state."""
+"""Run with an independently installed old wheel to create authentic old state."""
 
 import asyncio
 import json
@@ -44,6 +44,13 @@ async def main():
                 ),
             ),
         )
+        # These are persisted legacy facts, not an executed provider acceptance.
+        store.db.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?)", (
+            "legacy-run", session["id"], "completed", "2026-01-01T00:00:00+00:00",
+            json.dumps({"input": "Legacy request"}),
+            json.dumps({"output": "Legacy answer", "reason_code": "completed"}), 0,
+        ))
+        store.db.commit()
         print(
             json.dumps(
                 {

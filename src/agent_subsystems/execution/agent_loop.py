@@ -478,6 +478,7 @@ class AgentLoop:
                         "call_id": tool_call.call_id,
                         "tool": tool_call.tool_name,
                         "agent_id": self.agent.id,
+                        "execution_location": (context_metadata or {}).get("execution_location"),
                     },
                 )
                 await self._run_checkpoint(

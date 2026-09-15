@@ -4,7 +4,7 @@ This directory contains the current documentation for AgentHub. Current-state do
 
 The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
-The next direction is a [local agent environment with persistent memory](./architecture/local-agent-environment.md): task continuity and foundational memory across directories, with working locations and resource permissions modeled separately. Its [L1–L4 development stages](./architecture/local-agent-roadmap.md) are planned, not implemented.
+The next direction is a [local agent environment with persistent memory](./architecture/local-agent-environment.md): task continuity and foundational memory across directories, with working locations and resource permissions modeled separately. L1 global task recovery and working locations are implemented in 0.2.0; [acceptance evidence](./acceptance/local-environment-0.2.0.md) records the validated scope. L2–L4 remain planned.
 
 ## Start Here
 

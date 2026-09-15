@@ -664,7 +664,9 @@ class RunKernel:
                     "system_version": system_version(),
                     **{
                         key: self.request.metadata.get(key)
-                        for key in ("model", "provider", "profile", "effective_limits")
+                        for key in ("model", "provider", "profile", "effective_limits",
+                                    "environment_id", "agent_id", "execution_location",
+                                    "effective_roots", "inactive_roots")
                     },
                 },
             )

@@ -33,7 +33,7 @@ agenthub --continue
 
 首次启动询问信任，接受后以当前 Windows 用户权限自动执行工具。配置与记录默认保存到
 `%USERPROFILE%\.agenthub`。支持 PowerShell、Git、文件读写、显式跨目录和 JSONL；
-详见 [CLI 使用说明](./docs/cli.md)及[验收记录](./docs/architecture/cli-mvp.md)。
+0.2.0 可从任意目录用 `-r` 找回任务，并用 `/cd` 在已授权范围内修改保存位置。详见 [CLI 使用说明](./docs/cli.md)及[0.2.0 验收](./docs/acceptance/local-environment-0.2.0.md)。
 
 ### Windows 桌面端
 

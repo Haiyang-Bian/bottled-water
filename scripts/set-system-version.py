@@ -9,8 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
     args = parser.parse_args()
-    if not re.fullmatch(r"0\.1\.\d+", args.version):
-        parser.error("Expected a 0.1.x version")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
+        parser.error("Expected a major.minor.patch version")
     root = Path(__file__).resolve().parents[1]
     for relative in ("pyproject.toml", "backend/pyproject.toml"):
         path = root / relative
@@ -23,7 +23,7 @@ def main():
         path = root / relative
         source = path.read_text(encoding="utf-8")
         source = re.sub(r'version="agenthub [\d.]+"', f'version="agenthub {args.version}"', source)
-        source = re.sub(r'version="0\.1\.\d+"', f'version="{args.version}"', source)
+        source = re.sub(r'version="\d+\.\d+\.\d+"', f'version="{args.version}"', source)
         path.write_text(source, encoding="utf-8")
 
 

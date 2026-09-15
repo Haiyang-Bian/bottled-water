@@ -12,13 +12,13 @@ from agent_contracts.context import ContextBudget
 from agent_subsystems.context.continuation import JournalContinuationReader
 from agent_contracts.version import system_version
 from .diagnostics import effective_limits
-from agent_contracts.execution import ResourceGrant, WorkspaceSpec
+from agent_contracts.execution import ExecutionLocation, ResourceGrant, WorkspaceSpec
 from agent_contracts.errors import ConfigurationError
 from agent_runtime import AgentConfig, RunRequest, RuntimeEngine
 from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 from agent_subsystems.context.local import LocalContextProvider
-from agent_subsystems.workspaces.paths import canonical_directory
+from agent_subsystems.workspaces.paths import canonical_directory, effective_roots, resolve_resource
 from agent_adapters.local.processes import LocalProcessDriver
 from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
 
@@ -83,9 +83,10 @@ async def run_turn(
     no_color=False,
     verbose=False,
 ):
-    workspace = WorkspaceSpec(
-        canonical_directory(session["root"]), tuple(canonical_directory(p) for p in session["dirs"])
-    )
+    roots, inactive = effective_roots(session["granted_roots"], store.is_trusted)
+    workspace = WorkspaceSpec(roots)
+    location = ExecutionLocation(canonical_directory(session["cwd"]), session["workspace_version"])
+    resolve_resource(workspace, location, ".", directory=True)
     execution_limits, limits = effective_limits(config, profile)
     driver = LocalProcessDriver(redactor)
     renderer = renderer_for(redactor, json_mode=json_mode, interactive=interactive,
@@ -94,9 +95,9 @@ async def run_turn(
     executor = AgentLoopExecutor(
         model_provider=provider,
         tool_executor=LocalToolExecutor(
-            grant, TrustAuthorization(store), driver, redactor, shell=config.get("powershell")
+            grant, location, TrustAuthorization(store), driver, redactor, shell=config.get("powershell")
         ),
-        context_provider=LocalContextProvider(workspace, profile.max_history_chars),
+        context_provider=LocalContextProvider(workspace, location, profile.max_history_chars),
         use_streaming=True,
         run_journal=store,
         context_budget=ContextBudget(
@@ -117,10 +118,16 @@ async def run_turn(
             RunRequest(
                 context_scope_id=session["id"],
                 input=prompt,
-                agents=(AgentConfig("local", "AgentHub", "You are a local coding assistant."),),
+                agents=(AgentConfig(store.environment.default_agent_id, "AgentHub",
+                                    "You are a local coding assistant."),),
                 policy=SingleAgentPolicy(),
                 metadata={
                     "session_id": session["id"],
+                    "environment_id": store.environment.environment_id,
+                    "agent_id": store.environment.default_agent_id,
+                    "execution_location": {"cwd": str(location.cwd), "version": location.version},
+                    "effective_roots": [str(p) for p in roots],
+                    "inactive_roots": inactive,
                     "system_version": system_version(),
                     "model": profile.model,
                     "provider": profile.provider,

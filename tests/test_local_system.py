@@ -15,7 +15,7 @@ from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
 from agent_adapters.storage.session_lock import SessionBusyError, SessionLock
 from agent_adapters.storage.sqlite import SQLiteStore
 from agent_contracts.errors import OperationError
-from agent_contracts.execution import ExecutionContext, ResourceGrant, WorkspaceSpec
+from agent_contracts.execution import ExecutionContext, ExecutionLocation, ResourceGrant, WorkspaceSpec
 from agent_runtime import AgentConfig, RuntimeEngine, RunRequest, RunState
 from agent_runtime.core.ports import ContextConflictError
 from agent_runtime.core.run_types import ContextDelta, EventEnvelope
@@ -47,7 +47,7 @@ async def test_file_edits_preserve_encoding_newlines_and_detect_conflicts(tmp_pa
             codecs.BOM_UTF16_LE if encoding.endswith("le") else codecs.BOM_UTF16_BE
         ) + original
     file.write_bytes(original)
-    files = LocalFiles(WorkspaceSpec(tmp_path))
+    files = LocalFiles(WorkspaceSpec((tmp_path,)), ExecutionLocation(tmp_path))
     read = await files.read(str(file))
     await files.edit(str(file), "old", "new", read["sha256"])
     assert file.read_bytes() == original.replace(
@@ -150,15 +150,15 @@ async def test_shared_loop_real_tools_and_restored_context(tmp_path, store):
     root = canonical_directory(tmp_path)
     store.trust(root)
     session = store.new_session(root)
-    workspace = WorkspaceSpec(root)
+    workspace = WorkspaceSpec((root,))
     grant = ResourceGrant(workspace, frozenset({"files", "process"}))
     model = ScriptedModel()
     driver = LocalProcessDriver(Redactor())
     engine = RuntimeEngine(
         agent_executor=AgentLoopExecutor(
             model_provider=model,
-            tool_executor=LocalToolExecutor(grant, TrustAuthorization(store), driver, Redactor()),
-            context_provider=LocalContextProvider(workspace),
+            tool_executor=LocalToolExecutor(grant, ExecutionLocation(root), TrustAuthorization(store), driver, Redactor()),
+            context_provider=LocalContextProvider(workspace, ExecutionLocation(root)),
         ),
         context_store=store,
         run_journal=store,
@@ -198,10 +198,11 @@ async def test_windows_process_exit_output_timeout_and_cleanup(tmp_path):
         "r",
         "s",
         "a",
-        ResourceGrant(WorkspaceSpec(tmp_path), frozenset()),
+        ResourceGrant(WorkspaceSpec((tmp_path,)), frozenset()),
         time.monotonic() + 30,
         CancellationScope(),
         RunLease("r"),
+        ExecutionLocation(tmp_path),
     )
     driver = LocalProcessDriver(Redactor(["very-secret-value"]))
     try:
@@ -233,7 +234,8 @@ async def test_powershell_git_authorization_and_nonzero_exit(tmp_path, store):
     redactor = Redactor()
     driver = LocalProcessDriver(redactor)
     executor = LocalToolExecutor(
-        ResourceGrant(WorkspaceSpec(root), frozenset({"files", "process"})),
+        ResourceGrant(WorkspaceSpec((root,)), frozenset({"files", "process"})),
+        ExecutionLocation(root),
         TrustAuthorization(store),
         driver,
         redactor,

@@ -20,6 +20,8 @@ def parser():
     session.add_argument("-c", "--continue", dest="continue_session", action="store_true")
     session.add_argument("-r", "--resume", nargs="?", const="", default=None)
     root.add_argument("--add-dir", action="append", default=[])
+    root.add_argument("--here", action="store_true", help="Filter tasks by saved working location")
+    root.add_argument("--cwd", help="Explicit working location within the task's granted roots")
     root.add_argument("--profile")
     root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
@@ -27,9 +29,15 @@ def parser():
     root.add_argument("--no-color", action="store_true")
     root.add_argument("--verbose", action="store_true", help="Detailed tool and phase output")
     commands = root.add_subparsers(dest="command")
-    commands.add_parser("resume", help="Choose a saved conversation").add_argument(
-        "resume_id", nargs="?", default=""
-    )
+    resume = commands.add_parser("resume", help="Choose a saved task in this local environment")
+    resume.add_argument("resume_id", nargs="?", default="")
+    resume.add_argument("--here", action="store_true", default=argparse.SUPPRESS)
+    resume.add_argument("--cwd", default=argparse.SUPPRESS)
+    history = commands.add_parser("history", help="Read saved task history without executing")
+    history.add_argument("history_id", nargs="?", default="")
+    history.add_argument("--here", action="store_true", default=argparse.SUPPRESS)
+    state = commands.add_parser("state").add_subparsers(dest="operation", required=True)
+    state.add_parser("upgrade", help="Back up and upgrade local state")
     init = commands.add_parser("init", help="Configure a model and credential reference")
     init.add_argument("--provider", choices=["openai_compatible", "deepseek"])
     init.add_argument("--model")
@@ -43,7 +51,9 @@ def parser():
     for operation in ("add", "remove"):
         trust.add_parser(operation).add_argument("path")
     sessions = commands.add_parser("sessions")
-    sessions.add_argument("--all", action="store_true")
+    scope = sessions.add_mutually_exclusive_group()
+    scope.add_argument("--all", action="store_true")
+    scope.add_argument("--here", action="store_true", default=argparse.SUPPRESS)
     commands.add_parser("replay").add_argument("run_id")
     model = commands.add_parser("model").add_subparsers(dest="operation", required=True)
     model.add_parser("check", help="Explicitly send a short model request").add_argument(
@@ -89,7 +99,20 @@ def initialize(args, home):
 
 async def dispatch(args):
     home = home_directory()
+    identifier = args.resume or getattr(args, "resume_id", "") or getattr(args, "history_id", "")
+    if args.here and identifier:
+        raise ConfigurationError("--here 不能与显式任务 ID 同用。")
+    if args.here and not (args.continue_session or args.resume is not None
+                         or args.command in {"resume", "sessions", "history"}):
+        raise ConfigurationError("--here 用于 -c、-r、resume、sessions 或 history。")
+    if args.here and getattr(args, "all", False):
+        raise ConfigurationError("--here 不能与 --all 同用。")
+    if (args.cwd or args.add_dir) and args.command not in {None, "resume"}:
+        raise ConfigurationError("--cwd 和 --add-dir 只用于新建或恢复任务。")
     if args.command == "init":
+        from agent_adapters.storage.sqlite import SQLiteStore
+        store = SQLiteStore(home / "state.sqlite3")
+        store.close()
         return initialize(args, home)
     if args.command == "config":
         from agent_runtime.runtime.run_journal import _sanitize_value
@@ -106,17 +129,32 @@ async def dispatch(args):
     if args.command == "sessions":
         from .app import list_sessions
         return list_sessions(args, home)
+    if args.command == "history":
+        from .app import history_command
+        return await history_command(args, home)
     from agent_adapters.storage.sqlite import SQLiteStore
     from agent_subsystems.workspaces.paths import canonical_directory
 
-    store = SQLiteStore(home / "state.sqlite3", readonly=args.command == "replay")
+    from .privacy import display_redactor
+    readonly = args.command in {"replay", "doctor", "model"}
+    path = home / "state.sqlite3"
+    store = SQLiteStore(path, readonly=readonly) if path.exists() or not readonly else None
+    if store:
+        store.redactor = display_redactor(home)
     try:
+        if args.command == "state":
+            print(json.dumps({"database_version": store.schema_version,
+                              "environment_id": store.environment.environment_id,
+                              "backup": str(store.backup_path) if store.backup_path else None}))
+            return 0
         if args.command == "trust":
             path = canonical_directory(args.path)
             store.trust(path, args.operation == "add")
             print(f"Trust {args.operation}: {path}", file=sys.stderr)
             return 0
         if args.command == "replay":
+            if store is None or store.queries().run_scope(args.run_id) is None:
+                raise ConfigurationError("Run 不存在或不属于当前本机环境。")
             cursor = 0
             while True:
                 page = await store.read_events(args.run_id, after_sequence=cursor)
@@ -184,7 +222,8 @@ async def dispatch(args):
             finally:
                 await provider.aclose()
     finally:
-        store.close()
+        if store:
+            store.close()
 
 
 def main():

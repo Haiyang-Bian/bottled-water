@@ -6,11 +6,9 @@ import os
 import subprocess
 import sys
 
-from agent_adapters.storage.sqlite import SQLiteStore
 from agent_cli.config import save_config
 from agent_contracts.version import system_version
-from test_harness_continuation import engine_for, start
-from test_harness_execution import ScriptedModel
+from test_local_environment import legacy
 
 
 def cli(home, *args):
@@ -53,7 +51,8 @@ def test_version_and_doctor_identify_install_and_hide_secrets(tmp_path):
     check = cli(tmp_path, "doctor")
     assert check.returncode == 0, check.stderr
     data = json.loads(check.stdout)
-    assert data["version"] == system_version() and data["database_version"] == 2
+    assert data["version"] == system_version() and data["database_version"] is None
+    assert not (tmp_path / "state.sqlite3").exists()
     assert data["python_executable"] and not data["filesystem_isolation"]
     assert data["effective_limits"]["execution"]["max_model_turns"] is None
     assert "diagnostic-secret-123" not in check.stdout + check.stderr
@@ -68,16 +67,19 @@ def test_doctor_reports_partial_capabilities_without_configuration(tmp_path):
 
 
 async def test_replay_v1_does_not_migrate_or_rewrite_old_events(tmp_path):
+    import sqlite3
+    from dataclasses import asdict
+    from agent_runtime.core.run_types import EventEnvelope
     path = tmp_path / "state.sqlite3"
-    store = SQLiteStore(path)
-    engine = engine_for(ScriptedModel(), store)
-    result = await (await start(engine)).result()
-    await engine.shutdown()
-    store.db.execute("DROP TABLE continuation_metadata")
-    store.db.execute("PRAGMA user_version=1")
-    store.close()
+    legacy(path, 1)
+    event = EventEnvelope("r", "old", 1, "system.run_completed", {})
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO events VALUES(?,?,?,?)", (
+            event.event_id, "r", 1, json.dumps(asdict(event), default=str),
+        ))
+        db.execute("UPDATE runs SET sequence=1,state='completed',result='{}' WHERE id='r'")
     before = hashlib.sha256(path.read_bytes()).hexdigest()
-    replay = cli(tmp_path, "replay", result.run_id)
+    replay = cli(tmp_path, "replay", "r")
     assert replay.returncode == 0, replay.stderr
     events = [json.loads(line) for line in replay.stdout.splitlines()]
     assert events[-1]["type"] == "system.run_completed"

@@ -47,3 +47,7 @@ class SessionLock:
         if self.file is not None:
             self.file.close()
             self.file = None
+
+    def owns(self, directory, session_id):
+        expected = directory / (hashlib.sha256(session_id.encode()).hexdigest() + ".lock")
+        return self.file is not None and not self.file.closed and self.path == expected

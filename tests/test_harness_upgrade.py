@@ -1,9 +1,10 @@
-"""Upgrade real 0.1.0 wheel state, including user-scoped DPAPI credentials."""
+"""Upgrade old wheel state, including user-scoped DPAPI credentials."""
 
 import hashlib
 import json
 import os
 import subprocess
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -37,14 +38,14 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     )
     assert seed.returncode == 0, seed.stderr
     identity = json.loads(seed.stdout)
-    assert identity["schema"] == 1
+    assert identity["schema"] == int(os.environ["AGENTHUB_LEGACY_SCHEMA"])
     config_before = hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     credentials_before = {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in (home / "credentials").iterdir()
         if p.is_file()
     }
-    upgraded = subprocess.run(
+    doctor = subprocess.run(
         [new_python, "-B", "-m", "agent_cli.main", "doctor"],
         env=env,
         cwd=project,
@@ -53,8 +54,16 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
         encoding="utf-8",
         timeout=45,
     )
+    assert doctor.returncode == 0, doctor.stderr
+    assert json.loads(doctor.stdout)["database_version"] == identity["schema"]
+    assert json.loads(doctor.stdout)["upgrade_required"]
+    assert not list(home.glob("*.bak"))
+    upgraded = subprocess.run(
+        [new_python, "-B", "-m", "agent_cli.main", "state", "upgrade"],
+        env=env, cwd=project, capture_output=True, text=True, encoding="utf-8", timeout=45,
+    )
     assert upgraded.returncode == 0, upgraded.stderr
-    assert json.loads(upgraded.stdout)["database_version"] == 2
+    assert json.loads(upgraded.stdout)["database_version"] == 3
     assert "upgrade-test-private-key" not in upgraded.stdout + upgraded.stderr
     assert config_before == hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     assert credentials_before == {
@@ -65,6 +74,9 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     store = SQLiteStore(home / "state.sqlite3")
     try:
         assert store.session(identity["session_id"]) and store.is_trusted(project)
+        assert store.environment.default_agent_id == "local"
+        row = store.queries().catalog()[0]
+        assert row["id"] == identity["session_id"] and row["cwd"] == str(project)
         import asyncio
 
         snapshot = asyncio.run(store.load(identity["session_id"]))
@@ -72,7 +84,9 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
     finally:
         store.close()
     assert list(home.glob("*.bak"))
-    # A 0.1.0 binary refuses v2 instead of silently overwriting it.
+    with sqlite3.connect(next(home.glob("*.bak"))) as backup:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == identity["schema"]
+    # Old binaries refuse v3 instead of silently overwriting it.
     old = subprocess.run(
         [old_python, "-B", "-m", "agent_cli.main", "sessions"],
         env=env,

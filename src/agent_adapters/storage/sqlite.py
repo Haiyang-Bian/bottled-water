@@ -12,7 +12,8 @@ from uuid import uuid4
 from agent_runtime.core.ports import ContextConflictError
 from agent_contracts.persistence import ContinuationRun
 from .session_lock import SessionLock
-from .migration import migrate_v1
+from .migration import SCHEMA_VERSION, migrate, read_environment
+from .session_queries import SessionQueries
 from agent_runtime.core.run_types import (
     AgentMemory,
     ContextSnapshot,
@@ -31,19 +32,26 @@ from agent_subsystems.observability.redaction import Redactor
 
 
 class SQLiteStore:
-    def __init__(self, path, redactor=None, *, readonly=False):
+    def __init__(self, path, redactor=None, *, readonly=False, identity=None):
         self.redactor = redactor or Redactor()
         self.path = path
         self.backup_path = None
+        self.environment = None
+        self.identity = identity
         if readonly:
             self.db = sqlite3.connect(
                 path.resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None
             )
             self.db.row_factory = sqlite3.Row
             self.schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if self.schema_version not in (1, 2):
+            if self.schema_version not in (1, 2, SCHEMA_VERSION):
                 self.db.close()
                 raise ValueError("Unsupported state database version")
+            try:
+                self._check_environment()
+            except BaseException:
+                self.db.close()
+                raise
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         with SessionLock(path.parent / "locks", "__migration__", guard=False):
@@ -56,32 +64,31 @@ class SQLiteStore:
 
     def _initialize(self, path):
         self.db.row_factory = sqlite3.Row
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, 1, 2, SCHEMA_VERSION):
+            raise ValueError(f"Unsupported state database version: {version}")
+        self.schema_version = version
+        self._check_environment()  # Refuse a foreign binding before any persistent writes.
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
-        version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
-            self.db.close()
-            raise ValueError(f"Unsupported state database version: {version}")
-        if version == 1:
-            self.backup_path = migrate_v1(self.db, path)
-        self.db.executescript("""
-        CREATE TABLE IF NOT EXISTS trusted(path TEXT PRIMARY KEY, created TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS sessions(
-          id TEXT PRIMARY KEY, root TEXT NOT NULL, dirs TEXT NOT NULL,
-          created TEXT NOT NULL, updated TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS sessions_root ON sessions(root, updated);
-        CREATE TABLE IF NOT EXISTS contexts(scope TEXT PRIMARY KEY, version INTEGER NOT NULL,
-          body TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, scope TEXT NOT NULL,
-          state TEXT NOT NULL, created TEXT NOT NULL, request TEXT NOT NULL,
-          result TEXT, sequence INTEGER NOT NULL DEFAULT 0);
-        CREATE INDEX IF NOT EXISTS runs_scope ON runs(scope);
-        CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, run TEXT NOT NULL REFERENCES runs(id),
-          sequence INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE(run, sequence));
-        CREATE TABLE IF NOT EXISTS continuation_metadata(scope TEXT PRIMARY KEY, body TEXT NOT NULL);
-        PRAGMA user_version=2;
-        """)
-        self.schema_version = 2
+        if version < SCHEMA_VERSION:
+            self.backup_path = migrate(self.db, path, version, self._identity())
+            self.schema_version = SCHEMA_VERSION
+            self._check_environment()
+
+    def _identity(self):
+        if self.identity is None:
+            from agent_adapters.local.identity import current_identity
+            self.identity = current_identity()
+        return self.identity
+
+    def _check_environment(self):
+        if self.schema_version >= 3:
+            self.environment = read_environment(self.db, self._identity())
+
+    def queries(self):
+        self._check_environment()
+        return SessionQueries(self.db, self.environment)
 
     @contextmanager
     def transaction(self):
@@ -110,20 +117,23 @@ class SQLiteStore:
         else:
             self.db.execute("DELETE FROM trusted WHERE path=?", (str(path),))
 
-    def new_session(self, root):
+    def new_session(self, root, *, cwd=None, granted_roots=None):
         session = {
             "id": str(uuid4()),
-            "root": str(root),
-            "dirs": [],
+            "environment_id": self.environment.environment_id,
+            "origin_root": str(root),
+            "cwd": str(cwd or root),
+            "granted_roots": list(dict.fromkeys(map(str, granted_roots or [root]))),
+            "workspace_version": 0,
             "created": utc_now().isoformat(),
             "updated": utc_now().isoformat(),
         }
         self.db.execute(
-            "INSERT INTO sessions VALUES(?,?,?,?,?)",
+            "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)",
             (
                 session["id"],
-                session["root"],
-                "[]",
+                session["environment_id"], session["origin_root"], session["cwd"],
+                json.dumps(session["granted_roots"]), 0,
                 session["created"],
                 session["updated"],
             ),
@@ -131,26 +141,45 @@ class SQLiteStore:
         return session
 
     def sessions(self, root=None):
-        query = "SELECT * FROM sessions"
-        args = ()
+        query = "SELECT id FROM sessions WHERE environment_id=?"
+        args = [self.environment.environment_id]
         if root is not None:
-            query += " WHERE root=?"
-            args = (str(root),)
+            query += " AND cwd=?"
+            args.append(str(root))
         rows = self.db.execute(query + " ORDER BY updated DESC", args).fetchall()
-        return [{**dict(row), "dirs": json.loads(row["dirs"])} for row in rows]
+        return [self.session(row["id"]) for row in rows]
 
     def session(self, identifier):
-        return next((s for s in self.sessions() if s["id"] == identifier), None)
+        return self.queries().session(identifier)
 
-    def set_directories(self, session_id, directories):
-        self.db.execute(
-            "UPDATE sessions SET dirs=?,updated=? WHERE id=?",
-            (
-                json.dumps([str(p) for p in directories]),
-                utc_now().isoformat(),
-                session_id,
-            ),
-        )
+    def update_workspace(self, session_id, *, cwd, granted_roots, expected_version, lock):
+        if not lock.owns(self.path.parent / "locks", session_id):
+            raise ValueError("Session lock is required for a workspace update")
+        with self.transaction():
+            current = self.session(session_id)
+            if current is None or current["workspace_version"] != expected_version:
+                raise ContextConflictError("Session workspace changed; reload it before retrying")
+            if self.db.execute(
+                "SELECT 1 FROM runs WHERE scope=? AND result IS NULL", (session_id,)
+            ).fetchone():
+                raise ValueError("Cannot change workspace while a Run is active")
+            roots = list(dict.fromkeys(map(str, granted_roots)))
+            if current["cwd"] == str(cwd) and current["granted_roots"] == roots:
+                return current
+            version = expected_version + 1
+            self.db.execute(
+                "UPDATE sessions SET cwd=?,granted_roots=?,workspace_version=? "
+                "WHERE id=? AND workspace_version=?", (str(cwd), json.dumps(roots), version,
+                                                       session_id, expected_version),
+            )
+            self.db.execute("INSERT INTO session_events VALUES(?,?,?)", (
+                session_id, version, self.redactor.dumps({
+                    "type": "session.workspace_changed", "actor": "user",
+                    "created": utc_now().isoformat(), "previous_cwd": current["cwd"],
+                    "cwd": str(cwd), "granted_roots": roots, "version": version,
+                }),
+            ))
+        return self.session(session_id)
 
     async def load(self, scope_id):
         row = self.db.execute("SELECT body FROM contexts WHERE scope=?", (scope_id,)).fetchone()
