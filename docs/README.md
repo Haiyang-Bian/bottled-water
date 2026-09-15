@@ -4,11 +4,15 @@ This directory contains the current documentation for AgentHub. Current-state do
 
 The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
+The next direction is a [local agent environment with persistent memory](./architecture/local-agent-environment.md): task continuity and foundational memory across directories, with working locations and resource permissions modeled separately. Its [L1–L4 development stages](./architecture/local-agent-roadmap.md) are planned, not implemented.
+
 ## Start Here
 
 - [Local CLI](./cli.md): installation, configuration, trust, sessions, tools and JSONL.
 - [CLI acceptance](./architecture/cli-mvp.md): implementation milestones, measured tests and pending live-service checks.
 - [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.
+- [Local agent environment design](./architecture/local-agent-environment.md): persistent identity, cross-task memory, resource discovery, working locations, sharing and authority boundaries.
+- [Local agent development stages](./architecture/local-agent-roadmap.md): incremental delivery, migration, acceptance gates, failure cases and evidence requirements.
 - [Subsystem and module catalog](./architecture/subsystems.md): Kernel, twelve subsystems, drivers, product modules, and their current source locations.
 - [Architecture differences and migration](./architecture/migration.md): original coupling, current migration status, old-to-new mapping and acceptance criteria.
 - [Development guide](./development-guide.md): local setup, Docker deployment, tests, and common workflows.
@@ -26,14 +30,15 @@ The [system architecture](./architecture/README.md) defines the split into a Run
 
 ## Source Of Truth
 
-- Backend source of truth: `backend/src`.
+- Shared system and CLI source of truth: root `src`; shared tests: root `tests`.
+- Web backend source of truth: `backend/src`.
 - Frontend source of truth: `frontend/src`.
 - Database schema source of truth: `backend/src/db/models` plus `backend/alembic/versions`.
 - Deployment source of truth: `docker/docker-compose.yml`, `docker/Dockerfile.backend`, `docker/Dockerfile.frontend`, and `docker/nginx.conf`.
 
 ## Current Architecture At A Glance
 
-This is the current implementation. The target makes Web one host of shared subsystems, alongside the planned local CLI and eval harness; desktop currently packages the full backend.
+The diagram below describes the Web host. The implemented local CLI uses the shared root `src` directly; a standalone eval host remains planned. Desktop currently packages the full backend. Cross-task foundational memory and global task recovery are the next design, not current CLI behavior.
 
 ```text
 React Workbench

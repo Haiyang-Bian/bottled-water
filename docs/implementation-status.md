@@ -2,6 +2,10 @@
 
 This file is the compact status reference for current docs. It avoids historical closure notes and only tracks present behavior and known boundaries.
 
+## Planned: Local Agent Environment With Persistent Memory
+
+Recorded on 2026-09-15 against shared package 0.1.7 (`d43f07b`): [design](./architecture/local-agent-environment.md) and [development stages](./architecture/local-agent-roadmap.md). L1 global task recovery and working-location separation, L2 foundational memory, L3 resource/software continuity, and L4 shared memory with fine-grained execution are **not implemented or accepted**. Current CLI recovery is still directory-bound, AgentMemory remains scope-bound, and native commands still run as the current user without OS filesystem/network isolation. This documentation work changes no runtime, schema, installed package or authorization.
+
 ## Architecture Split Status
 
 The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. The local CLI MVP now uses the root `agenthub-system` distribution and shared Kernel/AgentLoop. It includes persistent sessions, trust, DPAPI/env credentials, file operations, PowerShell/Git, JSONL, replay and managed Windows processes. See [CLI acceptance](./architecture/cli-mvp.md) for measured results and remaining live-service validation. A standalone eval host and non-MVP subsystem extraction remain planned; desktop still packages the full Web host.

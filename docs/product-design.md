@@ -4,6 +4,8 @@
 > 面向场景：GitHub 发布、课程答辩、产品演示、后续迭代评审  
 > 产品定位：IM 原生交互 + 多 Agent 自动组织 + Tool / Skill / MCP 能力执行 + 文件产物交付
 
+> 2026-09-15 方向补充：本文保留 Web 工作台的产品设计；系统下一方向为[具有本机持续记忆的智能体环境](./architecture/local-agent-environment.md)。身份和基础记忆跨目录存在，工作目录用于资料定位和软件执行，资源权限独立管理。单助手闭环优先，按[四个开发阶段](./architecture/local-agent-roadmap.md)推进；新增能力尚未实现。
+
 ---
 
 ## 一、产品概述

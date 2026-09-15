@@ -1,6 +1,8 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前发行版本为 `agenthub-system 0.1.5`，主要验证平台为 Windows、Python 3.11。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码发行版本为 `agenthub-system 0.1.7`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
+
+> 下一方向是[本机持续记忆的智能体环境](./architecture/local-agent-environment.md)，包括跨目录恢复、可变工作位置和基础记忆；其[开发阶段](./architecture/local-agent-roadmap.md)尚未实施。本文下面的目录隔离和命令说明仍描述当前行为，不能将设计中的 `/cd`、`/memory` 或全局 `-c` 当作已有功能。
 
 ## 安装与首次使用
 
