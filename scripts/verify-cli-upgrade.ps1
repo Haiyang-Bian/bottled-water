@@ -11,7 +11,7 @@ try {
     $env:AGENTHUB_TEST_PYTHON = Join-Path $repo "var\cli-install-validation\tools\agenthub-system\Scripts\python.exe"
     $installedVersion = (& $env:AGENTHUB_TEST_PYTHON -B -m agent_cli.main --version) -replace '^agenthub ', ''
     if ($installedVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid installed version" }
-    foreach ($legacyVersion in @("0.1.0", "0.1.7", "0.2.0")) {
+    foreach ($legacyVersion in @("0.1.0", "0.1.7", "0.2.0", "0.2.1")) {
         $env:UV_TOOL_DIR = Join-Path $repo "var\cli-upgrade-$legacyVersion\tools"
         $env:UV_TOOL_BIN_DIR = Join-Path $repo "var\cli-upgrade-$legacyVersion\bin"
         $oldWheel = Join-Path $repo "dist\agenthub_system-$legacyVersion-py3-none-any.whl"
@@ -22,6 +22,7 @@ try {
             "0.1.0" { "1" }
             "0.1.7" { "2" }
             "0.2.0" { "3" }
+            "0.2.1" { "4" }
         }
         $temporary = Join-Path $repo "var\upgrade-$legacyVersion-$([guid]::NewGuid().ToString('N'))"
         & .venv\Scripts\python.exe -B -m pytest -q tests/test_harness_upgrade.py `
