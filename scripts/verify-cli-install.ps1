@@ -22,6 +22,7 @@ try {
     & (Join-Path $env:UV_TOOL_BIN_DIR "agenthub.exe") --help
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI command failed." }
     & (Join-Path $repoRoot ".venv\Scripts\python.exe") -B -m pytest -q tests/test_cli_integration.py tests/test_harness_diagnostics.py `
+        --basetemp (Join-Path $validationRoot "tests-$([guid]::NewGuid().ToString('N'))") `
         --junitxml (Join-Path $validationRoot "installed-cli.xml")
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI acceptance failed." }
     Write-Host "Validated installed wheel: $wheelPath"

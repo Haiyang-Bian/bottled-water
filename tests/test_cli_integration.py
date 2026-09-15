@@ -326,7 +326,12 @@ def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture
     run, project, second, requests = cli_fixture
     run("trust", "add", str(project))
     run("trust", "add", str(second))
-    first = records(run("--json", "-p", "REPAIR"))[-1]
+    initial = records(run("--json", "-p", "REPAIR"))
+    first = initial[-1]
+    started = next(e["payload"] for e in initial if e["type"] == "system.run_started")
+    assert started["environment_id"] and started["agent_id"] == "local"
+    assert started["execution_location"] == {"cwd": str(canonical_directory(project)), "version": 0}
+    assert started["effective_roots"] == [str(canonical_directory(project))]
     task = first["context_scope_id"]
     run("-c", "--json", "-p", "REMEMBER", cwd=second)
     messages = requests[-1]["messages"]

@@ -98,7 +98,7 @@ def main():
                 terminal = Terminal([run.python, "-B", "-m", "agent_cli.main", "-r"],
                                     project, run.environment, output)
                 try:
-                    terminal.wait("恢复会话")
+                    terminal.wait("选择任务")
                     terminal.snapshot("01-selector")
                     mark = terminal.send("\r")
                     terminal.wait("agenthub>", after=mark)
@@ -120,7 +120,7 @@ def main():
                     terminal.proc.setwinsize(22, 60)
                     terminal.screen.resize(lines=22, columns=60)
                     mark = terminal.send("/resume\r")
-                    terminal.wait("恢复会话", after=mark)
+                    terminal.wait("选择任务", after=mark)
                     terminal.snapshot("05-narrow-selector")
                     terminal.send("\x1b")
                     before = len(requests)

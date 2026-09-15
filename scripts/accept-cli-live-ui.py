@@ -92,7 +92,7 @@ def main():
             terminal = module.Terminal([python, "-B", "-m", "agent_cli.main", "-r"],
                                        project, env, output)
             try:
-                terminal.wait("恢复会话")
+                terminal.wait("选择任务")
                 terminal.snapshot("01-live-selector")
                 mark = terminal.send("\r")
                 terminal.wait("agenthub>", after=mark)
