@@ -9,8 +9,9 @@ from uuid import uuid4
 from agent_contracts.errors import ConfigurationError
 from agent_contracts.identity import LocalEnvironment
 from .session_lock import SessionLock
+from .memory_schema import MEMORY_SCHEMA
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 BASE_SCHEMA = (
     "CREATE TABLE trusted(path TEXT PRIMARY KEY, created TEXT NOT NULL)",
@@ -64,33 +65,39 @@ def migrate(db, path, version, identity):
                     db.execute(statement)
             if version < 2:
                 db.execute("CREATE TABLE continuation_metadata(scope TEXT PRIMARY KEY, body TEXT)")
-            for statement in LOCAL_SCHEMA:
+            if version < 3:
+                migrate_local_environment(db, version, identity)
+            for statement in MEMORY_SCHEMA:
                 db.execute(statement)
-            environment_id = str(uuid4())
-            db.execute("INSERT INTO local_environment VALUES(1,?,?,?,?,?)", (
-                environment_id, identity.owner_key, identity.machine_key,
-                identity.binding_kind, "local",
-            ))
-            if version:
-                for row in db.execute("SELECT * FROM sessions").fetchall():
-                    dirs = json.loads(row["dirs"])
-                    if not isinstance(dirs, list) or not all(isinstance(p, str) for p in dirs):
-                        raise ValueError("Invalid legacy directory record")
-                    roots = list(dict.fromkeys([row["root"], *dirs]))
-                    db.execute("INSERT INTO sessions_v3 VALUES(?,?,?,?,?,?,?,?)", (
-                        row["id"], environment_id, row["root"], row["root"],
-                        json.dumps(roots), 0, row["created"], row["updated"],
-                    ))
-                db.execute("DROP TABLE sessions")
-            db.execute("ALTER TABLE sessions_v3 RENAME TO sessions")
-            db.execute("CREATE INDEX sessions_location ON sessions(environment_id,cwd)")
-            db.execute(
-                "CREATE TABLE session_events(session_id TEXT NOT NULL REFERENCES sessions(id), "
-                "version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session_id,version))"
-            )
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             db.commit()
         except BaseException:
             db.rollback()
             raise
         return backup_path
+
+
+def migrate_local_environment(db, version, identity):
+    for statement in LOCAL_SCHEMA:
+        db.execute(statement)
+    environment_id = str(uuid4())
+    db.execute("INSERT INTO local_environment VALUES(1,?,?,?,?,?)", (
+        environment_id, identity.owner_key, identity.machine_key, identity.binding_kind, "local",
+    ))
+    if version:
+        for row in db.execute("SELECT * FROM sessions").fetchall():
+            dirs = json.loads(row["dirs"])
+            if not isinstance(dirs, list) or not all(isinstance(p, str) for p in dirs):
+                raise ValueError("Invalid legacy directory record")
+            roots = list(dict.fromkeys([row["root"], *dirs]))
+            db.execute("INSERT INTO sessions_v3 VALUES(?,?,?,?,?,?,?,?)", (
+                row["id"], environment_id, row["root"], row["root"],
+                json.dumps(roots), 0, row["created"], row["updated"],
+            ))
+        db.execute("DROP TABLE sessions")
+    db.execute("ALTER TABLE sessions_v3 RENAME TO sessions")
+    db.execute("CREATE INDEX sessions_location ON sessions(environment_id,cwd)")
+    db.execute(
+        "CREATE TABLE session_events(session_id TEXT NOT NULL REFERENCES sessions(id), "
+        "version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session_id,version))"
+    )

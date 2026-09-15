@@ -33,9 +33,10 @@ def test_history_is_dropped_by_whole_turn_and_tool_pairs_remain_complete():
         ),
         tool_call_id="c",
     )
-    messages, info = ContextAssembler(ContextBudget(2200)).prepare(
+    prepared = ContextAssembler(ContextBudget(2200)).prepare(
         [*old, current, assistant, result], "system", [], current_request=current, run_id="run"
     )
+    messages, info = prepared.messages, prepared.diagnostics
     assert messages[0] is current
     assert [m.role for m in messages] == ["user", "assistant", "tool"]
     assert messages[1].tool_calls[0]["id"] == messages[2].tool_call_id == "c"
@@ -68,7 +69,9 @@ def test_token_window_reserves_output_and_remains_an_explicit_estimate():
     assembler = ContextAssembler(ContextBudget(64000, 100, 30), lambda text: len(text))
     with pytest.raises(ExecutionStopped, match="context_budget_exhausted"):
         assembler.prepare([current], "system", [], current_request=current, run_id="r")
-    _, info = ContextAssembler().prepare([current], "", [], current_request=current, run_id="r")
+    info = ContextAssembler().prepare(
+        [current], "", [], current_request=current, run_id="r"
+    ).diagnostics
     assert info["context_window_tokens"] is None and info["token_count_estimated"]
 
 
