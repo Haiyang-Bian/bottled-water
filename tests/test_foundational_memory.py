@@ -293,6 +293,75 @@ async def test_terminal_outbox_failure_rolls_back(memory, terminal):
     assert (await memory.store.load(access.scope_id)).version == 0
 
 
+@pytest.mark.parametrize("terminal", ["completed", "failed", "cancelled"])
+async def test_reference_outbox_and_context_rollback_then_retry(monkeypatch, terminal):
+    from agent_runtime.context.scope_store import InMemoryContextStore
+    from agent_runtime.core.run_types import (
+        ContextDelta,
+        RunResult,
+        RunSnapshot,
+        RunState,
+        RuntimeLimits,
+        Usage,
+        utc_now,
+    )
+    from agent_runtime.runtime.completion import InMemoryRunCompletion
+    from agent_runtime.runtime.run_journal import InMemoryRunJournal
+
+    contexts, journal = InMemoryContextStore(), InMemoryRunJournal()
+    request = RunRequest(
+        "scope",
+        "remember this",
+        (AgentConfig("local", "A", ""),),
+        SingleAgentPolicy(),
+        metadata={"memory_enabled": True},
+    )
+    now = utc_now()
+    await journal.create_run(
+        request,
+        RunSnapshot(
+            request.run_id,
+            "scope",
+            RunState.RUNNING,
+            None,
+            0,
+            0,
+            0,
+            Usage(),
+            0,
+            RuntimeLimits(),
+            now,
+            None,
+        ),
+    )
+    result = RunResult(request.run_id, "scope", RunState(terminal), "test", now, now, Usage())
+    event = EventEnvelope(request.run_id, "scope", 1, "system.run_" + terminal, {})
+    completion = InMemoryRunCompletion(contexts, journal)
+    append = journal._append_locked
+
+    def fail_after_append(item):
+        append(item)
+        raise RuntimeError("injected after terminal append")
+
+    async def commit():
+        if terminal == "completed":
+            return await completion.try_complete(ContextDelta(0, {"done": True}), result, event)
+        return await journal.try_finish(result, event)
+
+    monkeypatch.setattr(journal, "_append_locked", fail_after_append)
+    with pytest.raises(RuntimeError, match="injected"):
+        await commit()
+    assert not journal.finished and not journal.memory_jobs
+    assert not (await journal.read_events(request.run_id)).items
+    assert (await contexts.load("scope")).version == 0
+    monkeypatch.setattr(journal, "_append_locked", append)
+    assert await commit()
+    assert not await commit()
+    assert journal.memory_jobs == {request.run_id: "pending"}
+    assert len((await journal.read_events(request.run_id)).items) == 1
+    assert (await contexts.load("scope")).version == int(terminal == "completed")
+
+
 def test_v3_upgrade_preserves_binding_and_rolls_back_all_new_tables(tmp_path, monkeypatch):
     from test_local_environment import legacy
     from agent_adapters.storage import migration
