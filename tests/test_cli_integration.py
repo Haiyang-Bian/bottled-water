@@ -375,8 +375,9 @@ def test_cli_process_tree_lock_cancellation_and_crash_recovery(cli_fixture, mode
     import win32event
     from agent_adapters.storage.sqlite import SQLiteStore
 
-    run, project, _, _ = cli_fixture
+    run, project, second, _ = cli_fixture
     run("trust", "add", str(project))
+    run("trust", "add", str(second))
     trigger = project / "interrupt.signal"
     wrapper = Path(__file__).parent / "helpers" / "cli_signal_host.py"
     handles = []
@@ -400,7 +401,12 @@ def test_cli_process_tree_lock_cancellation_and_crash_recovery(cli_fixture, mode
             session = json.loads(run("--json", "sessions").stdout)[0]["id"]
             run("--resume", session, "--json", "-p", "BUSY", expected=3)
             # Another session can run while the first owns both its lock and live processes.
-            run("--json", "-p", "OTHER_SESSION")
+            other = records(run("--json", "-p", "LOCATION_OTHER_SESSION", cwd=second))
+            read = next(e["payload"]["result"] for e in other if e["type"] == "agent.tool_result")
+            assert read["content"] == "separate project"
+            from agent_subsystems.workspaces.paths import canonical_directory
+            assert read["execution"]["default_cwd"] == str(canonical_directory(second))
+            assert other[-1]["context_scope_id"] != session
             store = SQLiteStore(Path(run.environment["AGENTHUB_HOME"]) / "state.sqlite3")
             try:
                 row = store.db.execute(

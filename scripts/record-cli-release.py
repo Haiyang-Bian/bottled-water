@@ -1,6 +1,7 @@
 """Bind explicit acceptance observations to the metadata-selected installed wheel."""
 
 import argparse
+from email.parser import Parser
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ def main():
                         default=ROOT / "var/cli-install-validation/tools/agenthub-system")
     parser.add_argument("--test", action="append", type=Path, required=True)
     parser.add_argument("--observation", action="append", default=[], help="name=JSON path")
+    parser.add_argument("--known-failure", action="append", default=[], help="name=JSON path")
     parser.add_argument("--not-run", action="append", default=[])
     parser.add_argument("--desktop-build", type=Path, required=True)
     parser.add_argument("--desktop-smoke", type=Path, required=True)
@@ -35,7 +37,7 @@ def main():
                 committed = subprocess.check_output(["git", "show", f"{commit}:src/{name}"], cwd=ROOT)
                 assert committed.replace(b"\r\n", b"\n") == contents.replace(b"\r\n", b"\n"), name
         metadata = archive.read(f"agenthub_system-{version}.dist-info/METADATA").decode()
-        assert f"Version: {version}\n" in metadata
+        assert Parser().parsestr(metadata)["Version"] == version
     evidence = {
         "version": version, "source_commit": commit,
         "wheel": wheel.name, "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
@@ -56,6 +58,12 @@ def main():
         value = json.loads(Path(path).read_text(encoding="utf-8"))
         assert value["status"] == "passed", path
         evidence[key] = value
+    evidence["known_failures"] = {}
+    for item in args.known_failure:
+        key, path = item.split("=", 1)
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        assert value["status"] == "failed", path
+        evidence["known_failures"][key] = value
     evidence["desktop_build_log"] = str(args.desktop_build)
     evidence["desktop_smoke_log"] = str(args.desktop_smoke)
     assert args.desktop_build.is_file()
