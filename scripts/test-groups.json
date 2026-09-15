@@ -118,7 +118,10 @@
       "agenthub-demo.spec.ts"
     ]
   },
-  "system": {
+    "system": {
+      "resources:unit": [
+        "tests/test_resources.py"
+      ],
     "memory:unit": [
       "tests/test_foundational_memory.py",
       "tests/test_memory_keyboard.py"

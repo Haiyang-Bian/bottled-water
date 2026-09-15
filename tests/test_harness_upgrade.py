@@ -74,7 +74,7 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
         timeout=45,
     )
     assert upgraded.returncode == 0, upgraded.stderr
-    assert json.loads(upgraded.stdout)["database_version"] == 4
+    assert json.loads(upgraded.stdout)["database_version"] == 5
     assert "upgrade-test-private-key" not in upgraded.stdout + upgraded.stderr
     assert config_before == hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     assert credentials_before == {

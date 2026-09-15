@@ -44,7 +44,7 @@ class SQLiteStore:
             )
             self.db.row_factory = sqlite3.Row
             self.schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if self.schema_version not in (1, 2, 3, SCHEMA_VERSION):
+            if self.schema_version not in (1, 2, 3, 4, SCHEMA_VERSION):
                 self.db.close()
                 raise ValueError("Unsupported state database version")
             try:
@@ -65,7 +65,7 @@ class SQLiteStore:
     def _initialize(self, path):
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, 4, SCHEMA_VERSION):
             raise ValueError(f"Unsupported state database version: {version}")
         self.schema_version = version
         self._check_environment()  # Refuse a foreign binding before any persistent writes.
@@ -99,6 +99,10 @@ class SQLiteStore:
         if json.loads(row[0]).get("metadata", {}).get("memory_enabled") or has_proposal:
             self.db.execute(
                 "INSERT OR IGNORE INTO memory_jobs(run,state) VALUES(?,'pending')", (run_id,)
+            )
+        if json.loads(row[0]).get("metadata", {}).get("resources_enabled"):
+            self.db.execute(
+                "INSERT OR IGNORE INTO resource_jobs(run,state) VALUES(?,'pending')", (run_id,)
             )
 
     @contextmanager
