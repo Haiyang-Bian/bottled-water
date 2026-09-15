@@ -121,7 +121,8 @@
     "system": {
       "sandbox:unit": [
         "tests/test_lpac_probe.py",
-        "tests/test_permission_policy.py"
+        "tests/test_permission_policy.py",
+        "tests/test_lpac_standing_probe.py"
       ],
       "sandbox:integration": [
         "tests/test_lpac_native.py"

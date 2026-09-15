@@ -205,7 +205,7 @@ def token_sid(token):
 def system_capability_sids(name):
     """Derive only explicitly investigated runtime capabilities, never network access."""
     if name not in ("registryRead", "lpacInstrumentation") and not re.fullmatch(
-        r"AgentHub\.Probe\.Namespace\.[0-9a-f]{32}", name
+        r"AgentHub\.Probe\.(?:Namespace|Policy)\.[0-9a-f]{32}", name
     ):
         raise ValueError("Capability is outside the P1 experiment allowlist")
     groups, capabilities = ctypes.POINTER(w.LPVOID)(), ctypes.POINTER(w.LPVOID)()
@@ -248,6 +248,36 @@ def system_capability_sids(name):
                 free(array[index])
             free(array)
     return values
+
+
+def token_capabilities(token):
+    """Read actual kernel capability SIDs, not just requested startup attributes."""
+    class Groups(ctypes.Structure):
+        _fields_ = [("count", w.DWORD), ("groups", SID_AND_ATTRIBUTES * 1)]
+
+    query = _function(_dll("advapi32"), "GetTokenInformation", w.BOOL,
+                      w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD, ctypes.POINTER(w.DWORD))
+    size = w.DWORD()
+    query(int(token), 30, None, 0, ctypes.byref(size))
+    if not Groups.groups.offset <= size.value <= 1024 * 1024:
+        raise RuntimeError("Invalid capability information size")
+    buffer = ctypes.create_string_buffer(size.value)
+    _check(query(int(token), 30, buffer, size, ctypes.byref(size)))
+    count = w.DWORD.from_buffer(buffer).value
+    if Groups.groups.offset + count * ctypes.sizeof(SID_AND_ATTRIBUTES) > size.value:
+        raise RuntimeError("Truncated token capabilities")
+    entries = (SID_AND_ATTRIBUTES * count).from_buffer(buffer, Groups.groups.offset)
+    convert = _function(_dll("advapi32"), "ConvertSidToStringSidW", w.BOOL,
+                        w.LPVOID, ctypes.POINTER(w.LPWSTR))
+    result = []
+    for entry in entries:
+        string = w.LPWSTR()
+        _check(convert(entry.Sid, ctypes.byref(string)))
+        try:
+            result.append(string.value)
+        finally:
+            _function(_dll("kernel32"), "LocalFree", w.LPVOID, w.LPVOID)(string)
+    return result
 
 
 class LpacProfile:
@@ -325,6 +355,7 @@ class LpacProfile:
         registry_read=False,
         instrumentation=False,
         namespace_experiment=None,
+        policy_experiment=None,
         cancel_event=None,
     ):
         """Run with an LPAC token, explicit stdio handles and a kill-on-close Job."""
@@ -390,6 +421,12 @@ class LpacProfile:
                 capability_names.extend(
                     system_capability_sids(capability_name(namespace_experiment))
                 )
+            if policy_experiment is not None:
+                if not re.fullmatch(r"[0-9a-f]{32}", policy_experiment):
+                    raise ValueError("Invalid isolated policy experiment identifier")
+                capability_names.extend(system_capability_sids(
+                    "AgentHub.Probe.Policy." + policy_experiment
+                ))
             capability_array = (SID_AND_ATTRIBUTES * len(capability_names))()
             for index, name in enumerate(capability_names):
                 pointer = w.LPVOID()
@@ -497,6 +534,9 @@ class LpacProfile:
             query_token = win32security.OpenProcessToken(process, win32con.TOKEN_QUERY)
             try:
                 token["sid_matches"] = token_sid(query_token) == self.sid
+                token["capabilities"] = token_capabilities(query_token)
+                if sorted(token["capabilities"]) != sorted(capability_names):
+                    raise RuntimeError("Actual token capabilities differ from requested policy")
                 token["privileges"] = [
                     [win32security.LookupPrivilegeName(None, luid), flags]
                     for luid, flags in win32security.GetTokenInformation(query_token, 3)
