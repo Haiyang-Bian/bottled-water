@@ -102,7 +102,8 @@ def test_json_never_loads_rich_or_prints_headers(capsys):
     ("first\x1b[200~\r\nsecond\x1b[201~\r", "first\nsecond"),
     ("first\x1b\rsecond\r", "first\nsecond"),
     ("first\nsecond\r", "first\nsecond"),
-    ("/res\t\r", "/resume"),
+    ("/resu\t\r", "/resume"),
+    ("/reso\t\r", "/resources"),
 ])
 async def test_editor_multiline_paste_and_completion(tmp_path, keys, expected):
     from agent_cli.input import create_prompt

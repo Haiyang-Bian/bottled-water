@@ -320,6 +320,8 @@ async def command(args, home, *, cwd=None, roots=None, scope_id=None, interactiv
                 else catalog.save(access, value)
             )
         elif operation == "verify":
+            if record.status != "active":
+                raise OperationError("resource_disabled", "Enable this resource before verifying it")
             workspace, location = authorized(store, cwd, roots)
             target = resolve_resource(workspace, location, record.content.path)
             context = management_operation()

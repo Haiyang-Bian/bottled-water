@@ -253,6 +253,8 @@ async def test_management_without_credentials_cas_and_explicit_grants(tmp_path, 
     _, verified = await run("verify", identifier, "--revision", "1")
     assert verified["observation"]["facts"]["exists"]
     await run("disable", identifier, "--revision", "1")
+    with pytest.raises(OperationError, match="Enable"):
+        await run("verify", identifier, "--revision", "2")
     with pytest.raises(OperationError):
         await run("enable", identifier, "--revision", "1")
 
