@@ -53,7 +53,7 @@ def test_legacy_read_does_not_bind_and_atomic_upgrade_keeps_facts(tmp_path, vers
             SQLiteStore(path)
     store = SQLiteStore(path)
     try:
-        assert store.schema_version == 3
+        assert store.schema_version == 4
         session = store.session("old")
         assert session["origin_root"] == session["cwd"] == str(tmp_path)
         assert session["granted_roots"] == [str(tmp_path)]

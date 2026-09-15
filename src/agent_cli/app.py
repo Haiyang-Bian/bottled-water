@@ -29,6 +29,7 @@ HELP = """/resume       从本机环境列表恢复任务；/resume --here 按�
 /history      分页查看历史
 /session      会话详情
 /tools        选择并查看已保存工具结果
+/memory       管理基础记忆；add / candidates / edit / disable / enable / forget / used
 /verbose on|off 详细输出开关
 /add-dir PATH 添加目录
 /cd [PATH]    查看或切换默认工作位置（不会增加授权）
@@ -215,6 +216,9 @@ async def chat(args, home):
                         show_restored(controller, ui)
                 elif prompt == "/history":
                     await browse_history(controller)
+                elif prompt == "/memory" or prompt.startswith("/memory "):
+                    from .memory import interactive_command
+                    await interactive_command(prompt, controller, args)
                 elif prompt == "/tools":
                     from .tool_details import browse_tools
                     await browse_tools(controller, color=ui.color)

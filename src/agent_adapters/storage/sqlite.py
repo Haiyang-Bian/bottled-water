@@ -44,7 +44,7 @@ class SQLiteStore:
             )
             self.db.row_factory = sqlite3.Row
             self.schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if self.schema_version not in (1, 2, SCHEMA_VERSION):
+            if self.schema_version not in (1, 2, 3, SCHEMA_VERSION):
                 self.db.close()
                 raise ValueError("Unsupported state database version")
             try:
@@ -65,7 +65,7 @@ class SQLiteStore:
     def _initialize(self, path):
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, SCHEMA_VERSION):
             raise ValueError(f"Unsupported state database version: {version}")
         self.schema_version = version
         self._check_environment()  # Refuse a foreign binding before any persistent writes.
@@ -89,6 +89,17 @@ class SQLiteStore:
     def queries(self):
         self._check_environment()
         return SessionQueries(self.db, self.environment)
+
+    def memory_outbox(self, run_id):
+        # Part of the caller's terminal transaction; no memory business in Kernel.
+        row = self.db.execute("SELECT request FROM runs WHERE id=?", (run_id,)).fetchone()
+        has_proposal = self.db.execute(
+            "SELECT 1 FROM memory_candidates WHERE run=? LIMIT 1", (run_id,)
+        ).fetchone()
+        if json.loads(row[0]).get("metadata", {}).get("memory_enabled") or has_proposal:
+            self.db.execute(
+                "INSERT OR IGNORE INTO memory_jobs(run,state) VALUES(?,'pending')", (run_id,)
+            )
 
     @contextmanager
     def transaction(self):
@@ -251,6 +262,7 @@ class SQLiteStore:
             if row["result"] is not None:
                 return None
             await self._commit_in_transaction(result.context_scope_id, delta)
+            self.memory_outbox(result.run_id)
             self._append(terminal_event)
             self.db.execute(
                 "UPDATE runs SET state=?,result=? WHERE id=?",
@@ -328,6 +340,7 @@ class SQLiteStore:
                 raise KeyError(result.run_id)
             if row[0] is not None:
                 return False
+            self.memory_outbox(result.run_id)
             self._append(terminal_event)
             self.db.execute(
                 "UPDATE runs SET state=?,result=? WHERE id=?",

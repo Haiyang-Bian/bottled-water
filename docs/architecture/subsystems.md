@@ -4,7 +4,7 @@
 
 模块按可维护的职责划分，不要求每行对应一个文件或一个发行包。每个子系统都应具备：通用输入/输出、明确依赖、资源关闭责任、可检查的失败状态和不依赖 Web 的契约测试。以下“迁出”指通用机制，“保留”指 AgentHub 业务适配；不能把一个现有大文件整体移动就视为完成。
 
-2026-09-15 增补的[本机持续记忆设计](./local-agent-environment.md)扩展 S4、S6 与宿主身份职责；L1 身份、全局任务与独立位置已在 0.2.0 实现，其余按[开发阶段](./local-agent-roadmap.md)追踪。下表的已实现位置不因此获得全局记忆或强隔离能力。
+2026-09-15 增补的[本机持续记忆设计](./local-agent-environment.md)扩展 S4、S6 与宿主身份职责；L1 身份、全局任务与独立位置已在 0.2.0 实现，L2 基础记忆已在 0.2.1 实现。资源知识库和强隔离仍按[开发阶段](./local-agent-roadmap.md)追踪，不因已有接口而视为完成。
 
 ## 本次迁移现状
 
@@ -90,7 +90,7 @@
 
 ## S4. 上下文、记忆与检索子系统
 
-**职责：** 将已授权的输入来源组成预算内的模型上下文，并产生结构化记忆候选。任务 Scope 的提交仍由 Kernel/ContextStore 协调；计划中的跨任务长期记忆由独立的记忆存储与写入服务维护修订，通过来源记录与任务关联。
+**职责：** 将已授权的输入来源组成预算内的模型上下文。任务 Scope 的提交仍由 Kernel/ContextStore 协调；0.2.1 的公共 memory 子系统和独立存储端口维护跨任务知识，通过来源记录和实际使用清单与任务关联。
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
@@ -99,8 +99,8 @@
 | S4.3 消息与记忆映射 | Scope history、Blackboard、AgentMemory → Agent 可见上下文；生成有类型的增量 | [`agent_runtime/context`](../../src/agent_runtime/context)、[`context/memory.py`](../../backend/src/app/services/context/memory.py)；不得隐式跨 scope 取数据 |
 | S4.4 Context contributors | 附件、工作空间、任务、运行态、变量、团队成员等来源适配 | [`services/context`](../../backend/src/app/services/context)；通用 contributor 接口迁出，DB 来源留 H1 |
 | S4.5 检索与索引 | 分块、检索接口、打分、来源引用，按授权返回片段 | [`knowledge.py`](../../backend/src/app/services/knowledge.py)；当前为词项/相似度方案，不能标作已实现向量语义检索 |
-| S4.6 长期记忆生命周期（计划） | 用户声明、工具观察、候选 → 来源校验、修订、冲突、遗忘和阻止再生 | 待在 `agent_subsystems/context` 与存储适配器增量实现；不把全局知识写入一个共享 scope |
-| S4.7 记忆读取与处理（计划） | 跨任务检索、预算、使用清单、幂等处理与可恢复失败 | 复用现有装配器、Journal 和完成 Port；具体设计见[本机环境](./local-agent-environment.md) |
+| S4.6 基础记忆生命周期 | 用户保存、模型候选、采纳、修订、停用、遗忘与来源抑制 | `agent_subsystems/memory`、`agent_contracts/memory.py`、`agent_adapters/storage/memory.py`；本地 schema v4，不共享全局 Context scope |
+| S4.7 记忆读取与处理 | 跨任务检索、预算、使用清单、幂等处理与可恢复失败 | `memory/context.py`、`context/assembler.py`、SQLite 终态 outbox；复用 Journal 和完成 Port |
 
 **状态与错误：** 检索索引独立于 ContextStore；知识库权限和文档归属由宿主控制。缺失来源、截断和上下文构建失败要有可诊断状态。临时工具帧、原始推理和密钥不进入长期记忆。
 
@@ -139,7 +139,7 @@
 | S6.6 Git 协作 | status/diff/commit/integrate、安全前置检查与冲突回传 | [`git_collaboration.py`](../../backend/src/app/services/tools/git_collaboration.py)；不引入隐式 push 或历史改写 |
 | S6.7 隔离与运行环境 | 声明本机/子进程/容器可用能力，解析依赖、执行取消与资源清理 | 当前 sandbox、terminal 与外部进程机制分散；统一契约不等于已实现生产沙箱 |
 | S6.8 资源与软件目录（计划） | 资源身份、别名、位置、关系、软件能力与验证时间 | 在既有 workspaces 内增量实现；登记不授予执行权，不默认扫描全盘 |
-| S6.9 可变工作位置（计划） | cwd 与 grants 解耦、位置持久事件、每调用不可变快照 | 同任务跨目录；禁止依赖宿主全局 chdir，具体见[本机环境](./local-agent-environment.md) |
+| S6.9 可变工作位置 | cwd 与 grants 解耦、位置持久事件、每调用不可变快照 | 0.2.0 已实现；禁止依赖宿主全局 chdir，具体见[本机环境](./local-agent-environment.md) |
 
 **状态与错误：** 活进程只能由持有驱动管理。路径越界、权限拒绝、命令缺失、超时、输出截断和取消需要区分；跨进程重启不能从旧记录恢复活句柄。用户文件和工作树不随 Run 终止自动删除。
 

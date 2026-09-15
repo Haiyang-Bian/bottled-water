@@ -82,6 +82,19 @@ def cli_fixture(tmp_path):
             }
             if scenario.startswith("LOCATION") and step == 0:
                 delta = call("Read text", {"path": "note.txt"})
+            elif scenario == "MEMORYPROPOSE" and step == 0:
+                delta = call("Save a candidate", {
+                    "title": "语言约定", "body": "默认用中文解释", "kind": "preference",
+                    "evidence": "user_stated", "sources": [{"kind": "request"}],
+                })
+            elif scenario == "MEMORYOBSERVE" and step == 0:
+                delta = call("Read text", {"path": "calc.py"})
+            elif scenario == "MEMORYOBSERVE" and step == 1:
+                observation = json.loads(body["messages"][-1]["content"])["result"]
+                delta = call("Save a candidate", {
+                    "title": "calc observation", "body": "return a - b", "kind": "experience",
+                    "evidence": "observed", "sources": [observation["source_ref"]],
+                })
             elif scenario == "VISUAL":
                 if step == 0:
                     delta = call("Execute a non-interactive", {

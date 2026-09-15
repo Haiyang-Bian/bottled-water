@@ -2,7 +2,7 @@
 
 > 文档状态：目标架构与 CLI MVP 迁移现状，2026-09-04。MVP 执行链已迁入根级 `src`；未迁移领域仍按原宿主实现。实测结果及剩余验收见 [CLI 实施记录](./cli-mvp.md)。
 
-> 2026-09-15 设计增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。L1 身份与工作位置已在 0.2.0 实现，长期记忆仍待 L2；该方向扩展身份、长期记忆和工作位置，不改变已有 Run 生命周期。
+> 2026-09-15 实施增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。L1 已在 0.2.0 实现；0.2.1 的 [L2 基础记忆](./foundational-memory-l2.md)已接入本地 CLI，[验收记录](../acceptance/foundational-memory-0.2.1.md)区分通过、已修复失败和未执行项。身份、长期记忆和工作位置各自独立，保持已有 Run 生命周期。
 
 AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统。Runtime 是控制运行的内核；模型、上下文、工具、文件与进程、MCP、Skill 等是可组合的子系统；Web、命令行和评测程序负责组织这些能力并呈现结果。
 
@@ -16,8 +16,9 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 | [子系统与模块目录](./subsystems.md) | 每个子系统包含什么模块、提供什么能力、当前代码在哪里 | 目标职责与现状映射 |
 | [新旧架构差异与迁移](./migration.md) | 旧结构有什么问题，如何逐步拆分，怎样判断拆分有效 | 源码证据、迁移计划与验收标准 |
 | [本机持续记忆设计](./local-agent-environment.md) | 智能体如何跨目录、任务和软件连续工作，记忆与权限如何分工 | L1 已实现，其余为目标设计 |
-| [本机环境开发阶段](./local-agent-roadmap.md) | L1–L4 怎样增量交付、迁移、验证及判定不能放行 | L1 验收入口，L2–L4 开发计划 |
+| [本机环境开发阶段](./local-agent-roadmap.md) | L1–L4 怎样增量交付、迁移、验证及判定不能放行 | L1/L2 验收入口，L3–L4 开发计划 |
 | [L1 0.2.0 实施计划](./local-environment-l1.md) | 本轮如何分阶段实现身份、迁移、位置和全局任务入口 | 已实施，验收记录分别列出通过及限制 |
+| [L2 0.2.1 基础记忆](./foundational-memory-l2.md) | 知识保存、采纳、检索、修正、遗忘及 schema v4 | 已实施，独立于任务历史和文件授权 |
 | [Backend architecture](../backend-architecture.md) | 当前 FastAPI 后端的真实组织方式 | 当前实现说明 |
 | [Runtime 架构](../runtime/architecture.md)与[不变量](../runtime/invariants.md) | 生命周期、调度权限、Journal、协作和隔离的精确语义 | 内核契约 |
 | [Runtime 当前实现](../runtime/current-state.md)与[项目状态](../implementation-status.md) | 哪些契约已经实现，哪些还存在差距 | 当前状态 |
@@ -122,8 +123,8 @@ flowchart TB
 | 有序运行事件 | `RunJournal` | Sink、Web、CLI、eval 通过游标消费；投影不是第二真源 |
 | 团队消息、收件人和线程状态 | Kernel 协作协议 + `TeamJournal` | 团队工具经 `TeamMessenger` 提交；私有上下文不自动广播 |
 | Scope 消息、Blackboard、结构化 AgentMemory | `ContextStore` | 上下文子系统读取快照，Executor 返回增量，Kernel 协调 CAS |
-| 跨任务长期记忆及其修订（计划） | 独立的 MemoryStore/记忆写入服务 | 上下文子系统按授权读取并记录使用清单；不共享全局 Context scope |
-| 本机资源目录与工作位置（计划） | 资源子系统及持久化适配器 | 宿主/工具通过受控接口更新；位置不代表授权，旧 Run 保留当时位置 |
+| 跨任务长期记忆及其修订 | 公共 memory 子系统与 SQLiteMemory | 上下文子系统按授权读取并记录使用清单；不共享全局 Context scope |
+| 本机工作位置；资源目录待实现 | workspaces 与持久化适配器 | 宿主/工具通过受控接口更新；位置不代表授权，旧 Run 保留当时位置 |
 | 工具/MCP/Skill 调用记录 | 相应子系统的调用生命周期与 Record Port | 存储驱动落盘，记录通过 run/call ID 关联 Journal；不宣称跨所有存储的统一事务 |
 | 进程和终端活句柄 | 资源子系统/具体进程驱动 | 持有者负责关闭；数据库记录不能重建仍活着的进程 |
 | Workflow 节点状态 | Workflow 子系统 | 转换为执行请求和结果；不能独立提交父 Run 终态 |
@@ -193,7 +194,7 @@ backend/src/
 
 `agent_subsystems` 只是领域命名空间，不得新建一个全能调度中心。传输和驱动可以紧邻对应子系统放置，但必须可选加载，并遵守相同依赖规则。现有 `model_provider` 优先演进；迁移同时更新宿主与测试的导入，删除旧实现和旧导出，不保留兼容别名。尚未迁移的团队/Workflow 策略仍暂存 `agent_runtime`；这不代表其最终归属为 Kernel。
 
-## 10. 本机持续记忆方向（计划）
+## 10. 本机持续记忆方向（L1/L2 已实现，L3/L4 待实现）
 
 智能体身份与基础记忆归属于用户的本机环境；任务拥有独立历史和运行状态；工作目录是可变的执行位置与资料线索。项目可以关联多处资料和软件，不再作为智能体本身的容器。
 

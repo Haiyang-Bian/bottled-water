@@ -355,15 +355,26 @@ class AgentLoop:
             if limit is not None and self.counters["model_requests"] >= limit:
                 raise ExecutionStopped("model_turn_budget_exhausted")
             tools_for_round = self.extension.tools_for_round(tools, tool_results)
+            memory_context = getattr(self, "memory_context", None)
+            memory_items, memory_tool_used = [], []
+            if memory_context:
+                memory_items = memory_context.items()
+                messages, memory_tool_used = memory_context.filter_results(messages)
             async with self._phase("context"):
-                messages, diagnostics = assembler.prepare(
+                prepared = assembler.prepare(
                     messages,
                     system_prompt,
                     tools_for_round,
                     current_request=current_request,
                     run_id=self.run_id,
+                    memory_items=memory_items,
                 )
-            await _emit("agent.context_budget", diagnostics)
+            messages = prepared.working_messages
+            if memory_context:
+                # Compaction may have removed the knowledge inside a tool result.
+                # Report only records remaining in the actual outgoing messages.
+                prepared.messages, memory_tool_used = memory_context.filter_results(prepared.messages)
+            await _emit("agent.context_budget", prepared.diagnostics)
             tool_round += 1
             self.counters["model_requests"] += 1
             await self._run_checkpoint(checkpoint, "before_llm", {"round": tool_round})
@@ -371,10 +382,17 @@ class AgentLoop:
             try:
                 remaining_tokens = self._remaining_token_budget()
                 async with self._phase("model"):
+                    if memory_context:
+                        await _emit("agent.memory_used", {
+                            "model_request": tool_round,
+                            "items": prepared.memory_used + memory_tool_used,
+                            "removed": prepared.diagnostics["memory_removed_for_budget"],
+                            **memory_context.diagnostics,
+                        })
                     if self.use_streaming:
                         response = await self._chat_streaming(
-                            messages=messages,
-                            system_prompt=system_prompt,
+                            messages=prepared.messages,
+                            system_prompt=prepared.system_prompt,
                             tools=tools_for_round,
                             _emit=_emit,
                             stream_message_id=stream_message_id,
@@ -385,12 +403,12 @@ class AgentLoop:
                     else:
                         response = await collect_chat_stream(
                             self.model,
-                            messages=messages,
-                            system_prompt=system_prompt,
+                            messages=prepared.messages,
+                            system_prompt=prepared.system_prompt,
                             tools=tools_for_round,
                             max_tokens=remaining_tokens,
                         )
-                self._record_usage(response, system_prompt, messages, tools_for_round)
+                self._record_usage(response, prepared.system_prompt, prepared.messages, tools_for_round)
                 if self.observer:
                     await self.observer.usage_reported(
                         str(tool_round), self.usage_snapshot(), dict(self.counters)

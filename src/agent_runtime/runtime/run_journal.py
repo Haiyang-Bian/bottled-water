@@ -89,6 +89,7 @@ class InMemoryRunJournal:
         self.finished: dict[str, RunResult] = {}
         self.events: dict[str, list[EventEnvelope]] = {}
         self._event_ids: dict[str, EventEnvelope] = {}
+        self.memory_jobs: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     async def create_run(self, request: RunRequest, snapshot: RunSnapshot) -> None:
@@ -126,9 +127,22 @@ class InMemoryRunJournal:
         async with self._lock:
             if result.run_id in self.finished:
                 return False
-            self._append_locked(persisted)
-            self.finished[result.run_id] = result
+            old_events, old_ids = list(self.events[result.run_id]), dict(self._event_ids)
+            old_jobs = dict(self.memory_jobs)
+            try:
+                self._terminal_outbox(result.run_id)
+                self._append_locked(persisted)
+                self.finished[result.run_id] = result
+            except BaseException:
+                self.events[result.run_id], self._event_ids = old_events, old_ids
+                self.memory_jobs = old_jobs
+                self.finished.pop(result.run_id, None)
+                raise
             return True
+
+    def _terminal_outbox(self, run_id):
+        if self.requests[run_id].metadata.get("memory_enabled"):
+            self.memory_jobs.setdefault(run_id, "pending")
 
     async def read_events(
         self, run_id: str, *, after_sequence: int = 0, limit: int = 200

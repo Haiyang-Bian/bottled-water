@@ -14,7 +14,7 @@ def create_prompt(home, scope=None, *, color=True, cwd=None):
 
     commands = ["/resume", "/new", "/history", "/session", "/add-dir", "/cd",
                 "/help", "/exit",
-                "/tools", "/verbose on", "/verbose off"]
+                "/tools", "/verbose on", "/verbose off", "/memory"]
 
     class CommandCompleter(Completer):
         def get_completions(self, document, complete_event):
@@ -32,7 +32,15 @@ def create_prompt(home, scope=None, *, color=True, cwd=None):
                 ):
                     yield c
             elif text.startswith("/"):
-                for command in (["/resume --here"] if text.startswith("/resume ") else commands):
+                options = commands
+                if text.startswith("/resume "):
+                    options = ["/resume --here"]
+                elif text.startswith("/memory "):
+                    options = ["/memory " + action for action in (
+                        "add", "search", "show", "edit", "candidates", "disable", "enable",
+                        "forget", "used", "process",
+                    )]
+                for command in options:
                     if command.startswith(text):
                         yield Completion(command, start_position=-len(text))
 

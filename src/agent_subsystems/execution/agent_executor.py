@@ -27,8 +27,10 @@ class AgentLoopExecutor:
         execution_limits=None,
         context_budget=None,
         run_journal=None,
+        memory_context=None,
     ) -> None:
         self.context_budget, self.run_journal = context_budget, run_journal
+        self.memory_context = memory_context
         self.execution_limits = execution_limits or ExecutionLimits()
         self.model_provider = model_provider
         self.tool_executor = tool_executor
@@ -50,6 +52,7 @@ class AgentLoopExecutor:
             run_id=request.run_id,
         )
         loop.context_snapshot = request.context
+        loop.memory_context = self.memory_context
 
         async def emit_legacy(event: Event) -> None:
             cancellation.raise_if_cancelled()

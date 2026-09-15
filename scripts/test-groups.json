@@ -119,6 +119,10 @@
     ]
   },
   "system": {
+    "memory:unit": [
+      "tests/test_foundational_memory.py",
+      "tests/test_memory_keyboard.py"
+    ],
     "storage:unit": [
       "tests/test_local_environment.py"
     ],
@@ -139,6 +143,7 @@
       "tests/test_migration_chain.py"
     ],
     "cli:integration": [
+      "tests/test_memory_cli.py",
       "tests/test_cli_integration.py",
       "tests/test_harness_upgrade.py"
     ],

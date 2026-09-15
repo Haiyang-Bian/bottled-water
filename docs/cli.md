@@ -1,10 +1,16 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码发行版本为 `agenthub-system 0.2.0`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码版本为 `agenthub-system 0.2.1`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
 
-> 0.2.0 实现 L1：本机环境中的全局任务恢复、独立工作位置和 schema v3。`-c` 的范围已从当前目录改为当前本机环境；用 `--here` 限定目录。基础记忆、资源知识库及强隔离仍待后续阶段，详见[阶段计划](./architecture/local-agent-roadmap.md)和[本版验收](./acceptance/local-environment-0.2.0.md)。
+> 0.2.0 实现 L1：全局任务恢复与独立工作位置。0.2.1 增加 L2 基础记忆和 schema v4。`-c` 恢复本机环境最近任务，用 `--here` 限定目录。资源知识库及强隔离留待后续，详见[阶段计划](./architecture/local-agent-roadmap.md)及[L2 设计](./architecture/foundational-memory-l2.md)。
 
 ## 安装与首次使用
+
+L2 基础记忆的接口及边界见[0.2.1 实施文档](./architecture/foundational-memory-l2.md)，实测范围见[验收记录](./acceptance/foundational-memory-0.2.1.md)。
+`/memory` 浏览，`/memory add` 直接保存，`/memory candidates` 采纳模型候选；
+`edit` 创建新修订，`disable`/`enable` 停用或恢复，`forget` 遗忘，`used` 查看实际使用清单。
+脚本入口为 `agenthub memory …`；保存须提供 `--title`、`--body`，修改须提供 ID 和 `--revision`，
+遗忘还须提供 `--yes`。记忆许可不授予文件权限；遗忘保留原会话、Run 和备份。
 
 在源码根目录运行：
 
@@ -19,7 +25,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.0-py3-none-any.whl[cli]"
+uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.1-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -34,7 +40,7 @@ uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.0-py3-none-any
 .agenthub/
   config.toml       命名模型 profile、默认 profile、运行限制
   credentials/      当前用户 DPAPI 密文
-  state.sqlite3     环境身份、信任、任务位置、上下文、Run 和有序事件（v3）
+  state.sqlite3     环境身份、任务、Run、记忆、修订、候选和处理队列（v4）
   locks/            持有会话的跨进程文件锁
   logs/             脱敏轮转诊断日志
   tmp/              预留的受管理临时目录
@@ -136,6 +142,42 @@ agenthub trust remove D:\Work\shared
 
 同一会话只允许一个持有者，不同会话可并行。崩溃后再次取得会话锁，才将该会话未结束的 Run 标为 `failed/process_lost`。`--continue` 从已提交历史发起新 Run，不恢复崩溃时的指令位置，也不自动重做副作用。保存的工作目录会恢复。
 
+## 基础记忆（0.2.1）
+
+`/memory` 用列表浏览和选择；`/memory add` 打开表单，确认后立即保存。
+普通对话中的“记住……”由模型提出候选，结束时提示数量；使用 `/memory candidates`
+核对来源后采纳、拒绝或修改后采纳，也可批量处理当前页的可采纳项。
+浏览和用户管理不需要模型凭据，不创建任务。
+
+```powershell
+agenthub memory add --title "语言偏好" --body "默认用中文解释" --kind preference --basic
+agenthub --json memory search "中文"
+agenthub memory show MEMORY_ID
+agenthub memory edit MEMORY_ID --revision 1 --body "默认用中文解释，先给结论"
+agenthub memory disable MEMORY_ID --revision 2
+agenthub memory enable MEMORY_ID --revision 3
+agenthub memory forget MEMORY_ID --revision 4 --yes
+agenthub --json memory candidates
+agenthub memory adopt CANDIDATE_ID --revision 1
+agenthub memory process
+agenthub memory used --run RUN_ID
+```
+
+以上 ID 和修订号应从上一步结果读取；交互终端可省略 ID 使用列表选择。
+`/memory used` 查看当前任务最近 Run 的实际使用清单；`show --revision N` 查看仍保留的旧修订。
+`search` 支持中文短词、英文词、标题、别名、标签及路径，使用 `--offset`、`--limit`
+翻页，每页最多 20 项。`--alias`、`--tag` 可重复；`--directory "路径"` 设置目录及子目录适用范围，
+`--global` 改为全局，`--basic` / `--no-basic` 控制基础资料。正文最多 2000 字符。
+
+基础资料每 Run 默认最多 2000 字符，相关检索最多 8000 字符，计入总上下文预算。
+目录事实只有位置匹配或请求明确提及名称、别名、路径时自动纳入；模型也能显式搜索。
+记忆是带来源的资料，不能保证模型每次都遵循其表述。未采纳候选不会进入跨任务召回。
+
+停用可以恢复；遗忘移除普通记忆查询可见的正文和索引，并抑制旧来源再次生成相同知识。
+原会话、Run 和备份保留，已发送给模型的内容不追溯撤回。记忆许可与文件许可独立：
+撤销来源目录信任后，已采纳知识仍可使用；如需撤销知识，须另行停用或遗忘。
+显式操作失败会报错；后台确定性整理失败不改变原 Run 终态，用 `memory process` 重试。
+
 ## 工具与输出
 
 | 工具 | 行为 |
@@ -146,6 +188,8 @@ agenthub trust remove D:\Work\shared
 | `file.edit` | 精确匹配一次旧文本；检测外部修改，保留编码、BOM 和换行风格 |
 | `powershell.run` | 真正的多行脚本、管道；非交互；默认超时 120 秒且受剩余 Run 时间限制 |
 | `git.run` | 独立参数数组，不拼接 shell；不自动提交、推送或重置 |
+| `memory.search` / `memory.read` | 读取本环境默认助手获准的有效知识；不扩大文件授权 |
+| `memory.propose` | 保存待校验候选，只有用户采纳才能长期生效 |
 
 进程 stdout/stderr 合计保留最多 64 KiB，超限后仍排空管道，并返回 `truncated`。文件读取内容及搜索/列举分页受 64 KiB 上限约束。Job Object 采用挂起创建、加入后运行；加入失败报错，超时、取消或宿主退出清理该 Job 的进程树。本期没有 PTY 或跨任务常驻终端。
 
@@ -165,17 +209,17 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 
 ## 开发验证
 
-### 0.2.0 升级、位置修复与续接
+### 0.2.1 升级、位置修复与续接
 
-保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.0 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay 或 doctor 不升级。
+保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.1 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay、旧库记忆查询或 doctor 不升级。
 
-从 v1 或 v2 直接升至 v3：持有迁移锁及现有会话锁，使用 SQLite backup API 保存包含 WAL 的一致性 `.v1-时间戳.bak` 或 `.v2-时间戳.bak`，在单个事务中升级。其他会话占用返回 3，不中断运行者。旧 `root` 成为创建/保存位置，`root + dirs` 成为显式授权，初始修订为 0。
+从 v1、v2 或 v3 直接升至 v4：持有迁移锁及现有会话锁，使用 SQLite backup API 保存包含 WAL 的一致性 `.v版本-时间戳.bak`，在单个事务中升级，不先提交中间版本。其他会话占用返回 3，不中断运行者。v1/v2 的旧 `root` 成为创建/保存位置，`root + dirs` 成为显式授权；v3 已有环境 UUID 原样保留。记忆库初始为空，不扫描旧 Run。
 
 保存位置失效时，可先运行 `agenthub history SESSION_ID` 查看，再执行 `agenthub --resume SESSION_ID --add-dir "有效目录" --cwd "有效目录"` 修复。非交互模式需先 `agenthub trust add "有效目录"`；若修复位置已经获准，不必重复添加。位置变更事务失败时保留原任务及位置。
 
 `--continue`、`--resume ID` 和交互模式下一次输入都会开始新的 Run，载入成功历史与尚未消费的失败/取消观察。工具已经开始但没有保存结果时标为未知，需要先核实当前文件或进程状态；不会自动重放副作用。成功上下文、续接游标和成功终态一起提交。
 
-升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v3，备份不包含升级后的会话。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
+升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v4，备份不包含升级后的会话和记忆。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
 
 ```powershell
 uv sync --all-packages --all-extras
