@@ -81,11 +81,13 @@ def main():
                 (output / (name + ".stderr.txt")).write_text(
                     redactor.text(result.stderr), encoding="utf-8")
                 evidence["checks"].append({"name": name, "exit_code": result.returncode})
+                evidence["runs"] = rows()
                 assert result.returncode == expected, redactor.text(result.stderr + result.stdout)
                 return result
 
             def latest(cwd, scope=None):
-                record = rows()[-1]
+                evidence["runs"] = rows()
+                record = evidence["runs"][-1]
                 result = record["result"]
                 assert result and result["state"] == "completed", record
                 metadata = record["request"]["metadata"]
@@ -161,7 +163,9 @@ def main():
             assert cli(b, "trust", "add", str(d)).returncode == 0
             recorded("11-repair-location", b, "--json", "--resume", scope,
                      "--add-dir", str(d), "--cwd", str(d), "-p",
-                     "用文件工具读取当前工作位置的 result.txt，原样报告内容。")
+                     f"我已用 --cwd 将工作位置从 C 改到 {d}。"
+                     "请使用文件工具读取相对路径 result.txt，原样报告内容。"
+                     "先前消息中的 C 绝对路径已失效，不要继续沿用。")
             latest(d, scope)
             evidence["runs"] = rows()
             with contextlib.closing(sqlite3.connect(
