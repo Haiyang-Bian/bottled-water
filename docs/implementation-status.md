@@ -2,9 +2,9 @@
 
 This file is the compact status reference for current docs. It avoids historical closure notes and only tracks present behavior and known boundaries.
 
-## Planned: Local Agent Environment With Persistent Memory
+## Local Agent Environment With Persistent Memory
 
-Originally recorded on 2026-09-15 against shared package 0.1.7 (`d43f07b`): [design](./architecture/local-agent-environment.md) and [development stages](./architecture/local-agent-roadmap.md). L1 global task recovery and working-location separation shipped in 0.2.0. L2 foundational memory is implemented in 0.2.1 with local schema v4; see [acceptance](./acceptance/foundational-memory-0.2.1.md). L3 resource/software continuity and L4 shared memory with fine-grained execution remain **not implemented**. AgentMemory remains scope-bound alongside the independent knowledge store; native commands run as the current user without OS filesystem/network isolation.
+Originally recorded on 2026-09-15 against shared package 0.1.7 (`d43f07b`): [design](./architecture/local-agent-environment.md) and [development stages](./architecture/local-agent-roadmap.md). L1 global tasks shipped in 0.2.0, L2 foundational memory in 0.2.1, and L3 resource/software continuity in 0.2.2 with local schema v5; see [acceptance](./acceptance/resource-continuity-0.2.2.md). Objective resource observations are automatic; experience and preferences still need user adoption. L4 shared memory with fine-grained OS execution remains **not implemented**. AgentMemory remains scope-bound alongside independent memory and resource stores; native commands run as the current user without OS filesystem/network isolation.
 
 ## Architecture Split Status
 

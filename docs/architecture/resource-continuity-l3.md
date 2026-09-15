@@ -18,6 +18,28 @@ P4：隔离安装、v1–v4 升级、真实 DeepSeek/ConPTY、Web/sidecar、文�
 
 P1 开发检查：资源、L2 记忆、环境和失败续接共 43 项通过（`var/l3-p1.xml`）。
 
+P1–P4 已完成，详见[最终验收记录](../acceptance/resource-continuity-0.2.2.md)和[操作说明](../resources.md)。
+提交边界：`c4be552` 资源/schema，`5e59ffb` 公共执行与任务资料，`fcac01c` CLI，
+`233e273` 停用验证与回归补充，`9de5f6d` 0.2.2 发行源码与验收脚本。
+源码文件、最终 wheel 和隔离安装文件由 `record-cli-release.py` 逐一核对；文档提交不改发行源码。
+
+## 模块和状态归属
+
+| 位置 | 本轮职责 |
+| --- | --- |
+| `agent_contracts/resources.py` | 资源、修订、来源、观察、软件、访问上下文及读写/处理接口 |
+| `workspaces/resources.py` | 可接受的结构化观察、字段白名单、路径与词项排序 |
+| `workspaces/resource_context.py`、`resource_tools.py` | 每 Run 检索、每请求复核、模型查询及软件调用组合 |
+| `workspaces/task_queries.py` | 本机日期词与明确日期范围、确定性词项匹配 |
+| `adapters/storage/resources.py`、`tasks.py` | 身份先行过滤、资源 CAS、独立观察、来源幂等、任务摘要 |
+| `adapters/local/resources.py` | 有界元数据探测、明确范围索引、软件发现/验证/argv 执行、输出观察 |
+| `subsystems/context/assembler.py` | 资源/任务资料先于记忆和历史裁剪，不改写成功任务历史 |
+| `agent_cli/resources.py`、`sessions.py`、`selection.py` | 管理入口、候选列表、任务查询和原锁恢复流程 |
+
+与 L2 的差别是新增逻辑独立的资源事实库，而非把路径与软件事实混进长期记忆表。
+与 L1 的差别是可以按资料和日期找到旧任务，而非只按位置、时间和任务标题浏览。
+Kernel 仍只协调终态；本地终态事务登记资源 outbox，不让处理失败改变已完成的 Run。
+
 ## 不变量
 
 - contracts 定义资源、观察、来源、软件和访问接口；规则及处理算法属于 workspaces，

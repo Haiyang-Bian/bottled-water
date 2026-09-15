@@ -1,8 +1,8 @@
 # AgentHub 本地 CLI
 
-本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码版本为 `agenthub-system 0.2.1`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
+本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码版本为 `agenthub-system 0.2.2`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
 
-> 0.2.0 实现 L1：全局任务恢复与独立工作位置。0.2.1 增加 L2 基础记忆和 schema v4。`-c` 恢复本机环境最近任务，用 `--here` 限定目录。资源知识库及强隔离留待后续，详见[阶段计划](./architecture/local-agent-roadmap.md)及[L2 设计](./architecture/foundational-memory-l2.md)。
+> 0.2.0 实现 L1 全局任务与独立位置，0.2.1 实现 L2 基础记忆。0.2.2 增加 L3 资源、软件、任务查询和 schema v5，见[资源操作说明](./resources.md)及[验收记录](./acceptance/resource-continuity-0.2.2.md)。`-c` 恢复本机最近任务；`/resume 昨天的实验` 搜索选择，`--here` 限定目录。L4 强隔离仍待实现。
 
 ## 安装与首次使用
 
@@ -25,7 +25,7 @@ agenthub
 
 ```powershell
 uv build --package agenthub-system --wheel
-uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.1-py3-none-any.whl[cli]"
+uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.2-py3-none-any.whl[cli]"
 ```
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
@@ -209,17 +209,17 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 
 ## 开发验证
 
-### 0.2.1 升级、位置修复与续接
+### 0.2.2 升级、位置修复与续接
 
-保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.1 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay、旧库记忆查询或 doctor 不升级。
+保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.2 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay、旧库记忆/资源查询或 doctor 不升级。
 
-从 v1、v2 或 v3 直接升至 v4：持有迁移锁及现有会话锁，使用 SQLite backup API 保存包含 WAL 的一致性 `.v版本-时间戳.bak`，在单个事务中升级，不先提交中间版本。其他会话占用返回 3，不中断运行者。v1/v2 的旧 `root` 成为创建/保存位置，`root + dirs` 成为显式授权；v3 已有环境 UUID 原样保留。记忆库初始为空，不扫描旧 Run。
+从 v1–v4 直接升至 v5：持有迁移锁及现有会话锁，使用 SQLite backup API 保存包含 WAL 的一致性 `.v版本-时间戳.bak`，在单个事务中升级，不先提交中间版本。其他会话占用返回 3，不中断运行者。v1/v2 的旧 `root` 成为创建/保存位置，`root + dirs` 成为显式授权；v3 已有环境 UUID 原样保留，v4 的记忆、候选和遗忘抑制原样保留。资源目录初始为空，不回扫旧 Run。
 
 保存位置失效时，可先运行 `agenthub history SESSION_ID` 查看，再执行 `agenthub --resume SESSION_ID --add-dir "有效目录" --cwd "有效目录"` 修复。非交互模式需先 `agenthub trust add "有效目录"`；若修复位置已经获准，不必重复添加。位置变更事务失败时保留原任务及位置。
 
 `--continue`、`--resume ID` 和交互模式下一次输入都会开始新的 Run，载入成功历史与尚未消费的失败/取消观察。工具已经开始但没有保存结果时标为未知，需要先核实当前文件或进程状态；不会自动重放副作用。成功上下文、续接游标和成功终态一起提交。
 
-升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v4，备份不包含升级后的会话和记忆。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
+升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v5，备份不包含升级后的会话、记忆和资源。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
 
 ```powershell
 uv sync --all-packages --all-extras
