@@ -97,10 +97,12 @@ class Selector:
         return await self.app.run_async()
 
 
-async def choose_session(catalog, root, current=None, *, color=True):
-    choices = [Choice(s.id, ("[当前] " if s.id == current else "") + s.label(), s.preview)
+async def choose_session(catalog, root=None, current=None, *, color=True):
+    choices = [Choice(s.id, ("[当前] " if s.id == current else "") + s.label(),
+                      f"{s.preview}\n位置：{s.cwd}\n创建位置：{s.origin_root}\nID：{s.id}")
                for s in catalog.list(root)]
-    return await Selector(choices, "恢复会话 · 当前目录", color=color).run()
+    return await Selector(choices, "选择任务 · " + (str(root) if root else "本机环境"),
+                          color=color).run()
 
 
 async def pager(text, *, prompt_session=None):

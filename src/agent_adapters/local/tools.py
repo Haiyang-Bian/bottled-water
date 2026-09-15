@@ -73,19 +73,19 @@ class LocalToolExecutor:
             }
             specs[name] = ToolSpec(name, description, schema, capability)
             async def invoke(**kwargs):
+                execution = {"default_cwd": str(context.location.cwd),
+                             "workspace_version": context.location.version}
+                if capability == "process":
+                    execution["cwd"] = str(resolve_resource(
+                        self.grant.workspace, context.location, kwargs.get("cwd", "."),
+                        directory=True,
+                    ))
+                else:
+                    execution["path"] = str(resolve_resource(
+                        self.grant.workspace, context.location, kwargs.get("path", ".")
+                    ))
                 result = await handler(**kwargs)
                 if isinstance(result, dict):
-                    execution = {"default_cwd": str(context.location.cwd),
-                                 "workspace_version": context.location.version}
-                    if capability == "process":
-                        execution["cwd"] = str(resolve_resource(
-                            self.grant.workspace, context.location, kwargs.get("cwd", "."),
-                            directory=True,
-                        ))
-                    else:
-                        execution["path"] = str(resolve_resource(
-                            self.grant.workspace, context.location, kwargs.get("path", ".")
-                        ))
                     result["execution"] = execution
                 return result
 

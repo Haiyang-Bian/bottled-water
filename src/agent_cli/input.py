@@ -3,7 +3,7 @@
 from .sessions import SessionCatalogReader
 
 
-def create_prompt(home, scope=None, *, color=True):
+def create_prompt(home, scope=None, *, color=True, cwd=None):
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion, CompleteEvent, PathCompleter
     from prompt_toolkit.document import Document
@@ -12,23 +12,27 @@ def create_prompt(home, scope=None, *, color=True):
     from prompt_toolkit.keys import Keys
     from prompt_toolkit.styles import Style
 
-    commands = ["/resume", "/new", "/history", "/session", "/add-dir", "/help", "/exit",
+    commands = ["/resume", "/new", "/history", "/session", "/add-dir", "/cd",
+                "/help", "/exit",
                 "/tools", "/verbose on", "/verbose off"]
 
     class CommandCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            if text.startswith("/add-dir "):
-                value = text[len("/add-dir "):]
+            prefix = next((p for p in ("/add-dir ", "/cd ") if text.startswith(p)), None)
+            if prefix:
+                value = text[len(prefix):]
                 quoted = value.startswith('"')
                 if quoted:
                     value = value[1:]
-                for c in PathCompleter(only_directories=True).get_completions(
+                for c in PathCompleter(
+                    only_directories=True, get_paths=lambda: [str(cwd or ".")]
+                ).get_completions(
                     Document(value), complete_event
                 ):
                     yield c
             elif text.startswith("/"):
-                for command in commands:
+                for command in (["/resume --here"] if text.startswith("/resume ") else commands):
                     if command.startswith(text):
                         yield Completion(command, start_position=-len(text))
 
@@ -36,7 +40,7 @@ def create_prompt(home, scope=None, *, color=True):
     if scope:
         from agent_adapters.storage.session_queries import decode
         with SessionCatalogReader(home).queries() as queries:
-            if queries:
+            if queries and queries.session(scope):
                 for row in queries.db.execute(
                     "SELECT request FROM runs WHERE scope=? ORDER BY created,id", (scope,)
                 ):

@@ -3,13 +3,15 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from agent_adapters.storage.session_queries import decode
 from agent_adapters.storage.session_lock import SessionLock
 from agent_adapters.storage.sqlite import SQLiteStore
-from agent_contracts.errors import ConfigurationError
+from agent_contracts.errors import ConfigurationError, OperationError
+from agent_contracts.execution import ExecutionLocation, WorkspaceSpec
 from agent_subsystems.observability.redaction import Redactor
-from agent_subsystems.workspaces.paths import canonical_directory
+from agent_subsystems.workspaces.paths import canonical_directory, effective_roots, resolve_resource
 
 
 def short(text, length=100):
@@ -93,10 +95,11 @@ class HistoryTurn:
     state: str
     reason_code: str
     tools: list
+    cwd: str = "未保存"
 
     def text(self):
         partial = "（未完成输出）" if self.state != "completed" else ""
-        lines = [f"{self.created} · {self.state} / {self.reason_code}",
+        lines = [f"{self.created} · {self.state} / {self.reason_code} · 位置：{self.cwd}",
                  f"你：{self.request}", f"AgentHub{partial}：{self.output or '未保存答复'}"]
         for tool in self.tools:
             status = "结果未知" if tool.get("success") is None else (
@@ -133,6 +136,9 @@ class SessionHistoryReader(SessionCatalogReader):
                     self.redactor.text(str(decode(row["request"]).get("input", "未保存请求"))),
                     self.redactor.text(result.get("output") or "\n\n".join(texts.values())),
                     row["state"], result.get("reason_code", "未知"), list(tools.values()),
+                    decode(row["request"]).get("metadata", {}).get(
+                        "execution_location", {}
+                    ).get("cwd", "未保存"),
                 ))
         cursor = (rows[-1]["created"], rows[-1]["id"]) if rows else None
         return turns, cursor
@@ -140,13 +146,23 @@ class SessionHistoryReader(SessionCatalogReader):
 
 class SessionController:
     def __init__(self, home, root, ensure_trusted, redactor=None):
-        self.home, self.root = home, root
+        self.home, self.startup_root = home, root
         self.ensure_trusted = ensure_trusted
         self.redactor = redactor or Redactor()
         self.catalog = SessionCatalogReader(home, self.redactor)
         self.store = None
         self.lock = None
-        self.session = {"id": None, "root": str(root), "dirs": []}
+        self.running = False
+        self.session = self._draft(root, [str(root)])
+
+    @staticmethod
+    def _draft(cwd, roots):
+        return {"id": None, "environment_id": None, "origin_root": str(cwd), "cwd": str(cwd),
+                "granted_roots": list(roots), "workspace_version": 0}
+
+    def _idle(self):
+        if self.running:
+            raise ConfigurationError("任务运行期间不能切换任务、位置或授权。请先取消当前 Run。")
 
     def writable(self):
         if self.store is None:
@@ -154,60 +170,106 @@ class SessionController:
         return self.store
 
     def new(self):
+        self._idle()
         if self.lock:
             self.lock.__exit__()
         self.lock = None
-        self.session = {"id": None, "root": str(self.root), "dirs": []}
+        self.session = self._draft(self.session["cwd"], self.session["granted_roots"])
 
-    def directories(self, session, additional=()):
-        store = self.writable()
-        self.ensure_trusted(store, self.root)
-        directories = []
-        for name in [*session["dirs"], *additional]:
-            path = canonical_directory(name)
-            self.ensure_trusted(store, path)
-            if path != self.root and str(path) not in directories:
-                directories.append(str(path))
-        return directories
+    def _validate(self, session, *, trusted=True):
+        cwd = canonical_directory(session["cwd"])
+        if str(cwd) != session["cwd"]:
+            raise ConfigurationError("保存位置的实际路径已改变，请显式重新选择位置。")
+        check = self.writable().is_trusted if trusted else lambda _: True
+        roots, inactive = effective_roots(session["granted_roots"], check)
+        resolve_resource(WorkspaceSpec(roots), ExecutionLocation(cwd), ".", directory=True)
+        return inactive
 
-    async def activate(self, identifier, additional=()):
-        session = self.catalog.resolve(identifier, self.root)
-        if self.session["id"] == identifier:
-            return
+    def _prepare(self, session, additional, cwd, base):
+        candidate = {**session, "granted_roots": list(session["granted_roots"])}
+        for name in additional:
+            path = canonical_directory(name, base=base)
+            self.ensure_trusted(self.writable(), path)
+            if str(path) not in candidate["granted_roots"]:
+                candidate["granted_roots"].append(str(path))
+        if cwd is not None:
+            candidate["cwd"] = str(canonical_directory(cwd, base=base))
+        self._validate(candidate, trusted=session["id"] is not None)
+        return candidate
+
+    def _save(self, candidate):
+        if candidate["id"] is None:
+            self.session = candidate
+        else:
+            self.session = self.writable().update_workspace(
+                candidate["id"], cwd=candidate["cwd"], granted_roots=candidate["granted_roots"],
+                expected_version=candidate["workspace_version"], lock=self.lock,
+            )
+
+    def configure(self, additional=(), cwd=None, *, startup=False):
+        self._idle()
+        base = self.startup_root if startup else Path(self.session["cwd"])
+        self._save(self._prepare(self.session, additional, cwd, base))
+
+    async def activate(self, identifier, additional=(), cwd=None):
+        self._idle()
+        self.catalog.resolve(identifier)
         store = self.writable()
-        target = SessionLock(self.home / "locks", identifier)
-        target.__enter__()
+        same = self.session["id"] == identifier
+        target = self.lock if same else SessionLock(self.home / "locks", identifier)
+        if not same:
+            target.__enter__()
         try:
-            session = self.catalog.resolve(identifier, self.root)
-            directories = self.directories(session, additional)
+            session = self.catalog.resolve(identifier)
+            try:
+                candidate = self._prepare(session, additional, cwd, self.startup_root)
+            except (OSError, ValueError, ConfigurationError, OperationError) as exc:
+                raise ConfigurationError(
+                    f"无法恢复保存位置：{session['cwd']}。"
+                    f"只读查看：agenthub history {identifier}；修复：agenthub --resume {identifier} "
+                    '--add-dir "有效目录" --cwd "有效目录"。' + str(exc)
+                ) from exc
             await store.recover_session(identifier)
-            if directories != session["dirs"]:
-                store.set_directories(identifier, directories)
-            session["dirs"] = directories
+            session = store.update_workspace(
+                identifier, cwd=candidate["cwd"], granted_roots=candidate["granted_roots"],
+                expected_version=session["workspace_version"], lock=target,
+            )
         except BaseException:
-            target.__exit__()
+            if not same:
+                target.__exit__()
             raise
         previous = self.lock
         self.session, self.lock = session, target
-        if previous:
+        if previous and not same:
             previous.__exit__()
 
     def materialize(self):
+        self._idle()
         if self.session["id"] is not None:
+            self._validate(self.session)
             return self.session
-        directories = self.directories(self.session)
-        session = self.writable().new_session(self.root)
+        cwd = canonical_directory(self.session["cwd"])
+        for name in self.session["granted_roots"]:
+            if cwd.is_relative_to(Path(name)):
+                self.ensure_trusted(self.writable(), canonical_directory(name))
+                break
+        self._validate(self.session)
+        session = self.writable().new_session(
+            self.session["origin_root"], cwd=cwd, granted_roots=self.session["granted_roots"]
+        )
         target = SessionLock(self.home / "locks", session["id"])
         target.__enter__()
-        try:
-            if directories:
-                self.store.set_directories(session["id"], directories)
-            session["dirs"] = directories
-        except BaseException:
-            target.__exit__()
-            raise
         self.session, self.lock = session, target
         return session
+
+    @contextmanager
+    def execution(self):
+        session = self.materialize()
+        self.running = True
+        try:
+            yield {**session, "granted_roots": list(session["granted_roots"])}
+        finally:
+            self.running = False
 
     def close(self):
         if self.lock:

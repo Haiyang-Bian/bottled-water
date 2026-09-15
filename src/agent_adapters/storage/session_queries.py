@@ -1,6 +1,8 @@
 """Read models over the existing local schema; no initialization or writes."""
 
 import json
+import os
+from pathlib import Path
 
 
 def decode(value, default=None):
@@ -33,7 +35,7 @@ class SessionQueries:
         where = f"WHERE {scope}"
         if root is not None:
             where += f" AND {position}=?"
-            args.append(str(root))
+            args.append(os.path.normcase(str(Path(root).resolve())))
         query = f"""
         SELECT s.id,{columns},count(r.id) run_count,
           (SELECT request FROM runs WHERE scope=s.id ORDER BY created,id LIMIT 1) first_request,

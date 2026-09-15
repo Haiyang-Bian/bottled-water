@@ -133,13 +133,9 @@ async def test_completion_wins_cancel_only_after_transaction_has_started():
 
 
 def legacy_database(path):
-    store = SQLiteStore(path)
-    session = store.new_session(path.parent)
-    store.trust(path.parent)
-    store.db.execute("DROP TABLE continuation_metadata")
-    store.db.execute("PRAGMA user_version=1")
-    store.close()
-    return session
+    from test_local_environment import legacy
+    legacy(path, 1)
+    return {"id": "old"}
 
 
 async def test_cancelled_started_operation_is_unknown_and_not_replayed(tmp_path):
@@ -183,7 +179,7 @@ def test_migration_requires_session_locks_and_backs_up_wal_consistently(tmp_path
     original.execute("INSERT INTO trusted VALUES('wal-only','now')")
     original.commit()
     migrated = SQLiteStore(path)
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.session(session["id"]) and migrated.is_trusted(tmp_path)
     with sqlite3.connect(migrated.backup_path) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1

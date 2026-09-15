@@ -80,7 +80,9 @@ def cli_fixture(tmp_path):
             delta = {
                 "content": 'Finished.\n```status_report\n{"state":"completed","will":"complete"}\n```'
             }
-            if scenario == "VISUAL":
+            if scenario.startswith("LOCATION") and step == 0:
+                delta = call("Read text", {"path": "note.txt"})
+            elif scenario == "VISUAL":
                 if step == 0:
                     delta = call("Execute a non-interactive", {
                         "script": "Start-Sleep -Seconds 3; Write-Output '中文工具结果 TEST PASSED'"
@@ -295,8 +297,8 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     run("trust", "add", str(second))
     run("--json", "-p", "ISOLATED", cwd=second)
     assert not any("REPAIR" in m["content"] for m in requests[-1]["messages"])
-    run("--continue", "--json", "-p", "CROSS_DENIED", expected=1)
-    run("--continue", "--add-dir", str(second), "--json", "-p", "CROSS_ALLOWED")
+    run("--continue", "--here", "--json", "-p", "CROSS_DENIED", expected=1)
+    run("--continue", "--here", "--add-dir", str(second), "--json", "-p", "CROSS_ALLOWED")
     failed = records(run("--json", "-p", "FAIL", expected=1))[-1]
     assert failed["state"] == "failed"
     assert failed["usage"]["estimated"]
@@ -317,6 +319,48 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
             timeout=20,
         )
         assert isolated.returncode == 0, isolated.stderr
+
+
+def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture):
+    from agent_subsystems.workspaces.paths import canonical_directory
+    run, project, second, requests = cli_fixture
+    run("trust", "add", str(project))
+    run("trust", "add", str(second))
+    first = records(run("--json", "-p", "REPAIR"))[-1]
+    task = first["context_scope_id"]
+    run("-c", "--json", "-p", "REMEMBER", cwd=second)
+    messages = requests[-1]["messages"]
+    assert sum(m["role"] == "user" and m["content"] == "REPAIR" for m in messages) == 1
+    assert str(canonical_directory(project)) in messages[0]["content"]
+    run("--json", "-p", "ISOLATED", cwd=second)
+    assert not any("REPAIR" in m.get("content", "") for m in requests[-1]["messages"])
+    assert len(json.loads(run("--json", "sessions").stdout)) == 2
+    assert len(json.loads(run("--json", "sessions", "--here").stdout)) == 1
+    calls = len(requests)
+    run("--here", "--resume", task, "--json", "-p", "INVALID", expected=2)
+    run("--resume", task, "--cwd", str(second), "--json", "-p", "INVALID", expected=2)
+    assert len(requests) == calls
+    changed = records(run("--resume", task, "--add-dir", str(second), "--cwd", str(second),
+                          "--json", "-p", "LOCATION"))
+    outcome = next(e["payload"]["result"] for e in changed if e["type"] == "agent.tool_result")
+    assert outcome["content"] == "separate project"
+    assert outcome["execution"]["default_cwd"] == str(canonical_directory(second))
+    run("-c", "--json", "-p", "LOCATION_RESTART")
+    assert str(canonical_directory(second)) in requests[-1]["messages"][0]["content"]
+    saved = json.loads(run("--json", "sessions").stdout)[0]
+    assert saved["id"] == task and saved["workspace_version"] == 1
+    moved = second.with_name("移动后的项目 C")
+    second.rename(moved)
+    calls = len(requests)
+    failed = run("--resume", task, "--json", "-p", "NO_REQUEST", expected=2)
+    assert "history" in failed.stdout
+    history = records(run("--json", "history", task))
+    assert any(t["request"] == "REPAIR" for t in history)
+    assert len(requests) == calls
+    run("trust", "add", str(moved))
+    run("--resume", task, "--add-dir", str(moved), "--cwd", str(moved),
+        "--json", "-p", "LOCATION_REPAIRED")
+    assert json.loads(run("--json", "sessions").stdout)[0]["workspace_version"] == 2
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object / SIGINT lifecycle")

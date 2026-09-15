@@ -18,6 +18,7 @@ from agent_subsystems.workspaces.paths import canonical_directory
 def saved(tmp_path):
     home, root = tmp_path / "home", canonical_directory(tmp_path)
     store = SQLiteStore(home / "state.sqlite3")
+    store.trust(root)
     a, b, empty = [store.new_session(root) for _ in range(3)]
     for run_id, session, created, state, prompt in [
         ("run-a", a, "2026-01-01", "completed", "修复中文项目"),
@@ -27,7 +28,7 @@ def saved(tmp_path):
             run_id, session["id"], state, created, json.dumps({"input": prompt}),
             json.dumps({"output": "已保存答复", "reason_code": state}), 0,
         ))
-    store.set_directories(a["id"], [])
+    store.db.execute("UPDATE sessions SET updated='2099-01-01' WHERE id=?", (a["id"],))
     yield home, root, store, a, b, empty
     store.close()
 
@@ -50,11 +51,10 @@ def test_catalog_ignores_empty_and_opening_times(saved):
     assert reader.list(root / "another") == []
     assert list(store.db.iterdump()) == before
     with pytest.raises(ConfigurationError, match="Run ID"):
-        reader.resolve("run-a", root)
-    with pytest.raises(ConfigurationError, match="其他目录"):
-        reader.resolve(a["id"], root / "other")
+        reader.resolve("run-a")
+    assert reader.resolve(a["id"])["cwd"] == str(root)
     with pytest.raises(ConfigurationError, match="不存在"):
-        reader.resolve("missing", root)
+        reader.resolve("missing")
 
 
 def test_missing_catalog_and_draft_do_not_create_state(tmp_path):
@@ -83,7 +83,7 @@ async def test_busy_or_failed_switch_preserves_original(saved):
             raise ConfigurationError("declined")
         controller.ensure_trusted = reject
         with pytest.raises(ConfigurationError, match="declined"):
-            await controller.activate(b["id"])
+            await controller.activate(b["id"], [root])
         assert controller.session["id"] == a["id"]
         with SessionLock(home / "locks", b["id"]):
             pass
@@ -145,3 +145,82 @@ async def test_browsing_and_exit_do_not_construct_provider(tmp_path, monkeypatch
             pipe.send_text("/help\r/exit\r")
             assert await app.chat(parser().parse_args([]), tmp_path / "home") == 0
     assert not (tmp_path / "home").exists()
+
+
+async def test_global_restore_cd_and_draft_preserve_grants_and_history(saved):
+    from agent_contracts.errors import OperationError
+    home, root, store, a, b, _ = saved
+    elsewhere = root / "乙 B"
+    elsewhere.mkdir()
+    controller = SessionController(home, elsewhere, lambda db, p: db.trust(p))
+    try:
+        await controller.activate(a["id"])
+        assert controller.session["cwd"] == str(root)
+        controller.configure(cwd="乙 B")
+        assert controller.session["workspace_version"] == 1
+        assert controller.catalog.list()[0].id == b["id"]
+        assert controller.catalog.list(elsewhere)[0].id == a["id"]
+        before = list(store.db.iterdump())
+        SessionHistoryReader(home).page(a["id"])
+        assert list(store.db.iterdump()) == before
+        with controller.execution():
+            with pytest.raises(ConfigurationError, match="运行期间"):
+                controller.configure(cwd=root)
+        outside = root.parent / (root.name + "-outside")
+        outside.mkdir()
+        with pytest.raises(OperationError, match="explicitly"):
+            controller.configure(cwd=outside)
+        controller.configure([outside])
+        controller.configure(cwd=outside)
+        saved_position = dict(controller.session)
+        controller.new()
+        assert controller.session["id"] is None
+        assert controller.session["cwd"] == saved_position["cwd"]
+        assert controller.session["granted_roots"] == saved_position["granted_roots"]
+        await controller.activate(a["id"])
+        assert controller.session == saved_position
+    finally:
+        controller.close()
+
+
+async def test_failed_location_restore_keeps_original_and_history_readable(saved):
+    home, root, store, a, b, _ = saved
+    missing = root / "missing"
+    with SessionLock(home / "locks", b["id"]) as lock:
+        store.update_workspace(b["id"], cwd=missing, granted_roots=[root],
+                               expected_version=0, lock=lock)
+    controller = SessionController(home, root, lambda db, p: db.trust(p))
+    try:
+        await controller.activate(a["id"])
+        with pytest.raises(ConfigurationError, match="只读查看"):
+            await controller.activate(b["id"])
+        assert controller.session["id"] == a["id"]
+        assert SessionHistoryReader(home).page(b["id"])[0][0].request == "继续检查"
+        await controller.activate(b["id"], cwd=root)
+        assert controller.session["cwd"] == str(root)
+    finally:
+        controller.close()
+
+
+async def test_control_transaction_failure_keeps_current_session_and_lock(saved):
+    import sqlite3
+    home, root, store, a, b, _ = saved
+    target = root / "target"
+    target.mkdir()
+    controller = SessionController(home, root, lambda db, p: db.trust(p))
+    try:
+        await controller.activate(a["id"])
+        original = dict(controller.session)
+        store.db.execute("""CREATE TRIGGER fail_control BEFORE INSERT ON session_events
+                            BEGIN SELECT RAISE(ABORT,'injected'); END""")
+        with pytest.raises(sqlite3.IntegrityError):
+            controller.configure(cwd=target)
+        assert controller.session == original and store.session(a["id"]) == original
+        with pytest.raises(sqlite3.IntegrityError):
+            await controller.activate(b["id"], cwd=target)
+        assert controller.session == original
+        assert controller.lock.owns(home / "locks", a["id"])
+        with SessionLock(home / "locks", b["id"]):
+            pass
+    finally:
+        controller.close()
