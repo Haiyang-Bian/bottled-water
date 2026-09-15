@@ -2,11 +2,19 @@
 
 This map points to the current implementation files. It intentionally omits deleted historical design notes.
 
+Target module ownership is defined in the [system architecture](./architecture/README.md) and [subsystem catalog](./architecture/subsystems.md). The CLI MVP path has migrated into root src; the remaining subsystem directories contain ownership notes. Use the migration status table to distinguish implemented and planned modules.
+
 ## Repository Root
 
 ```text
+src/                     agent_contracts, agent_runtime, agent_subsystems, model_provider, agent_adapters, agent_cli
+tests/                   shared system and CLI tests
+pyproject.toml           agenthub-system distribution and uv workspace
+uv.lock                  single workspace lock
 backend/                 FastAPI backend, SQLAlchemy models, Alembic migrations, tests
 frontend/                React/Vite frontend, tests, styles, API client
+desktop-client/          Tauri desktop client and local backend packaging
+mobile-client/           Mobile PWA/Capacitor client
 docker/                  Docker Compose stack, nginx config, Dockerfiles
 docs/                    Current project documentation
 e2e/                     Playwright end-to-end configuration
@@ -33,13 +41,10 @@ backend/
       persistence/       runtime persistence adapters
       schemas/           Pydantic request/response schemas
       services/          business services
-    agent_runtime/       orchestration/runtime primitives
     common/              shared helpers
     db/                  database config, session, models
-    model_provider/      model provider abstraction
   tests/                 backend pytest suite
   pyproject.toml
-  uv.lock
 ```
 
 Core backend files:
@@ -97,6 +102,8 @@ Database model groups:
 - `files.py`: file assets, knowledge bases, knowledge documents.
 - `capabilities.py`: skills, tools, tool invocations, model configs, MCP servers, sandbox sessions, remote connections, external agent runs.
 - `security.py`: audit, roles, permissions, user-role mappings.
+- `runtime.py`: Run, ContextScope state, ordered events, consumers, and team records; SQL scopes currently reference conversations.
+- `repositories.py`: conversation repository and per-agent worktree bindings.
 
 ## Frontend
 
@@ -131,8 +138,10 @@ Core frontend files:
 
 Runtime coordination files:
 
-- `backend/src/agent_runtime/strategies/policies.py`: single-agent, workflow, and generic Team Lead scheduling policies.
-- `backend/src/app/services/conversation_run_manager.py`: runtime event persistence, Run lifecycle, input queueing, and Team Leader summary projection.
+- `src/agent_runtime/strategies/policies.py`: single-agent, workflow, and generic Team Lead scheduling policies.
+- `src/agent_runtime/runtime/engine.py`: authoritative Run lifecycle, Actor control, ordered Journal writes, and terminal state.
+- `backend/src/app/services/runtime_service.py`: AgentHub composition and product-to-runtime adapters.
+- `backend/src/app/services/conversation_run_manager.py`: active Handle management, conversation input queueing, event consumption, and product projection; Kernel owns Run terminal state.
 - `backend/src/app/services/runtime/generation_records.py`: generation event and runtime summary records.
 - `frontend/src/lib/runtimeEvents.ts`: frontend runtime event normalization.
 - `frontend/src/features/chat/components/ChatPanel/RuntimeDecisionStrip.tsx`: multi-agent plan/progress/summary display.

@@ -40,6 +40,7 @@ class RuntimeContextState(Base, TimestampMixin):
     messages: Mapped[list] = mapped_column(ContentJSON, default=list)
     blackboard: Mapped[dict] = mapped_column(SensitiveJSON, default=dict)
     agent_memories: Mapped[dict] = mapped_column(SensitiveJSON, default=dict)
+    continuation: Mapped[dict | None] = mapped_column(SensitiveJSON, nullable=True)
 
 
 class RuntimeEvent(Base):

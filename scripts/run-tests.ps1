@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("backend", "frontend", "e2e")]
+    [ValidateSet("system", "backend", "frontend", "e2e")]
     [string]$Stack,
 
-    [ValidateSet("auth", "security", "providers", "agents", "runtime", "models", "chat", "workflow", "desktop", "collaboration", "worktrees")]
+    [ValidateSet("cli", "auth", "security", "providers", "agents", "runtime", "models", "chat", "workflow", "desktop", "collaboration", "worktrees")]
     [string]$Module,
 
     [ValidateSet("unit", "integration", "component", "live")]
@@ -48,10 +48,18 @@ if ($All) {
 }
 
 switch ($Stack) {
+    "system" {
+        Push-Location $repoRoot
+        try {
+            & uv run --package agenthub-system --extra cli pytest -q @targets
+        } finally {
+            Pop-Location
+        }
+    }
     "backend" {
         Push-Location (Join-Path $repoRoot "backend")
         try {
-            & uv run pytest -q @targets
+            & uv run --package agenthub-backend --extra dev pytest -q @targets
         } finally {
             Pop-Location
         }

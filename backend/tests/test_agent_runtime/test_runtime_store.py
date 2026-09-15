@@ -87,6 +87,63 @@ async def test_sql_context_store_commits_structured_state_and_rejects_conflicts(
         await engine.dispose()
 
 
+async def test_sql_completion_rolls_back_context_cursors_and_terminal_together(tmp_path):
+    from app.persistence.runtime_completion import SQLRunCompletion
+    from agent_runtime.runtime.run_journal import EventSequenceConflictError
+
+    engine, factory = await _database(tmp_path)
+    journal, contexts = SQLRunJournal(factory), SQLContextStore(factory)
+    request = RunRequest(
+        "scope",
+        "original task",
+        (AgentConfig("a", "A", "work"),),
+        NeverCalledPolicy(),
+        run_id="atomic-run",
+    )
+    now = datetime.now(UTC)
+    snapshot = RunSnapshot(
+        request.run_id,
+        "scope",
+        RunState.RUNNING,
+        None,
+        0,
+        0,
+        0,
+        Usage(),
+        0,
+        RuntimeLimits(),
+        now,
+        None,
+    )
+    await journal.create_run(request, snapshot)
+    result = RunResult(
+        request.run_id, "scope", RunState.COMPLETED, "completed", now, now, Usage(), 1, "done"
+    )
+    delta = ContextDelta(
+        0,
+        {},
+        messages=({"role": "user", "content": "original task"},),
+        continuation={"cursors": {"failed-run": 5}, "summary": "observed facts"},
+    )
+    try:
+        completion = SQLRunCompletion(factory)
+        with pytest.raises(EventSequenceConflictError):
+            await completion.try_complete(
+                delta, result, EventEnvelope(request.run_id, "scope", 2, "system.run_completed", {})
+            )
+        assert (await contexts.load("scope")).version == 0
+        assert not (await journal.read_events(request.run_id)).terminal
+        event = EventEnvelope(request.run_id, "scope", 1, "system.run_completed", {})
+        updated = await completion.try_complete(delta, result, event)
+        assert updated.continuation == delta.continuation
+        assert updated.version == (await contexts.load("scope")).version == 1
+        assert (await journal.read_events(request.run_id)).terminal
+        assert await completion.try_complete(delta, result, event) is None
+        assert (await journal.list_scope_runs("scope"))[0].request == "original task"
+    finally:
+        await engine.dispose()
+
+
 async def test_sql_run_journal_persists_ordered_redacted_events_and_atomic_terminal(tmp_path):
     engine, factory = await _database(tmp_path)
     journal = SQLRunJournal(factory)

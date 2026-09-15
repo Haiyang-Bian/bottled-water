@@ -6,9 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 if ($ApiBaseUrl) {
-  uv run --project backend pytest tests --live-base-url $ApiBaseUrl
+  uv run --project backend --package agenthub-backend --extra dev pytest backend/tests --live-base-url $ApiBaseUrl
 } else {
-  uv run --project backend pytest tests
+  uv run --project backend --package agenthub-backend --extra dev pytest backend/tests
 }
 
 if (Test-Path "frontend/package.json") {

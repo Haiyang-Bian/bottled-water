@@ -1,0 +1,19 @@
+# Backend build only needs application and shared Python sources.
+**
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+!backend/
+!backend/pyproject.toml
+!backend/src/
+!backend/src/**
+!backend/alembic/
+!backend/alembic/**
+!backend/alembic.ini
+!backend/server.py
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+**/.env*
+**/*.log

@@ -5,22 +5,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_runtime import (
-    AgentConfig,
-    AgentReport,
-    AgentState,
-    AgentWill,
-    CollaborativeTeamPolicy,
-    EventEnvelope,
-    RunRequest,
-    RuntimeEngine,
-    RunSnapshot,
-    RunState,
-    RuntimeLimits,
-    SchedulingProposal,
-    TeamMessage,
-    Usage,
-)
+from agent_runtime import AgentConfig, AgentReport, AgentState, AgentWill, EventEnvelope, RunRequest, RuntimeEngine, RunSnapshot, RunState, RuntimeLimits, SchedulingProposal, TeamMessage, Usage
+from agent_runtime.strategies.collaborative import CollaborativeTeamPolicy
 from agent_runtime.core.run_types import AgentExecutionResult
 from agent_runtime.runtime.run_journal import InMemoryRunJournal
 from agent_runtime.runtime.team_collaboration import InMemoryTeamJournal

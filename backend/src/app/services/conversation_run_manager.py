@@ -105,8 +105,6 @@ class ConversationRunManager:
     ) -> RuntimeBinding:
         """Get or create cached adapters; terminated Runs themselves are never cached."""
 
-
-
         conversation_id = str(conversation.id)
         requested_model_config_id = str(model_config_id) if model_config_id else None
         requested_strategy = resolve_scheduling_strategy(conversation)
@@ -125,8 +123,10 @@ class ConversationRunManager:
                     return self._bindings[conversation_id]
                 if (
                     self._session_model_config_ids.get(conversation_id) == requested_model_config_id
-                    and self._session_scheduling_strategies.get(conversation_id) == requested_strategy
-                    and self._session_workflow_enabled.get(conversation_id) == requested_workflow_enabled
+                    and self._session_scheduling_strategies.get(conversation_id)
+                    == requested_strategy
+                    and self._session_workflow_enabled.get(conversation_id)
+                    == requested_workflow_enabled
                 ):
                     return self._bindings[conversation_id]
                 self._bindings.pop(conversation_id, None)
@@ -136,7 +136,9 @@ class ConversationRunManager:
 
             agents = await OrchestratorService._get_conversation_agents(db, conversation)
             if not agents:
-                raise ValueError(f"Conversation has no available agents: conversation_id={conversation_id}")
+                raise ValueError(
+                    f"Conversation has no available agents: conversation_id={conversation_id}"
+                )
 
             binding = await OrchestratorService.create_engine(
                 db,
@@ -161,7 +163,9 @@ class ConversationRunManager:
             )
             return binding
 
-    async def recover_conversation(self, conversation_id: str, *, reason: str = "process_lost") -> bool:
+    async def recover_conversation(
+        self, conversation_id: str, *, reason: str = "process_lost"
+    ) -> bool:
         """Recover a conversation whose running generation belongs to a dead process."""
         if self.is_generation_running(conversation_id):
             return False
@@ -272,6 +276,7 @@ class ConversationRunManager:
                 client_message_id=client_message_id,
                 agent_mentions=agent_mentions,
             )
+            context_metadata.update(binding.run_metadata or {})
             context_metadata["allowed_agent_ids"] = [agent.id for agent in binding.agents]
             context_metadata["mentioned_agent_ids"] = context_metadata.get(
                 "mention_target_agent_ids", []
@@ -300,11 +305,14 @@ class ConversationRunManager:
             )
             self._running_tasks[conversation_id] = task
             task.add_done_callback(
-                lambda t, cid=conversation_id, gid=generation_id: self._on_generation_done(cid, gid, t)
+                lambda t, cid=conversation_id, gid=generation_id: self._on_generation_done(
+                    cid, gid, t
+                )
             )
 
-        logger.info("Generation started", conversation_id=conversation_id, content_preview=content[:50])
-
+        logger.info(
+            "Generation started", conversation_id=conversation_id, content_preview=content[:50]
+        )
 
     async def _persist_recovered_generation_notice(
         self,
@@ -375,7 +383,6 @@ class ConversationRunManager:
         await db.commit()
         await db.refresh(message)
         return message
-
 
     async def _run_generation(
         self,
@@ -475,7 +482,9 @@ class ConversationRunManager:
                         )
                         return
                 logger.info(
-                    "User input queued", conversation_id=conversation_id, content_preview=content[:50]
+                    "User input queued",
+                    conversation_id=conversation_id,
+                    content_preview=content[:50],
                 )
                 self._queued_inputs.setdefault(conversation_id, []).append(
                     {
@@ -498,7 +507,11 @@ class ConversationRunManager:
             )
             return
 
-        logger.info("User input starts generation", conversation_id=conversation_id, content_preview=content[:50])
+        logger.info(
+            "User input starts generation",
+            conversation_id=conversation_id,
+            content_preview=content[:50],
+        )
         await self.start_generation(
             conversation_id,
             content,
@@ -509,11 +522,8 @@ class ConversationRunManager:
             agent_mentions=agent_mentions,
         )
 
-
     async def cancel_generation(self, conversation_id: str) -> bool:
         """Cancel the active generation."""
-
-
 
         task = self._running_tasks.get(conversation_id)
         if task and not task.done():
@@ -549,9 +559,7 @@ class ConversationRunManager:
         async with self._session_factory() as db:
             if cancelled_ids:
                 reconciled = await reconcile_terminal_run_records(db, cancelled_ids)
-                generation_id = (
-                    reconciled[-1].generation_id if reconciled else cancelled_ids[-1]
-                )
+                generation_id = reconciled[-1].generation_id if reconciled else cancelled_ids[-1]
             else:
                 generation_id = await cancel_abandoned_generation_record(
                     db, conversation_id, reason="user_cancelled"
@@ -615,7 +623,9 @@ class ConversationRunManager:
         )
         return generation_id
 
-    def _on_generation_done(self, conversation_id: str, generation_id: str, task: asyncio.Task) -> None:
+    def _on_generation_done(
+        self, conversation_id: str, generation_id: str, task: asyncio.Task
+    ) -> None:
         """Handle generation task completion."""
         self._running_tasks.pop(conversation_id, None)
         handle = self._active_handles.get(conversation_id)
@@ -653,12 +663,12 @@ class ConversationRunManager:
                 )
             )
         except RuntimeError:
-            logger.warning("Generation finalization task failed to start", conversation_id=conversation_id)
+            logger.warning(
+                "Generation finalization task failed to start", conversation_id=conversation_id
+            )
 
     async def close_conversation(self, conversation_id: str) -> None:
         """Cancel active work and forget cached adapters for a conversation."""
-
-
 
         await self.cancel_generation(conversation_id)
         binding = self._bindings.pop(conversation_id, None)
@@ -852,7 +862,8 @@ class ConversationRunManager:
             sink = WebSocketSink(conversation_id)
             event_type = (
                 "message:updated"
-                if event.type == "system.agent_completed" or bool(getattr(message, "_runtime_emit_updated", False))
+                if event.type == "system.agent_completed"
+                or bool(getattr(message, "_runtime_emit_updated", False))
                 else "message:new"
             )
             await sink.emit(RuntimeEvent(type=event_type, payload=message_to_dict(message)))
@@ -1018,10 +1029,14 @@ class ConversationRunManager:
                 thinking_enabled=next_thinking_enabled,
                 user_message_id=str(next_user_message_id) if next_user_message_id else None,
                 client_message_id=str(next_client_message_id) if next_client_message_id else None,
-                agent_mentions=next_agent_mentions if isinstance(next_agent_mentions, list) else None,
+                agent_mentions=next_agent_mentions
+                if isinstance(next_agent_mentions, list)
+                else None,
             )
         except Exception as exc:
-            logger.error("Queued input failed to start", conversation_id=conversation_id, error=str(exc))
+            logger.error(
+                "Queued input failed to start", conversation_id=conversation_id, error=str(exc)
+            )
             await WebSocketSink(conversation_id).emit(
                 RuntimeEvent(
                     type="generation:failed",
@@ -1139,12 +1154,12 @@ class ConversationRunManager:
         )
         report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
         status_report = (
-            payload.get("status_report")
-            if isinstance(payload.get("status_report"), dict)
-            else {}
+            payload.get("status_report") if isinstance(payload.get("status_report"), dict) else {}
         )
         runtime_report = report or status_report
-        existing_content = existing.content if existing and isinstance(existing.content, dict) else {}
+        existing_content = (
+            existing.content if existing and isinstance(existing.content, dict) else {}
+        )
         existing_content = {
             key: value for key, value in existing_content.items() if key != "thinking"
         }
@@ -1356,7 +1371,9 @@ def _mention_target_agent_ids(agent_mentions: list[dict[str, Any]] | None) -> li
 
 
 def _runtime_generation(conversation: Conversation, generation_id: str) -> dict[str, Any] | None:
-    runtime = (conversation.extra or {}).get("runtime") if isinstance(conversation.extra, dict) else {}
+    runtime = (
+        (conversation.extra or {}).get("runtime") if isinstance(conversation.extra, dict) else {}
+    )
     for item in (runtime or {}).get("generations") or []:
         if isinstance(item, dict) and str(item.get("id") or "") == generation_id:
             return item

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from agent_contracts.persistence import ContinuationRun
 from datetime import datetime
 
 from sqlalchemy import select
@@ -43,11 +44,33 @@ class SQLRunJournal:
                     last_event_sequence=0,
                     journal_version=1,
                     output="",
-                    extra=dict(request.metadata),
+                    extra={**request.metadata, "request_input": request.input},
                     started_at=snapshot.started_at or utcnow(),
                 )
             )
             await db.commit()
+
+    async def list_scope_runs(self, scope_id):
+        async with self._session_factory() as db:
+            rows = (
+                await db.scalars(
+                    select(RuntimeRun)
+                    .where(RuntimeRun.context_scope_id == scope_id)
+                    .order_by(RuntimeRun.started_at, RuntimeRun.id)
+                )
+            ).all()
+            return [
+                ContinuationRun(
+                    row.id,
+                    scope_id,
+                    (row.extra or {}).get("request_input", row.input_preview),
+                    row.state,
+                    row.reason_code,
+                    row.last_event_sequence,
+                    "request_input" in (row.extra or {}),
+                )
+                for row in rows
+            ]
 
     async def append_event(self, event: EventEnvelope) -> None:
         persisted = sanitize_event_for_persistence(event)
@@ -155,7 +178,11 @@ class SQLRunJournal:
                             "system.run_cancelled" if state == "cancelled" else "system.run_failed"
                         ),
                         source="recovery",
-                        payload={"state": state, "reason_code": reason_code, "usage": run.usage or {}},
+                        payload={
+                            "state": state,
+                            "reason_code": reason_code,
+                            "usage": run.usage or {},
+                        },
                         occurred_at=now,
                     )
                     await self._append_locked(db, run, terminal)

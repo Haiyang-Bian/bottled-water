@@ -5,7 +5,8 @@ from typing import Any
 
 import pytest
 
-from model_provider import ChatMessage, ModelConfig, create_provider, get_builtin_providers
+from app.services.provider_catalog import get_builtin_providers
+from model_provider import ChatMessage, ModelConfig, create_provider
 from model_provider.providers import deepseek as deepseek_module
 from model_provider.providers import openai_compatible as openai_module
 

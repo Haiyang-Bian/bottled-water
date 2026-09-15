@@ -2,6 +2,16 @@
 
 This file is the compact status reference for current docs. It avoids historical closure notes and only tracks present behavior and known boundaries.
 
+## Planned: Local Agent Environment With Persistent Memory
+
+Recorded on 2026-09-15 against shared package 0.1.7 (`d43f07b`): [design](./architecture/local-agent-environment.md) and [development stages](./architecture/local-agent-roadmap.md). L1 global task recovery and working-location separation, L2 foundational memory, L3 resource/software continuity, and L4 shared memory with fine-grained execution are **not implemented or accepted**. Current CLI recovery is still directory-bound, AgentMemory remains scope-bound, and native commands still run as the current user without OS filesystem/network isolation. This documentation work changes no runtime, schema, installed package or authorization.
+
+## Architecture Split Status
+
+The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. The local CLI MVP now uses the root `agenthub-system` distribution and shared Kernel/AgentLoop. It includes persistent sessions, trust, DPAPI/env credentials, file operations, PowerShell/Git, JSONL, replay and managed Windows processes. See [CLI acceptance](./architecture/cli-mvp.md) for measured results and remaining live-service validation. A standalone eval host and non-MVP subsystem extraction remain planned; desktop still packages the full Web host.
+
+Runtime lifecycle and public ports already exist. CLI executes without application context or ORM; Web-specific Skill/MCP and product adapters remain in the Web host. The generic tool user-permission check also retains a warnings-only path; see [capability boundaries](./capability-data-boundaries.md).
+
 ## Stable For Local Development And Demos
 
 - Authentication, open member registration, database-backed RBAC, administrator bootstrap, users, workspaces, projects, and conversation management.
@@ -65,6 +75,7 @@ When a feature changes, update the closest source-of-truth document:
 
 - Product flow: `docs/functional-guide.md`
 - Code ownership: `docs/file-map.md`
-- Backend/runtime design: `docs/backend-architecture.md` or `docs/agent-workflow-runtime.md`
+- System target and module boundaries: `docs/architecture/README.md`, `docs/architecture/subsystems.md`, and `docs/architecture/migration.md`
+- Current backend/runtime behavior: `docs/backend-architecture.md`, `docs/agent-workflow-runtime.md`, and `docs/runtime/current-state.md`
 - Events: `docs/event-protocol.md`
 - Deployment: `docker/README.md` and `docs/development-guide.md`

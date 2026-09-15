@@ -10,23 +10,24 @@ ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
 WORKDIR /app
 
 # 安装依赖
-COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-install-project --no-dev
+COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml ./backend/pyproject.toml
+RUN uv sync --frozen --package agenthub-backend --no-install-workspace --no-dev
 
 # 复制源码
 COPY . .
 
-# src/ 目录加入 Python 路径，使 import app 正常工作
-ENV PYTHONPATH="/app/src"
+# 与 Compose 的健康检查保持同一监听端口；源码通过 workspace 安装。
+ENV API_HOST="0.0.0.0" API_PORT="8000"
 
 # 安装项目（包含所有依赖）
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --package agenthub-backend --no-dev
 
-# 健康检查（uv run 自动使用 .venv）
+# 使用已安装环境进行健康检查，不在容器启动时重新同步依赖。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD uv run python -c "import httpx; httpx.get('http://localhost:8888/health')" || exit 1
+    CMD /app/.venv/bin/python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" || exit 1
 
-EXPOSE 8888
+EXPOSE 8000
 
 # 项目启动入口为 server.py（内部读取配置并调用 uvicorn）
-CMD ["uv", "run", "server.py"]
+CMD ["/app/.venv/bin/python", "backend/server.py"]

@@ -13,7 +13,6 @@ from agent_runtime import (
     AgentReport,
     AgentState,
     AgentWill,
-    CollaborativeTeamPolicy,
     EventEnvelope,
     RunRequest,
     RunSnapshot,
@@ -24,6 +23,7 @@ from agent_runtime import (
     TeamMessage,
     Usage,
 )
+from agent_runtime.strategies.collaborative import CollaborativeTeamPolicy
 from app.persistence.runtime_journal import SQLRunJournal
 from app.persistence.team_journal import SQLTeamJournal
 from app.api.runtime_events import list_team_messages
@@ -32,7 +32,14 @@ from app.core.errors import NotFoundError
 from app.services.conversation_run_manager import ConversationRunManager
 from app.services.runtime_service import RuntimeBinding
 from db.base import Base
-from db.models import Agent, Conversation, ConversationTeamSettings, RuntimeRun, RuntimeTeamMessage, User
+from db.models import (
+    Agent,
+    Conversation,
+    ConversationTeamSettings,
+    RuntimeRun,
+    RuntimeTeamMessage,
+    User,
+)
 from app.services.serialization import conversation_to_dict
 from agent_runtime.core.run_types import AgentExecutionResult
 
@@ -300,7 +307,12 @@ class LiveInputExecutor:
 async def test_run_manager_injects_user_input_into_active_collaborative_run(tmp_path):
     engine, factory = await _database(tmp_path)
     executor = LiveInputExecutor()
+    from app.persistence.runtime_store import SQLContextStore
+    from app.persistence.runtime_completion import SQLRunCompletion
+
     runtime = RuntimeEngine(
+        context_store=SQLContextStore(factory),
+        completion_port=SQLRunCompletion(factory),
         agent_executor=executor,
         run_journal=SQLRunJournal(factory),
         team_journal=SQLTeamJournal(factory),

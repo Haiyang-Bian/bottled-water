@@ -2,6 +2,8 @@
 
 The backend is a FastAPI application under `backend/src`. It is organized by API routers, service domains, SQLAlchemy models, and runtime orchestration modules.
 
+This page describes the current implementation. The target is documented in the [system architecture](./architecture/README.md), with a [module catalog](./architecture/subsystems.md) and [current problems and migration plan](./architecture/migration.md). In that design, AgentHub is a host of a shared Kernel and subsystems; the extraction has not yet occurred.
+
 ## Request Flow
 
 ```text
@@ -70,7 +72,7 @@ Agent tool execution has three important layers:
 - Permission/catalog: `services/tools/catalog.py`, `permissions.py`, and `toolboxes.py`.
 - Execution: `services/tools/executor.py` and `services/tools/builtins`.
 
-The model may request a tool call, but backend permission checks and schema validation decide whether it actually executes. Tool results must be persisted and used as the factual source for UI cards, artifact links, and deployment status.
+The model may request a tool call; execution is subject to agent capability filtering, schema validation, and tool-specific resource checks. A current gap is that the general executor calls `check_user_tool_permissions(..., strict=False)`, which records missing user permissions as warnings rather than rejecting them at that check. This must not be read as universal permission enforcement; the target tool subsystem requires explicit authorization at execution time. Tool results must be persisted and used as the factual source for UI cards, artifact links, and deployment status.
 
 Interactive command execution is split by behavior:
 

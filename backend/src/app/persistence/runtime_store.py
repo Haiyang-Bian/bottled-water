@@ -30,30 +30,36 @@ class SQLContextStore:
     async def commit(self, scope_id: str, delta: ContextDelta) -> ContextSnapshot:
         async with self._session_factory() as db:
             async with db.begin():
-                row = await db.scalar(
-                    select(RuntimeContextState)
-                    .where(RuntimeContextState.context_scope_id == scope_id)
-                    .with_for_update()
-                )
-                if row is None:
-                    if delta.expected_version != 0:
-                        raise ContextConflictError(
-                            f"Context version conflict: expected {delta.expected_version}, actual 0"
-                        )
-                    row = RuntimeContextState(context_scope_id=scope_id, version=0)
-                    db.add(row)
-                if row.version != delta.expected_version:
-                    raise ContextConflictError(
-                        f"Context version conflict: expected {delta.expected_version}, actual {row.version}"
-                    )
-                row.version += 1
-                row.messages = list(delta.messages)
-                row.blackboard = dict(delta.blackboard)
-                row.agent_memories = {
-                    agent_id: asdict(memory) for agent_id, memory in delta.agent_memories.items()
-                }
+                row = await self.commit_in_session(db, scope_id, delta)
             await db.refresh(row)
             return _context_snapshot(row)
+
+    async def commit_in_session(self, db, scope_id, delta):
+        row = await db.scalar(
+            select(RuntimeContextState)
+            .where(RuntimeContextState.context_scope_id == scope_id)
+            .with_for_update()
+        )
+        if row is None:
+            if delta.expected_version != 0:
+                raise ContextConflictError(
+                    f"Context version conflict: expected {delta.expected_version}, actual 0"
+                )
+            row = RuntimeContextState(context_scope_id=scope_id, version=0)
+            db.add(row)
+        if row.version != delta.expected_version:
+            raise ContextConflictError(
+                f"Context version conflict: expected {delta.expected_version}, actual {row.version}"
+            )
+        row.version += 1
+        row.messages = list(delta.messages)
+        row.blackboard = dict(delta.blackboard)
+        row.continuation = dict(delta.continuation)
+        row.agent_memories = {
+            agent_id: asdict(memory) for agent_id, memory in delta.agent_memories.items()
+        }
+        await db.flush()
+        return row
 
 
 def _context_snapshot(row: RuntimeContextState) -> ContextSnapshot:
@@ -75,4 +81,5 @@ def _context_snapshot(row: RuntimeContextState) -> ContextSnapshot:
         messages=tuple(row.messages or ()),
         blackboard=dict(row.blackboard or {}),
         agent_memories=memories,
+        continuation=dict(row.continuation or {}),
     )

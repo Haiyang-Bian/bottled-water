@@ -13,6 +13,7 @@ import pytest
 _SRC_DIR = Path(__file__).parent.parent / "src"
 _TESTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SRC_DIR))
+sys.path.insert(0, str(Path(__file__).parents[2] / "src"))
 sys.path.insert(0, str(_TESTS_DIR))
 
 

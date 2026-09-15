@@ -7,10 +7,11 @@ where = ["src"]
 
 [project]
 name = "agenthub-backend"
-version = "0.1.0"
+version = "0.1.7"
 description = "AgentHub multi-agent collaboration backend"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "agenthub-system==0.1.7",
     "alembic>=1.13.3",
     "email-validator>=2.2.0",
     "fastapi>=0.115.0",
@@ -49,7 +50,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "."]
+pythonpath = ["src", "../src", "."]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 markers = [

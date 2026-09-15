@@ -12,9 +12,13 @@ This guide covers the current local development and deployment workflow.
 
 ## Backend Setup
 
+The root uv workspace shares one `uv.lock`. `agenthub-system` in root `src` supplies the
+Kernel, subsystems and CLI; `agenthub-backend` owns Web dependencies. For CLI-only
+installation and testing, see [Local CLI](./cli.md).
+
 ```powershell
 cd backend
-uv sync --extra dev
+uv sync --package agenthub-backend --extra dev
 uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```

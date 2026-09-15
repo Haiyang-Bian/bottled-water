@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $desktopRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $desktopRoot
 $backendRoot = Join-Path $repoRoot "backend"
+$sharedRoot = Join-Path $repoRoot "src"
 $binaryRoot = Join-Path $desktopRoot "src-tauri\binaries"
 $buildRoot = Join-Path $desktopRoot ".build-sidecar"
 
@@ -18,16 +19,18 @@ $targetTriple = $hostLine.Substring("host:".Length).Trim()
 $extension = if ($IsWindows -or $env:OS -eq "Windows_NT") { ".exe" } else { "" }
 $targetBinary = Join-Path $binaryRoot "agenthub-backend-$targetTriple$extension"
 
-if ($SkipIfFresh -and (Test-Path -LiteralPath $targetBinary)) {
-    $backendInputs = Get-ChildItem -LiteralPath $backendRoot -Recurse -File |
-        Where-Object { $_.Extension -in ".py", ".toml", ".lock" } |
-        Select-Object -ExpandProperty FullName
-    $inputPaths = @($backendInputs) + @($PSCommandPath)
-    $latestInput = $inputPaths |
-        Get-Item |
-        Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -First 1
-    if ($latestInput -and (Get-Item -LiteralPath $targetBinary).LastWriteTimeUtc -ge $latestInput.LastWriteTimeUtc) {
+$sourceInputs = Get-ChildItem -LiteralPath @((Join-Path $backendRoot "src"), (Join-Path $backendRoot "alembic"), $sharedRoot) -Recurse -File |
+    Where-Object { $_.Extension -eq ".py" } | Select-Object -ExpandProperty FullName
+$inputPaths = @($sourceInputs) + @(Get-ChildItem -LiteralPath $backendRoot -Filter "*.py" -File | Select-Object -ExpandProperty FullName) + @(
+    $PSCommandPath, (Join-Path $repoRoot "pyproject.toml"), (Join-Path $repoRoot "uv.lock"), (Join-Path $backendRoot "pyproject.toml")
+)
+$fingerprintText = ($inputPaths | Sort-Object | ForEach-Object { "$($_):$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }) -join "`n"
+$hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+$fingerprint = [BitConverter]::ToString($hashAlgorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprintText))).Replace("-", "")
+$hashAlgorithm.Dispose()
+$fingerprintPath = "$targetBinary.inputs.sha256"
+if ($SkipIfFresh -and (Test-Path -LiteralPath $targetBinary) -and (Test-Path -LiteralPath $fingerprintPath)) {
+    if ((Get-Content -LiteralPath $fingerprintPath -Raw).Trim() -eq $fingerprint) {
         Write-Host "AgentHub backend sidecar is up to date: $targetBinary"
         exit 0
     }
@@ -38,7 +41,10 @@ $separator = [IO.Path]::PathSeparator
 $alembicData = "$(Join-Path $backendRoot 'alembic')${separator}alembic"
 $arguments = @(
     "run",
+    "--isolated",
+    "--frozen",
     "--project", $backendRoot,
+    "--package", "agenthub-backend",
     "--with", "pyinstaller==6.22.0",
     "pyinstaller",
     "--noconfirm",
@@ -46,12 +52,18 @@ $arguments = @(
     "--onefile",
     "--name", "agenthub-backend",
     "--paths", (Join-Path $backendRoot "src"),
+    "--paths", $sharedRoot,
+    "--copy-metadata", "agenthub-system",
+    "--copy-metadata", "agenthub-backend",
     "--paths", $backendRoot,
     "--add-data", $alembicData,
     "--collect-all", "rapidocr_onnxruntime",
     "--collect-all", "onnxruntime",
     "--collect-submodules", "passlib.handlers",
     "--hidden-import", "app.main",
+    "--hidden-import", "model_provider.providers.openai_compatible",
+    "--hidden-import", "model_provider.providers.deepseek",
+    "--hidden-import", "model_provider.providers.ark",
     "--hidden-import", "db.base",
     "--hidden-import", "db.models",
     "--hidden-import", "aiosqlite",
@@ -78,4 +90,5 @@ if (-not (Test-Path -LiteralPath $builtBinary)) {
     throw "PyInstaller did not produce $builtBinary."
 }
 Copy-Item -LiteralPath $builtBinary -Destination $targetBinary -Force
+Set-Content -LiteralPath $fingerprintPath -Value $fingerprint -Encoding utf8
 Write-Host "AgentHub backend sidecar ready: $targetBinary" -ForegroundColor Green

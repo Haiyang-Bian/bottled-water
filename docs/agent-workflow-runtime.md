@@ -2,6 +2,8 @@
 
 This document describes the current chat and workflow runtime behavior.
 
+For the target split between the Kernel, scheduling policies, generic graph execution, and AgentHub canvas/persistence adapters, see the [system architecture](./architecture/README.md) and [subsystem catalog](./architecture/subsystems.md). The existing workflow paths below have not yet been extracted into that structure.
+
 ## Conversation Scheduling
 
 Each conversation has a chat type and scheduling settings.
