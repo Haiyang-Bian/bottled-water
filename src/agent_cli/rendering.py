@@ -64,7 +64,9 @@ class PlainRenderer:
         self.flush_messages(force=True)
         output = safe_text(self.redactor.text(result.output))
         last = next(reversed(self.state.messages.values()), None) if self.state.messages else None
-        if output and (last is None or last.text.strip() != output.strip()):
+        # Some providers keep one public message ID across tool rounds. Its stream
+        # then contains an earlier preamble followed by the final answer.
+        if output and (last is None or not last.text.rstrip().endswith(output.strip())):
             self.write_message(output)
         self.close()
         self.write_summary(result)

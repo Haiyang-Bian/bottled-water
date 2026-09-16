@@ -87,6 +87,15 @@ def test_rich_commits_long_stream_to_scrollback():
     assert renderer.printed["one"] == len(text)
 
 
+def test_final_suffix_of_reused_message_id_is_not_printed_twice(capsys):
+    renderer = PlainRenderer(Redactor())
+    renderer.event(event(1, "agent.token", agent_message_id="same", token="正在检查。"))
+    renderer.event(event(2, "agent.tool_started", call_id="call", tool="process.run"))
+    renderer.event(event(3, "agent.token", agent_message_id="same", token="最终答复"))
+    renderer.result(result("最终答复"))
+    assert capsys.readouterr().out.count("最终答复") == 1
+
+
 def test_json_never_loads_rich_or_prints_headers(capsys):
     import json
     renderer = renderer_for(Redactor(), json_mode=True, interactive=True)

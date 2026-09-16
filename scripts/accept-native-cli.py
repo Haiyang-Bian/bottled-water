@@ -99,6 +99,8 @@ def main():
         (output / "first.stderr.txt").write_text(redactor.text(first.stderr), "utf-8")
         records = [json.loads(line) for line in first.stdout.splitlines()]
         result = records[-1]
+        evidence["run_start"] = next(r["payload"] for r in records
+                                     if r.get("type") == "system.run_started")
         evidence["runs"].append({**result, "exit_code": first.returncode})
         assert first.returncode == 0 and result["state"] == "completed", result
         session = result["context_scope_id"]
@@ -180,6 +182,9 @@ def main():
         if terminal is not None:
             terminal.raw = redactor.text(terminal.raw)
             terminal.close()
+        for item in evidence["runs"]:
+            replay = cli("replay", item["run_id"])
+            (output / f"{item['run_id']}.jsonl").write_text(redactor.text(replay.stdout), "utf-8")
         (output / "acceptance.json").write_text(redactor.dumps(evidence), "utf-8")
 
 
