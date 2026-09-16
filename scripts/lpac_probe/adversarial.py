@@ -37,7 +37,7 @@ def startup_faults(profile, launch, report, save):
         try:
             with patch("win32job.AssignProcessToJobObject", side_effect=assign):
                 if fault == "token":
-                    with patch("lpac_probe.native.token_flag", return_value=False):
+                    with patch("agent_adapters.local.windows_lpac.token_flag", return_value=False):
                         launch(0, "--sleep")
                 else:
                     launch(0, "--sleep")

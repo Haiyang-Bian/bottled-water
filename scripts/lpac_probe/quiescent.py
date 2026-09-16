@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import time
 
-from .native import system_capability_sids
+from agent_adapters.local.windows_lpac import system_capability_sids
 from .standing import MODIFY, READ_EXECUTE, add_aces, cleanup_tree, describe, fixture_acl, tree
 
 

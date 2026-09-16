@@ -1,4 +1,4 @@
-"""Owned parent Jobs for native acceptance; no breakaway or privilege changes."""
+"""Owned parent Jobs; no breakaway or privilege changes."""
 
 import time
 from uuid import uuid4

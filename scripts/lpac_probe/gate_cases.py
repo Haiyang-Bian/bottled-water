@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import time
 
-from .jobs import OwnedJob
-from .native import LpacProfile
+from agent_adapters.local.windows_jobs import OwnedJob
+from agent_adapters.local.windows_lpac import LpacProfile
 from .standing import environment
 from .toolchain import good
 

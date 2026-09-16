@@ -16,7 +16,7 @@ import time
 import traceback
 from uuid import uuid4
 
-from lpac_probe.native import LpacProfile, system_capability_sids
+from agent_adapters.local.windows_lpac import LpacProfile, system_capability_sids
 from lpac_probe.standing import (
     ALL, CONTENT_WRITE, MODIFY, READ_EXECUTE, SECURITY_WRITE,
     add_aces, audit_allow_masks, cleanup_tree, describe, environment, evaluate,
@@ -72,7 +72,7 @@ def main():
               "source_sha256": {str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
                                 for p in (Path(__file__), repo / "scripts/lpac-standing-payload.py",
                                           repo / "scripts/lpac_probe/standing.py",
-                                          repo / "scripts/lpac_probe/native.py")}}
+                                          repo / "src/agent_adapters/local/windows_lpac.py")}}
     report["original_acl"] = {str(p.relative_to(output)): fixture_acl(p) for p in tree(root)}
     report["inheritance_changes"] = []
 

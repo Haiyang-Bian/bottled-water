@@ -138,6 +138,9 @@ class PreparationLease:
                     or prepared._active.get(self.run_id) is not self):
                 raise OperationError("permission_lease_invalid", "Execution lease is no longer valid")
 
+    def require_valid(self) -> None:
+        self.check()
+
     def finish(self, *, job_drained: bool) -> None:
         prepared = self._preparation
         with prepared._lock:

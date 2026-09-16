@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from lpac_probe.native import LpacProfile
+from agent_adapters.local.windows_lpac import LpacProfile
 from lpac_probe.standing import cleanup_tree, fixture_acl, restore_fixture_inheritance, tree
 
 parser = argparse.ArgumentParser()

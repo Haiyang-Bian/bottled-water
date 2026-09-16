@@ -20,7 +20,7 @@ import threading
 import time
 import traceback
 
-from lpac_probe.native import LpacProfile
+from agent_adapters.local.windows_lpac import LpacProfile
 from lpac_probe.adversarial import aliases, startup_faults
 
 
@@ -78,7 +78,7 @@ def main():
     python = str(runtime / "python.exe")
     prefix = [python, "-I", "-S", "-B", str(output / "R/payload.py")]
     profiles = [LpacProfile(), LpacProfile()]
-    from lpac_probe.jobs import OwnedJob
+    from agent_adapters.local.windows_jobs import OwnedJob
 
     run_jobs = [OwnedJob(), OwnedJob()] if args.nested_jobs else []
     report = {
@@ -96,9 +96,9 @@ def main():
             for p in (
                 Path(__file__),
                 repo / "scripts/lpac-isolation-payload.py",
-                repo / "scripts/lpac_probe/native.py",
+                repo / "src/agent_adapters/local/windows_lpac.py",
                 repo / "scripts/lpac_probe/adversarial.py",
-                repo / "scripts/lpac_probe/jobs.py",
+                repo / "src/agent_adapters/local/windows_jobs.py",
             )
         },
     }

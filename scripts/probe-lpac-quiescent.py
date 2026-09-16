@@ -15,7 +15,7 @@ import time
 import traceback
 
 from lpac_probe.movement import evaluate
-from lpac_probe.native import LpacProfile
+from agent_adapters.local.windows_lpac import LpacProfile
 from lpac_probe.quiescent import FixturePreparationBackend
 from lpac_probe.standing import MODIFY, READ_EXECUTE, add_aces, cleanup_tree, environment
 
@@ -105,10 +105,10 @@ def main():
               "source_sha256": {str(path.relative_to(repo)):
                   hashlib.sha256(path.read_bytes()).hexdigest() for path in (
                       Path(__file__), repo / "scripts/lpac_probe/quiescent.py",
-                      repo / "scripts/lpac_probe/native.py", repo / "scripts/lpac_probe/standing.py",
+                      repo / "src/agent_adapters/local/windows_lpac.py", repo / "scripts/lpac_probe/standing.py",
                       repo / "scripts/lpac_probe/movement.py", repo / "scripts/lpac-movement-payload.py",
                       repo / "scripts/lpac_probe/toolchain.py",
-                      repo / "scripts/lpac_probe/jobs.py", repo / "scripts/lpac_probe/gate_cases.py",
+                      repo / "src/agent_adapters/local/windows_jobs.py", repo / "scripts/lpac_probe/gate_cases.py",
                       repo / "scripts/lpac-policy-payload.py",
                       repo / "src/agent_adapters/local/dependencies.py",
                       repo / "src/agent_subsystems/workspaces/permission_preparation.py")},

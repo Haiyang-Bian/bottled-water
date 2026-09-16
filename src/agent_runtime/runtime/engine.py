@@ -148,6 +148,9 @@ class RunHandle:
     async def cancel(self, reason: str = "user_cancelled") -> RunResult:
         return await self._kernel.cancel(reason)
 
+    async def fail(self, reason_code: str) -> RunResult:
+        return await self._kernel.fail(reason_code)
+
     async def post_message(
         self, content: str, *, target_agent_ids: tuple[str, ...] = ()
     ) -> TeamMessage:
@@ -666,7 +669,7 @@ class RunKernel:
                         key: self.request.metadata.get(key)
                         for key in ("model", "provider", "profile", "effective_limits",
                                     "environment_id", "agent_id", "execution_location",
-                                    "effective_roots", "inactive_roots")
+                                    "effective_roots", "inactive_roots", "execution_mode", "isolation")
                     },
                 },
             )

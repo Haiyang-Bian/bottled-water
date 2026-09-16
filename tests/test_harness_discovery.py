@@ -111,7 +111,7 @@ async def test_real_git_index_preserves_tracked_source_in_generated_directory(tm
     )
 
     class Allow:
-        def authorize(self, spec, context):
+        def authorize(self, request):
             return "allow"
 
     redactor = Redactor()

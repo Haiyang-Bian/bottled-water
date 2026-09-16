@@ -1,6 +1,7 @@
 """Invocation boundary around the shared tool registry and executor."""
 
 from agent_contracts.errors import OperationError
+from agent_contracts.execution import AuthorizationRequest
 from agent_runtime.core.types import ToolResult
 from .executor import ToolExecutorImpl
 
@@ -52,10 +53,13 @@ class AuthorizedToolInvoker:
             spec = self.specs.get(call.tool_name)
             if spec is None:
                 raise OperationError("unknown_tool", "Tool is not registered")
-            decision = self.authorization.authorize(spec, self.context)
+            validate(call.parameters, spec.parameters)
+            operation = "modify" if spec.name in {"file.write", "file.edit"} else "read"
+            target = call.parameters.get("cwd" if spec.capability == "process" else "path", ".")
+            decision = self.authorization.authorize(
+                AuthorizationRequest(spec, self.context, call.parameters, operation, target))
             if decision != "allow":
                 raise OperationError("authorization_required", "Tool capability is not authorized")
-            validate(call.parameters, spec.parameters)
             result = await self.executor.execute(call)
             self.context.check()
             result.result = self.redactor.value(result.result)

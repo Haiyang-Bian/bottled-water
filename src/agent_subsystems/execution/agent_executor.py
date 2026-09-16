@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from agent_contracts.harness import ExecutionLimits, ExecutionStopped
 from agent_runtime.core.types import AgentReport, AgentState, AgentWill
-from agent_contracts.errors import ModelInvocationError, OutputTokenLimitExceeded
+from agent_contracts.errors import ModelInvocationError, OperationError, OutputTokenLimitExceeded
 
 from agent_runtime.core.run_types import AgentExecutionResult, AgentMemory, Usage
 from agent_runtime.core.types import Event
@@ -29,10 +29,12 @@ class AgentLoopExecutor:
         run_journal=None,
         memory_context=None,
         resource_context=None,
+        execution_isolation=None,
     ) -> None:
         self.context_budget, self.run_journal = context_budget, run_journal
         self.memory_context = memory_context
         self.resource_context = resource_context
+        self.execution_isolation = execution_isolation
         self.execution_limits = execution_limits or ExecutionLimits()
         self.model_provider = model_provider
         self.tool_executor = tool_executor
@@ -77,6 +79,7 @@ class AgentLoopExecutor:
         bind_execution = getattr(tool_executor, "bind_execution", None)
         if callable(bind_execution):
             tool_executor = bind_execution(request, cancellation, lease)
+        execution_context = getattr(tool_executor, "context", None)
         if self.run_journal is not None:
             tool_executor = HistoryToolExecutor(
                 tool_executor, JournalResultReader(self.run_journal, request.context_scope_id)
@@ -99,15 +102,30 @@ class AgentLoopExecutor:
             )
 
         try:
-            result = await loop.run(
-                task,
-                request.context.blackboard,
-                tool_executor=tool_executor,
-                emit_event=emit_legacy,
-                checkpoint=checkpoint,
-                context_provider=self.context_provider,
-                context_metadata=metadata,
-            )
+            try:
+                if self.execution_isolation is not None:
+                    if execution_context is None:
+                        raise ExecutionStopped("isolation_context_missing")
+                    try:
+                        await self.execution_isolation.prepare(execution_context)
+                    except ExecutionStopped:
+                        raise
+                    except OperationError as exc:
+                        raise ExecutionStopped(exc.code) from exc
+                    except (OSError, RuntimeError) as exc:
+                        raise ExecutionStopped("isolation_prepare_failed") from exc
+                result = await loop.run(
+                    task,
+                    request.context.blackboard,
+                    tool_executor=tool_executor,
+                    emit_event=emit_legacy,
+                    checkpoint=checkpoint,
+                    context_provider=self.context_provider,
+                    context_metadata=metadata,
+                )
+            finally:
+                if self.execution_isolation is not None:
+                    await self.execution_isolation.drain()
         except ExecutionStopped as exc:
             if exc.reason_code == "model_timeout":
                 loop.usage_estimated = True

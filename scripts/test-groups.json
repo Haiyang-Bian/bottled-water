@@ -120,6 +120,7 @@
   },
     "system": {
       "sandbox:unit": [
+        "tests/test_restricted_boundary.py",
         "tests/test_dependency_manifest.py",
         "tests/test_lpac_completion_gate.py",
         "tests/test_lpac_probe.py",

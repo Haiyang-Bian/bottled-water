@@ -19,7 +19,7 @@ import traceback
 from uuid import uuid4
 
 from lpac_probe.movement import bypasses, evaluate, subset_passed
-from lpac_probe.native import LpacProfile, system_capability_sids
+from agent_adapters.local.windows_lpac import LpacProfile, system_capability_sids
 from lpac_probe.standing import (
     MODIFY, READ_EXECUTE, add_aces, cleanup_tree, describe, environment, fixture_acl, tree,
 )
@@ -76,7 +76,7 @@ def main():
                           for p in (Path(__file__), repo / "scripts/lpac-movement-payload.py",
                                     repo / "scripts/lpac_probe/movement.py",
                                     repo / "scripts/lpac_probe/standing.py",
-                                    repo / "scripts/lpac_probe/native.py")},
+                                    repo / "src/agent_adapters/local/windows_lpac.py")},
         "grants": [], "profiles": [], "results": {}, "checks": {}, "movements": [],
         "bypasses": {}, "generation_sids": sids,
         "runtime": {"executable": str(python / "python.exe"), "version": sys.version,

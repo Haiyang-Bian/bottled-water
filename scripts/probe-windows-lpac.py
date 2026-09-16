@@ -14,7 +14,7 @@ import sys
 import traceback
 from uuid import uuid4
 
-from lpac_probe.native import LpacProfile
+from agent_adapters.local.windows_lpac import LpacProfile
 from lpac_probe.validation import evaluate
 
 
@@ -181,7 +181,7 @@ def main():
             str(path.relative_to(repo)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (
                 repo / "scripts/probe-windows-lpac.py",
-                repo / "scripts/lpac_probe/native.py",
+                repo / "src/agent_adapters/local/windows_lpac.py",
                 repo / "scripts/lpac_probe/validation.py",
                 repo / "scripts/lpac-probe-payload.py",
             )

@@ -3,7 +3,7 @@
 import subprocess
 import time
 
-from .jobs import OwnedJob
+from agent_adapters.local.windows_jobs import OwnedJob
 
 
 def run(argv, cwd, *, timeout=240, log_path=None):

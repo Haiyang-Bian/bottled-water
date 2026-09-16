@@ -29,7 +29,7 @@ from lpac_probe.namespace import (  # noqa: E402
     remove_owned_ace,
     write_acl,
 )
-from lpac_probe.native import system_capability_sids  # noqa: E402
+from agent_adapters.local.windows_lpac import system_capability_sids  # noqa: E402
 
 
 def main():

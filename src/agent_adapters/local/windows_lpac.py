@@ -1,4 +1,4 @@
-"""Experimental native LPAC primitives. Not connected to production execution.
+"""Native LPAC primitives shared by explicit restricted hosts and native probes.
 
 No fallback to a normal token. Caller owns the explicit ACL grants and recovery
 ledger; this module does not grant access to any host directory automatically.
@@ -358,6 +358,9 @@ class LpacProfile:
         policy_experiment=None,
         cancel_event=None,
         parent_jobs=(),
+        stdin_data=None,
+        output_limit=32768,
+        binary_output=False,
     ):
         """Run with an LPAC token, explicit stdio handles and a kill-on-close Job."""
         import pywintypes
@@ -392,7 +395,7 @@ class LpacProfile:
                 while True:
                     _, data = win32file.ReadFile(handle, 4096)
                     sizes[index] += len(data)
-                    output[index].extend(data[: max(0, 32768 - len(output[index]))])
+                    output[index].extend(data[: max(0, output_limit - len(output[index]))])
             except pywintypes.error as exc:
                 if exc.winerror not in (109, 232, 995):
                     errors.append(str(exc))
@@ -405,9 +408,17 @@ class LpacProfile:
             handles.extend((out_read, out_write, err_read, err_write))
             for handle in (out_read, err_read):
                 win32api.SetHandleInformation(handle, win32con.HANDLE_FLAG_INHERIT, 0)
-            stdin = win32file.CreateFile(
-                "NUL", win32con.GENERIC_READ, 3, security, win32con.OPEN_EXISTING, 0, None
-            )
+            input_write = None
+            if stdin_data is None:
+                stdin = win32file.CreateFile(
+                    "NUL", win32con.GENERIC_READ, 3, security, win32con.OPEN_EXISTING, 0, None
+                )
+            else:
+                if not isinstance(stdin_data, bytes) or len(stdin_data) > 32 * 1024 * 1024 + 4:
+                    raise ValueError("Worker request exceeds the framed input limit")
+                stdin, input_write = win32pipe.CreatePipe(security, 0)
+                win32api.SetHandleInformation(input_write, win32con.HANDLE_FLAG_INHERIT, 0)
+                handles.append(input_write)
             handles.append(stdin)
             convert = _function(
                 advapi, "ConvertStringSidToSidW", w.BOOL, w.LPCWSTR, ctypes.POINTER(w.LPVOID)
@@ -417,10 +428,10 @@ class LpacProfile:
             if instrumentation:
                 capability_names.extend(system_capability_sids("lpacInstrumentation"))
             if namespace_experiment is not None:
-                from .namespace import capability_name
-
+                if not re.fullmatch(r"[0-9a-f]{32}", namespace_experiment):
+                    raise ValueError("Invalid namespace initialization identifier")
                 capability_names.extend(
-                    system_capability_sids(capability_name(namespace_experiment))
+                    system_capability_sids("AgentHub.Probe.Namespace." + namespace_experiment)
                 )
             if policy_experiment is not None:
                 if not re.fullmatch(r"[0-9a-f]{32}", policy_experiment):
@@ -561,6 +572,22 @@ class LpacProfile:
                 worker = threading.Thread(target=drain, args=(handle, index), daemon=True)
                 worker.start()
                 readers.append(worker)
+            if input_write is not None:
+                def send_input():
+                    try:
+                        for start in range(0, len(stdin_data), 32768):
+                            block = stdin_data[start:start + 32768]
+                            while block:
+                                _, sent = win32file.WriteFile(input_write, block)
+                                if not sent:
+                                    raise RuntimeError("Worker input pipe made no progress")
+                                block = block[sent:]
+                    except Exception as exc:
+                        errors.append(type(exc).__name__)
+
+                writer = threading.Thread(target=send_input, daemon=True)
+                writer.start()
+                readers.append(writer)
             while win32event.WaitForSingleObject(process, 30) == win32con.WAIT_TIMEOUT:
                 if cancel_event is not None and cancel_event.is_set():
                     cancelled = True
@@ -588,6 +615,8 @@ class LpacProfile:
             job.Close()
             for worker in readers:
                 worker.join(timeout=2)
+            if any(worker.is_alive() for worker in readers):
+                errors.append("PipeThreadIncomplete")
             for handle in handles:
                 handle.Close()
             if initialized:
@@ -607,7 +636,7 @@ class LpacProfile:
             "job_drained": True,
             "verified_job_depth": len(parent_jobs) + 1,
             "elapsed": time.monotonic() - started,
-            "stdout": bytes(output[0]).decode("utf-8", "replace"),
+            "stdout": bytes(output[0]) if binary_output else bytes(output[0]).decode("utf-8", "replace"),
             "stderr": bytes(output[1]).decode("utf-8", "replace"),
             "truncated": any(sizes[i] > len(output[i]) for i in range(2)),
             "pipe_errors": errors,
