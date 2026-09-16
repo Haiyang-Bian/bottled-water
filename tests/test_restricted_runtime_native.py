@@ -15,6 +15,7 @@ import pytest
 @pytest.mark.parametrize("script,prefix,extra", [
     ("probe-restricted-runtime.py", "l4a-runtime-native", []),
     ("probe-restricted-runtime.py", "l4a-runtime-powershell-native", ["--powershell"]),
+    ("probe-restricted-runtime.py", "l4a-runtime-uv-native", ["--uv"]),
     ("probe-restricted-failures.py", "l4a-runtime-faults-native", []),
 ])
 def test_restricted_runtime_native(script, prefix, extra):
@@ -32,5 +33,7 @@ def test_restricted_runtime_native(script, prefix, extra):
     else:
         assert not report["host_bypasses"]
         assert report["not_executed"] == ["full_toolchain_requires_initialization"]
-        if extra:
+        if "--powershell" in extra:
             assert report["checks"]["powershell"] is True
+        if "--uv" in extra:
+            assert report["checks"]["uv"] is True

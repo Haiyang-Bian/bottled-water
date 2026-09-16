@@ -136,6 +136,36 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
 
 ## 回归和未完成
 
+2026-09-16 后续批次 `9932f9be970d44b8abaa194b8767ca21`（源码 `ef6b70c`）：
+
+- 确定性完整链通过：Run `d918581d-ecff-4a66-b333-4cb1e9bc329c`，completed/0，
+  17 次请求、16 次工具调用；Python、PowerShell、Git、uv、拒绝、无宿主绕过与清理检查通过。
+  报告 `var/l4a-runtime-namespace-9932f9be970d44b8abaa194b8767ca21/report.json`，
+  SHA-256 `55f8a2cf1e28e030deba7fe0d5ec91fa168d22cfbae4cedf57dfa7ab6446c3b1`。
+- 首次 DeepSeek 实际执行**验收失败**：Run `0d8b9f0f-abda-422e-9f6d-d39a6d3d0aaf`，
+  9 次请求、21 次工具调用，67.66 秒；输入 69,934、输出 3,589、输入缓存 52,864 token。
+  缓存是输入的细分，不重复计数。文件修改、Python 断言、产物、PowerShell 和 Private 原生拒绝成功。
+  模型将 Git cwd 设为未授权父目录，uv 未禁用配置发现而读取祖先 pyproject.toml 被 OS 拒绝。
+  模型诚实列出未完成项，但 Run 为 completed/0；独立任务验收仍为失败，不能以 Run 状态代替任务证据。
+  报告 `var/l4a-runtime-namespace-9932f9be970d44b8abaa194b8767ca21-live/report.json`，
+  SHA-256 `a473c0a74466a9807f98d190d123dfcbc34882daad3c6997946b0e7553668fed`。
+- 两个 Run 清理核实；固定五对象报告为 cleaned、host_requested、cleanup_errors=[]，
+  五处前后 DACL 相同。初始化报告 SHA-256
+  `8d410bcb508202aede0ae696b921327953709aedc42898f85a6855515d563dc1`。
+- 修复：受限环境设置 UV_NO_CONFIG、UV_NO_MANAGED_PYTHON，并以 UV_PYTHON 选择已登记隔离副本；
+  不扩大祖先目录权限。[uv 官方环境变量文档](https://docs.astral.sh/uv/reference/environment/)
+  说明 UV_NO_CONFIG 禁用当前、祖先与用户目录的配置发现。上下文说明独立脚本应使用
+  `uv run --offline --no-project -- python ...`；权限错误补充实际目标与 cwd。
+  验收请求澄清 Work 就是 Git 根，避免把夹具父目录误当仓库；没有提供修复代码答案。
+- 无 UAC uv 子集通过：`var/l4a-runtime-uv-native-2c3262105f644f7f94fc387e28103461/report.json`，
+  SHA-256 `4dec243370bf12a6ac96116bf81b9db6ad377a041253777c6b3785e68b552439`，
+  Run `3b3f4d8b-3d60-406e-a141-5337db868a09`，completed/0，清理核实。
+  命令不再手工带 `--no-config` 或解释器路径，实测验证驱动默认行为。
+  `var/l4a-p2-uv-regression.xml` 中 41 项工具、上下文、组装与终态回归通过。
+  新入口：`probe-restricted-runtime.py --uv --output var/NEW`，不需要管理员初始化。
+
+以下保留前序检查结果；修复后的完整链与真实 Provider 仍需新批次确认：
+
 - 共享 CLI/Runtime/上下文/L2/L3/原 current-user：135 项通过，`var/l4a-p2-system.xml`。
 - 协议/准备/原型/Actor 取消边界：114 项通过，`var/l4a-p2-adapters.xml`。
 - 最终真实 LPAC Runtime + 故障 + 协议：22 项通过，59.27 秒，`var/l4a-p2-native.xml`。

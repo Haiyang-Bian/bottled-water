@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import traceback
@@ -33,11 +34,13 @@ from model_provider.core.interfaces import BaseModelProvider, StreamChunk
 
 
 class FixtureProvider(BaseModelProvider):
-    def __init__(self, root, software_ids, resource_id, paths, *, full=False, powershell=False):
+    def __init__(self, root, software_ids, resource_id, paths, *, full=False,
+                 powershell=False, uv=False):
         super().__init__({"model": "restricted-deterministic"})
         self.root, self.software_ids, self.full = root, software_ids, full
         self.resource_id, self.paths = resource_id, paths
         self.powershell = powershell or full
+        self.uv = uv or full
         self.steps, self.results = 0, []
         self.expected = True
 
@@ -87,12 +90,13 @@ class FixtureProvider(BaseModelProvider):
                     "assert Path('location.txt').read_text()=='PS CWD OK'; print('CHILD CWD OK')\""}),
             ])
         if self.full:
-            calls.extend([
-                ("git.run", {"args": ["diff", "--", "calc.py"]}),
-                ("software.run", {"id": self.software_ids["uv"], "args": ["--no-config", "run",
-                    "--offline", "--no-project", "--no-managed-python", "--python", self.paths["python"],
+            calls.append(("git.run", {"args": ["diff", "--", "calc.py"]}))
+        if self.uv:
+            calls.append(
+                ("software.run", {"id": self.software_ids["uv"], "args": ["run",
+                    "--offline", "--no-project",
                     "--", "python", "-B", "-c", "from calc import add; assert add(2,3)==5; print('UV OK')"]}),
-            ])
+            )
         if self.steps < len(calls):
             name, args = calls[self.steps]
             self.expected = self.steps not in {3, 11}
@@ -128,6 +132,12 @@ async def run(args, repo, output, report, save):
 
         prepare_powershell(runtime)
         paths["pwsh"] = str(runtime / "pwsh/pwsh.exe")
+    if args.uv and "uv" not in paths:
+        source = shutil.which("uv.exe")
+        if not source:
+            raise RuntimeError("An explicit uv installation is required")
+        shutil.copyfile(source, runtime / "uv.exe")
+        paths["uv"] = str(runtime / "uv.exe")
     (output / "Runs").mkdir()
     store = SQLiteStore(output / "state.sqlite3")
     cwd = Path(os.path.normcase(str(root / "Work")))
@@ -198,7 +208,8 @@ async def run(args, repo, output, report, save):
             args.redactor = redactor
             model = LocalModelProvider(create_provider({**asdict(profile), "api_key": secret}), redactor)
             report["provider"] = {"profile": name, "provider": profile.provider, "model": profile.model}
-            config = {"active_profile": name, "execution": {"max_model_turns": 35}}
+            config = {"active_profile": name, "execution": {"max_model_turns": 35},
+                      "limits": {"wall_time_seconds": 420}}
             prompt = (
                 "这是隔离夹具的实际验收，请执行工具，不要只提供建议。读取 Archive/sample.txt，"
                 "读取 Work/calc.py 并修复 add(2,3) 应为5的问题，用已登记 Python 执行离线断言测试，"
@@ -208,11 +219,14 @@ async def run(args, repo, output, report, save):
                 "用resource.verify核实Archive资源，用PowerShell 7读取修改的代码，"
                 "用git.run查看diff，用已登记uv离线运行同样断言。完成后据实报告。"
                 f"\n夹具根目录：{root}。当前目录：{cwd}。"
+                "\nWork 本身就是 Git 仓库；默认 cwd 已是 Work，calc.py 直接用相对路径。"
+                "不要把 cwd 设为夹具根目录，该父目录未授权。Archive/Private 请用上面根目录下的绝对路径。"
                 f"\n软件ID：{json.dumps(software_ids)}；Archive资源ID：{resource.id}。"
             )
         else:
             model = FixtureProvider(root, software_ids, resource.id, paths,
-                                    full=bool(args.namespace_experiment), powershell=args.powershell)
+                                    full=bool(args.namespace_experiment), powershell=args.powershell,
+                                    uv=args.uv)
         with (output / "events.jsonl").open("w", encoding="utf-8") as events:
             with redirect_stdout(events), block_host_business_io(root, enabled, violations):
                 code = await run_turn(store, session, model, profile, config, redactor, prompt,
@@ -243,6 +257,7 @@ async def run(args, repo, output, report, save):
                     and "CHILD CWD OK" in t["result"].get("stdout", "") for t in tool_results)
         if args.namespace_experiment:
             report["checks"]["git"] = any(t["tool"] == "git.run" and t["success"] for t in tool_results)
+        if args.namespace_experiment or args.uv:
             report["checks"]["uv"] = any(t["tool"] == "software.run" and t["success"]
                 and (t.get("result") or {}).get("software_id") == software_ids["uv"] for t in tool_results)
         report["passed"] = (code == 0 and not violations
@@ -269,6 +284,8 @@ def main():
     parser.add_argument("--namespace-experiment")
     parser.add_argument("--powershell", action="store_true",
                         help="Add PowerShell cwd and private-cache cleanup checks without UAC")
+    parser.add_argument("--uv", action="store_true",
+                        help="Add isolated uv discovery checks without UAC")
     parser.add_argument("--source-home", type=Path)
     parser.add_argument("--profile")
     args = parser.parse_args()

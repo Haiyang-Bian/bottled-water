@@ -35,7 +35,9 @@ class RestrictedAuthorization:
             # Pure lexical check; the worker resolves aliases and the OS enforces real objects.
             value = Path(os.path.normcase(os.path.normpath(str(value))))
             if not authorize_path(context.grant.policy, value, request.operation or "read").allowed:
-                raise OperationError("permission_denied", "Frozen policy denies this operation")
+                raise OperationError("permission_denied",
+                    f"Frozen policy denies {request.operation or 'read'} at {value}. "
+                    f"Current cwd is {context.location.cwd}; its parent is not implicitly authorized.")
         return "allow"
 
 
@@ -124,6 +126,8 @@ class WindowsRestrictedDriver:
                   "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper",
                   "GIT_CONFIG_VALUE_0": "", "GIT_EDITOR": "true", "GIT_OPTIONAL_LOCKS": "0",
                   "UV_CACHE_DIR": str(self.private / "uv-cache"), "UV_OFFLINE": "1",
+                  "UV_NO_CONFIG": "1", "UV_NO_MANAGED_PYTHON": "1",
+                  "UV_PYTHON": self.executables["python"],
                   "UV_PYTHON_DOWNLOADS": "never", "DOTNET_CLI_HOME": str(self.private),
                   "POWERSHELL_TELEMETRY_OPTOUT": "1", "LC_ALL": "C"}
         return result

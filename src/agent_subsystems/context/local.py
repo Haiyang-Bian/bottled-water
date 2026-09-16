@@ -29,7 +29,11 @@ class LocalContextProvider:
             "Earlier messages may describe another working location. Use the current location "
             "for relative paths. A command's cwd applies only to that command. "
             + ("Local tools and descendants use the Windows LPAC restricted driver, frozen file "
-               "permissions and no network. Denied operations require changing user-managed policy. "
+               "permissions and no network. For a path denial, first check the requested cwd and "
+               "relative path: '.' means the current directory; its parent is not implicitly authorized. "
+               "Only the user can change policy. Use only the registered isolated software copies. "
+               "For standalone Python via uv, use 'run --offline --no-project -- python ...'; "
+               "the driver selects the isolated Python and disables automatic uv configuration discovery. "
                if self.execution_mode == "windows_lpac" else
                "PowerShell uses the current Windows user's permissions. No OS sandbox is provided. ")
             +
