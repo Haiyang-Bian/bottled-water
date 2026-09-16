@@ -278,6 +278,15 @@ async def run(args, repo, output, report, save):
         save()
 
 
+def print_summary(output, report, redactor):
+    # Pipe encodings on Windows can be GBK even when report files are UTF-8.
+    # ASCII JSON preserves all text through escapes after credential redaction.
+    value = json.loads(redactor.dumps({"report": str(output / "report.json"),
+        "passed": report["passed"], "error": report.get("error"), "result": report.get("result")}))
+    print(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
+    return 0 if report["passed"] and report.get("cleanup_verified") else 1
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
@@ -312,9 +321,7 @@ def main():
         report.update(error=str(exc), traceback=traceback.format_exc())
         report["passed"] = False
     save()
-    print(args.redactor.dumps({"report": str(output / "report.json"), "passed": report["passed"],
-                      "error": report.get("error"), "result": report.get("result")}))
-    return 0 if report["passed"] and report.get("cleanup_verified") else 1
+    return print_summary(output, report, args.redactor)
 
 
 if __name__ == "__main__":

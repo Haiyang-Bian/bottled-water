@@ -120,6 +120,7 @@
   },
     "system": {
       "sandbox:unit": [
+        "tests/test_restricted_probe_reporting.py",
         "tests/test_cli_restricted_assembly.py",
         "tests/test_restricted_boundary.py",
         "tests/test_dependency_manifest.py",

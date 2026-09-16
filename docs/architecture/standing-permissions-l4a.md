@@ -2,8 +2,8 @@
 
 2026-09-16。用户进一步确定遵循 Windows 继承行为，需要隔离的归档资料由用户移出可修改范围。
 本次取代“广泛修改区内部设置只读/禁止例外”的要求，不再采用修改用户 ACL 继承方式的方案。
-长期授权和跨任务继承保持。P1a 与本轮有限 P1b 原生清单已完成；P2–P4 尚待交付。
-共享包/后端仍为 0.2.2，本地数据库仍为 v5。下面的 CLI、原生驱动和 v6 是待交付目标。
+长期授权和跨任务继承保持。P1a、有限 P1b 原生清单及 P2 专用入口验收已完成；P3/P4 尚待交付。
+共享包/后端仍为 0.2.2，本地数据库仍为 v5。正式 CLI、持久化权限与 v6 是待交付目标。
 原生试验、失败与清理证据见[保护区门槛记录](../acceptance/standing-permissions-p1b-0.2.3.md)。
 当前目录分区证据见[自然继承验收](../acceptance/standing-permissions-separate-roots-0.2.3.md)。
 本轮新增[同卷移动与旧身份复用失败证据](../acceptance/standing-permissions-movement-0.2.3.md)：
@@ -12,8 +12,10 @@
 准备新只读策略。单纯移动文件不代表撤权。本轮进展见[停机撤权验收](../acceptance/standing-permissions-quiescent-0.2.3.md)。
 新增[有限原生放行清单](../acceptance/standing-permissions-completion-0.2.3.md)：不同策略并行、
 依赖变更、嵌套 Job、新结构完整工具链及真实符号链接均通过，固定初始化清理也已核实。
-P1b 已放行。P2 已通过显式依赖注入接入现有 Runtime，Python 工具循环及故障子集通过；
-完整软件链和真实 Provider 尚待验收，正式 CLI 默认模式不变。
+P1b 已放行。P2 通过显式依赖注入接入现有 Runtime，完整 Python/PowerShell 7/Git/uv
+工具循环、故障子集和已配置 DeepSeek 真实任务通过；正式 CLI 默认模式不变。
+验收源码 `a53ee88`，Windows 11 x64 build 26200。已保留首轮真实失败及最终报告的 GBK 打印故障；
+打印问题单独修复并重放已保存报告验证，未重跑模型或改写原进程退出码。
 详见[受限 Runtime 阶段记录](../acceptance/restricted-runtime-p2-0.2.3.md)。
 
 ## 1. 产品约定
@@ -162,7 +164,7 @@ v1–v5 直接升级沿用迁移锁、会话锁、SQLite backup API 和单事务
 | --- | --- |
 | P1a | 原契约上新增自然继承布局编译和冲突拒绝；连同证据判定共 68 项测试通过 |
 | P1b | 本轮有限清单全部通过：静态分区、显式停机撤权、并行策略、依赖异常、嵌套 Job、新结构四工具矩阵、真实符号链接及初始化清理；源码 381fdd3 |
-| P2 | 待接文件 worker、统一进程/资源探测和完整工具循环 |
+| P2 | 已接入文件 worker、统一进程/资源探测和现有 Runtime；完整确定性链、DeepSeek 实测、拒绝与清理通过。只提供专用验收入口，未开放正式权限命令 |
 | P3 | 待 v6、权限管理、默认继承、转换和撤销事务 |
 | P4 | 待 wheel、升级、DeepSeek、ConPTY、Web/sidecar 与版本证据 |
 

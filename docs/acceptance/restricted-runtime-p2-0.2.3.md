@@ -3,7 +3,8 @@
 2026-09-16。分支 `codex/windows-permissions-l4a`；公共适配器检查点 `ec2aa25`。
 发行保持 0.2.2/schema v5。本阶段通过专用验收入口注入驱动，普通 CLI 的默认模式不变。
 
-**P1b 有限清单已通过；P2 Python、PowerShell 工具循环和故障子集通过，完整软件链及真实模型尚未放行。**
+**P1b 有限清单及 P2 专用入口验收已通过：完整工具链和已配置的 DeepSeek 均完成真实任务。**
+下文保留首轮真实失败及打印错误，不将失败记录追溯改为通过。正式权限 CLI、持久化与发行仍待 P3/P4。
 本记录不替代[完整 P1b 证据](standing-permissions-completion-0.2.3.md)，也不宣称 P3/P4 完成。
 
 ## 实现边界
@@ -134,7 +135,7 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
   `var/l4a-p2-powershell-regression.xml`：36 项 current-user、组装、协议/终态回归通过。
   Ruff 与 `git diff --check` 通过。原测试分组已包含此原生测试文件，新增参数场景沿用该分组。
 
-## 回归和未完成
+## 首轮完整链与修复
 
 2026-09-16 后续批次 `9932f9be970d44b8abaa194b8767ca21`（源码 `ef6b70c`）：
 
@@ -164,7 +165,50 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
   `var/l4a-p2-uv-regression.xml` 中 41 项工具、上下文、组装与终态回归通过。
   新入口：`probe-restricted-runtime.py --uv --output var/NEW`，不需要管理员初始化。
 
-以下保留前序检查结果；修复后的完整链与真实 Provider 仍需新批次确认：
+## 最终 P2 验收
+
+批次 `8cf5e29326204aab81676cbf45bbe4c1`，源码 `a53ee88`，Windows 11 x64 build 26200。
+入口为前述 `probe-lpac-namespace.ps1 -Probe runtime -LiveProfile default ...`，使用新的隔离状态。
+未修改日常 `.agenthub`。真实 Provider 为 default/deepseek/deepseek-v4-flash。
+
+| 执行 | Run | 结果 | 请求 / 工具 | 耗时 |
+| --- | --- | --- | --- | --- |
+| 确定性 Provider + 真实受限工具 | `ab2d57dd-9504-43e9-8ef5-25ff8ac10ace` | completed / 0；独立验收通过 | 17 / 16 | 28.34 秒 |
+| DeepSeek + 真实受限工具 | `8265ab0e-178f-4421-bbf6-ac3c31f0991f` | completed / 0；独立验收通过 | 6 / 12 | 71.62 秒 |
+
+DeepSeek 实际读取 Archive、以 hash 前置条件修复 Work/calc.py、保留 BOM/CRLF，使用登记 Python
+通过 add(2,3)==5 断言并生成 output.txt，检查实际产物。随后 Private 文件工具拒绝、Python
+open 得到 PermissionError，任务继续；resource.verify、PowerShell 读取、真实 git diff、uv
+离线断言均成功。模型答复与保存工具结果分别核对，未以“模型声称遵守权限”代替原生证据。
+
+真实用量：输入 39,959、输出 2,094 token；输入缓存 26,624 属于输入的细分。没有估算费用，
+也不以这两次不同轨迹比较推广 token 节省比例。两个 Run 均只有一个成功终态、上下文版本 1，
+`host_bypasses=[]`；所有 Run profile、Job、私有/依赖 ACE、业务准备都完成清理。
+固定系统初始化为 cleaned/host_requested，cleanup_errors=[]，五个对象前后 DACL 相同。
+
+证据路径及 SHA-256：
+
+- 确定性报告 `var/l4a-runtime-namespace-8cf5e29326204aab81676cbf45bbe4c1/report.json`：
+  `d79f1e228fe4b15beb251ab50b200063abedc797b0cd715d4daff76cbcfca082`。
+- 真实报告 `var/l4a-runtime-namespace-8cf5e29326204aab81676cbf45bbe4c1-live/report.json`：
+  `03bdf476ebb19d333392a2584dbec666d7eb5e25ad5d1f15a578f6c00a71c2e2`。
+- 系统清理 `var/l4a-namespace-8cf5e29326204aab81676cbf45bbe4c1.json`：
+  `983c52294cbdfb886e948b531e628c0ef8fa912fafde0962d4875af7f47882f9`。
+- 独立汇总 `var/l4a-p2-final-evidence.json`：
+  `7cfb9e76db5123991df51093c19dcd250ee065b5206066583442b412d08c4ed1`。
+  该汇总还记录各 Run 的策略/依赖摘要及四个隔离可执行文件 SHA-256；原报告保持不变。
+
+**报告打印故障单独保留：**真实 Run、检查和清理已完成，UTF-8 report.json 已保存，
+但原验收进程在最后向 GBK 管道打印模型的 emoji 时抛 UnicodeEncodeError，外层进程退出码为 1。
+它与表中的 Runtime 退出码 0 分开记录。已将摘要改为脱敏后 ASCII JSON 转义；
+`var/l4a-p2-gbk-reporting.xml` 的三项真实 GBK 子进程测试验证中文/emoji、脱敏与成功/失败退出码。
+使用原真实报告重新打印，`var/l4a-p2-gbk-rerender.json` 可正确解码且打印进程退出 0。
+没有为打印问题重跑模型、工具或 UAC，没有改写原报告或把原进程退出码记作 0。
+正式 CLI 已有 UTF-8 输出配置，本修复只涉及验收脚本。
+
+## 回归与后续边界
+
+以下前序回归仍保留各自执行时的证据；本轮新增 41 项回归和 3 项编码回归，不冒充重新执行全部宿主测试：
 
 - 共享 CLI/Runtime/上下文/L2/L3/原 current-user：135 项通过，`var/l4a-p2-system.xml`。
 - 协议/准备/原型/Actor 取消边界：114 项通过，`var/l4a-p2-adapters.xml`。
@@ -173,10 +217,12 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
 - 最后宿主接入及当前用户路径回归：21 项通过，`var/l4a-p2-assembly.xml`，含缺失端口、
   跨环境策略在调用模型前拒绝；与共享组重叠，不相加。
 - Web 聊天、取消、持久化及桌面入口：49 项通过，732.35 秒，`var/l4a-p2-web.xml`。
-- 桌面打包输入只读核查包含新共享 worker、适配器及根锁文件；完整构建留 P4。
-- P2 完整 Python/Pwsh7/Git/uv：上述两个批次都在 PowerShell 接入检查处失败，不能宣称通过。
-  对应 `var/l4a-namespace-<批次ID>.json` 均为 `cleaned`、`cleanup_errors=[]`。
-  非 UAC PowerShell 修复子集通过后，尚未重跑完整批次。不存在仍等待本次确认的 UAC 请求。
-  DeepSeek 入口由确定性检查成功后才启动，因此这两批都未调用真实模型。
-  已确认唯一 profile 为 default/deepseek/deepseek-v4-flash；OpenAI-compatible 未配置、未执行。
-- P3/P4、schema v6、wheel/tag/Release 均未进行。P2 完整验收结束前不推进正式权限管理。
+- 本轮修改局限于本机适配器、CLI 上下文及验收脚本，没有新增共享 Kernel 接口变更；Web 不引用这些本机适配器。
+- 桌面打包输入最终只读核查为 431 项，包含受限 worker、启动适配器及根锁文件；
+  `var/l4a-p2-sidecar-inputs-final.json` 的指纹为
+  `62A45900A0B90A91F8A3D345141422FB1596A2ACF3D6DF43F16DC0DF05F1DB06`。
+  完整构建仍留 P4，未把输入核查当成构建成功。
+- OpenAI-compatible 未配置、未执行；其他 OS build、任意本机软件及项目虚拟环境未验收。
+- P2 仅通过专用入口注入驱动。正式 CLI 默认 current-user 行为不变，权限准备仍只在本进程复用。
+- P3/P4、schema v6、wheel/tag/Release 均未进行。下一步是持久化权限管理与跨宿主空闲转换，
+  不是宣称目前的临时管理员实验已成为正式安装器。
