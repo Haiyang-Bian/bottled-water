@@ -21,7 +21,7 @@ from agent_adapters.storage.sqlite import SQLiteStore
 from agent_contracts.errors import ConfigurationError, OperationError
 from agent_contracts.execution import ExecutionLocation, WorkspaceSpec
 from agent_contracts.resources import ResourceRevision, ResourceSource
-from agent_subsystems.workspaces.paths import effective_roots, resolve_resource
+from agent_subsystems.workspaces.paths import resolve_resource
 from agent_subsystems.workspaces.resources import KINDS
 from .privacy import display_redactor
 from .terminal_text import safe_text
@@ -30,7 +30,7 @@ from .terminal_text import safe_text
 def add_parser(commands):
     for family in ("resources", "software"):
         root = commands.add_parser(
-            family, help="Manage saved metadata; file grants remain separate"
+            family, help="Manage saved metadata; native software registration is optional"
         )
         sub = root.add_subparsers(dest="resource_operation")
         names = ["list", "search", "show", "add", "verify", "disable", "enable"]
@@ -114,15 +114,15 @@ async def choose(rows, args):
 
 
 def authorized(store, cwd, roots=None):
-    saved = (
-        roots if roots is not None else [r[0] for r in store.db.execute("SELECT path FROM trusted")]
-    )
-    available, _ = effective_roots(saved, store.is_trusted)
-    return WorkspaceSpec(available), ExecutionLocation(Path(cwd))
+    # Management runs as the ordinary user; saved directories are references only.
+    return WorkspaceSpec(tuple(Path(p) for p in (roots or ()))), ExecutionLocation(Path(cwd))
 
 
 async def command(args, home, *, cwd=None, roots=None, scope_id=None, interactive_override=False):
     operation = args.resource_operation or "list"
+    if operation not in {"list", "search", "show", "discover"}:
+        from agent_adapters.local.user_execution import require_ordinary_user
+        require_ordinary_user()
     family = args.command
     cwd = Path(cwd or Path.cwd())
     interactive = (
@@ -177,14 +177,15 @@ async def command(args, home, *, cwd=None, roots=None, scope_id=None, interactiv
             if not 0 < args.timeout <= 3600:
                 raise ConfigurationError("Index timeout must be in (0, 3600]")
             workspace, location = authorized(store, cwd, roots)
-            directory = resolve_resource(workspace, location, args.path, directory=True)
+            directory = resolve_resource(workspace, location, args.path, directory=True,
+                                         file_access_scope="user")
             driver = LocalProcessDriver(redactor)
             context = management_operation(args.timeout)
 
             async def read_index(target):
                 return await read_git_index(driver, target, context)
 
-            files = LocalFiles(workspace, location, index_reader=read_index)
+            files = LocalFiles(workspace, location, index_reader=read_index, file_access_scope="user")
             value = await index_directory(
                 files,
                 directory,
@@ -323,7 +324,8 @@ async def command(args, home, *, cwd=None, roots=None, scope_id=None, interactiv
             if record.status != "active":
                 raise OperationError("resource_disabled", "Enable this resource before verifying it")
             workspace, location = authorized(store, cwd, roots)
-            target = resolve_resource(workspace, location, record.content.path)
+            target = resolve_resource(workspace, location, record.content.path,
+                                      file_access_scope="user")
             context = management_operation()
             facts = await probe(target, context)
             with store.transaction():

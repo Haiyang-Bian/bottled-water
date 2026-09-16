@@ -27,6 +27,7 @@ def doctor(home, store, config, profile_name):
     from agent_adapters.credentials.local import LocalCredentialStore
     from agent_adapters.local.processes import executable, powershell_executable
     from .config import select_profile
+    from agent_adapters.storage.migration import SCHEMA_VERSION
 
     result = {
         "version": system_version(),
@@ -36,11 +37,14 @@ def doctor(home, store, config, profile_name):
         "home": str(home),
         "config_source": str(home / "config.toml"),
         "database_version": store.schema_version if store else None,
-        "upgrade_required": bool(store and store.schema_version < 5),
+        "upgrade_required": bool(store and store.schema_version < SCHEMA_VERSION),
         "environment_id": store.environment.environment_id if store and store.environment else None,
         "identity_binding": "matched" if store and store.environment else "unbound",
         "binding_kind": store.identity.binding_kind if store and store.identity else None,
         "execution_mode": "current_user",
+        "file_access_scope": "user",
+        "network": "available",
+        "restricted_execution": "paused",
         "filesystem_isolation": False,
         "network_isolation": False,
         "process_tree_management": "job_object" if sys.platform == "win32" else "process_group",
@@ -48,6 +52,20 @@ def doctor(home, store, config, profile_name):
         "errors": [],
     }
     secrets = []
+    try:
+        from agent_adapters.local.user_execution import is_elevated
+        result["elevated"] = is_elevated()
+        if result["elevated"]:
+            result["errors"].append("Use an ordinary terminal for tasks and tool management")
+    except Exception:
+        result["elevated"] = None
+        result["errors"].append("Unable to verify the process token")
+    if store and store.schema_version >= 3:
+        from agent_adapters.storage.permissions import SQLitePermissions
+        if SQLitePermissions(store).windows_default():
+            result.update(execution_mode="windows_lpac", file_access_scope="workspace",
+                          network="not_started")
+            result["errors"].append("Saved restricted default is paused; explicitly select current-user")
     try:
         name, profile = select_profile(config, profile_name)
         result.update(profile=name, provider=profile.provider, model=profile.model)

@@ -4,6 +4,16 @@
 
 状态仅使用：`已实现`、`部分实现`、`未实现`、`遗留路径`。
 
+## 0.2.3 本机宿主更新
+
+2026-09-16：CLI 已使用同一 `RuntimeEngine → SingleAgentPolicy → AgentLoopExecutor` 完成已安装 DeepSeek 的跨目录文件、项目 Python、uv 网络依赖、Git、取消和重启续接。共享包/后端为 0.2.3，本地存储为 v6。每次请求结算用量；模型/工具阶段有期限；成功 Context、续接游标、终态和 L2/L3 outbox 通过完成端口提交。
+
+普通 CLI 显式选择 `file_access_scope=user`，共享默认仍为 `workspace`。Job 用于生命周期清理，不是文件或网络隔离。LPAC 的 P2/P3 实验不作为本版正式入口；持久化细粒度权限的完整放行暂缓。任务历史独立，L2 记忆和 L3 资源以有界、可裁剪资料加入上下文，不回写为成功聊天历史。
+
+当前证据见 [0.2.3 验收](../acceptance/native-user-experience-0.2.3.md)与[归档交接](../operations/archive-handoff-0.2.3.md)。以下表格同时保留 Web/团队机制的历史对照，不能将 Web 特性或早期快照直接当作本轮 CLI 验收。
+
+## 内核与 Web 机制对照
+
 系统目标见[内核、子系统与宿主](../architecture/README.md)。下表中“已实现”表示该行机制存在，不表示所有子系统已经解耦或可独立发行。
 
 | 目标契约 | 当前机制 | 状态 | 已知差距 |
@@ -40,13 +50,13 @@
 | 目标契约 | 当前机制 | 状态 | 已知差距 |
 | --- | --- | --- | --- |
 | Kernel 与默认执行子系统分离 | 公共 AgentLoop/工具/SingleAgentPolicy 已迁出，Kernel 使用公共错误，旧导出已删除 | MVP 已实现 | Kernel 轻量导入与独立 CLI wheel 已验证；团队/Workflow 策略仍待内部迁移 |
-| 默认执行器消费通用 Scope 历史 | `ContextSnapshot` 已显式传入构建请求；CLI 按完整轮次裁剪已提交历史 | MVP 已实现 | 已验证跨 Run 和进程重启后的模型输入；自动摘要与高级记忆检索未引入 |
+| 默认执行器消费通用 Scope 历史 | `ContextSnapshot` 已显式传入构建请求；CLI 按完整轮次裁剪已提交历史 | 已实现 | L2/L3 已接入确定性检索；自动语义摘要与向量检索未引入 |
 | 可复用工具、Skill、MCP 与资源子系统 | `app/services` 有完整集成路径，入口常接收 Session/User/Conversation/Skill 等对象 | 部分实现 | 执行机制、产品授权与 ORM 记录尚未分离；工具用户权限检查保留 `strict=False` 告警路径 |
 | 通用 Scope 的本地持久存储 | CLI SQLite 独立实现 ContextStore/RunJournal，Web 保留原 SQL 适配器 | MVP 已实现 | 本地 TeamJournal 不在本期；崩溃只标记失败，不恢复执行位置 |
-| 直接宿主同一执行链的本地 CLI | `src/agent_cli` 直接组装 Runtime + SingleAgentPolicy + 公共执行器 | MVP 已实现 | 安装和本机任务已通过确定性验证；真实 Provider 状态见 CLI 实施记录 |
+| 直接宿主同一执行链的本地 CLI | `src/agent_cli` 直接组装 Runtime + SingleAgentPolicy + 公共执行器 | 已实现 | 0.2.3 独立安装、DeepSeek 和 ConPTY 已验证；其他 Provider/平台不据此视为通过 |
 | 独立 eval harness | 已有 Kernel/工作流/集成 pytest 基础 | 部分实现 | 尚无完整独立宿主串联工具、MCP、Skill、真实模型与任务证据报告 |
 
-具体源码证据、旧模块归属和分阶段验收见[新旧架构差异与迁移](../architecture/migration.md)。实际测试及尚未执行的真实 Provider 验收见 [CLI 实施记录](../architecture/cli-mvp.md)。
+具体源码证据、旧模块归属和分阶段验收见[新旧架构差异与迁移](../architecture/migration.md)。早期 [CLI 实施记录](../architecture/cli-mvp.md)保留当时未执行项，最新验证状态以 [0.2.3 验收](../acceptance/native-user-experience-0.2.3.md)为准，不回改历史结论。
 
 ## 已移除入口
 
@@ -54,7 +64,7 @@
 
 ## 后续范围
 
-系统拆分按 [M0–M4 迁移计划](../architecture/migration.md)推进：先收敛契约并尽早跑通本地 CLI，同步提供持久化，并逐项补充其余子系统和评测。以下是既有 Kernel 演进事项；本次分层不改变其未完成状态。
+首条公共 CLI 执行链与持久化已经完成。[M0–M4 迁移计划](../architecture/migration.md)保留早期拆分依据；后续按实际用途继续迁移剩余子系统和建立独立评测宿主，不重新从 MVP 起步。以下是既有 Kernel 演进事项，仍需单独确定范围和验收。
 
 1. 为 EventSink 增加有界队列、慢订阅者隔离与失败队列。
 2. 增加日志压缩、保留策略和跨进程实时广播；现阶段不自动删除 Journal。

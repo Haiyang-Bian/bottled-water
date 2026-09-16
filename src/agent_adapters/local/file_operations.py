@@ -14,16 +14,20 @@ class LocalFileOperations:
 
     async def invoke(self, operation, parameters, context):
         context.check()
+        scope = context.grant.file_access_scope
         if operation == "resolve":
-            path = resolve_resource(context.grant.workspace, context.location, **parameters)
+            path = resolve_resource(context.grant.workspace, context.location,
+                                    file_access_scope=scope, **parameters)
             return {"path": str(path)}
         if operation == "probe":
             args = dict(parameters)
-            path = resolve_resource(context.grant.workspace, context.location, args.pop("path"))
+            path = resolve_resource(context.grant.workspace, context.location, args.pop("path"),
+                                    file_access_scope=scope)
             return {"path": str(path), **await probe(path, context, **args)}
         if operation not in {"read", "write", "edit", "list", "search"}:
             raise OperationError("invalid_operation", "Unsupported file operation")
-        files = LocalFiles(context.grant.workspace, context.location, index_reader=self.index_reader)
+        files = LocalFiles(context.grant.workspace, context.location, index_reader=self.index_reader,
+                           file_access_scope=scope)
         result = await getattr(files, operation)(**parameters)
         context.check()
         return result

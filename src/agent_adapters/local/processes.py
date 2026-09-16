@@ -28,6 +28,30 @@ def powershell_executable(override=None):
     return executable("pwsh", override or shutil.which("pwsh") or shutil.which("powershell"))
 
 
+def native_executable(value, cwd):
+    """Resolve an explicit path or PATH entry without an implicit command interpreter."""
+    if not value or "\0" in value:
+        raise OperationError("invalid_arguments", "Executable must be a nonempty path or name")
+    candidate = Path(value).expanduser()
+    if candidate.drive and not candidate.is_absolute():
+        raise OperationError("ambiguous_path", "Drive-relative executable paths are not supported")
+    if candidate.is_absolute() or any(separator in value for separator in ("/", "\\")):
+        candidate = candidate if candidate.is_absolute() else Path(cwd) / candidate
+    else:
+        found = shutil.which(value)
+        if not found:
+            raise OperationError("software_missing", f"Executable is not on PATH: {value}")
+        candidate = Path(found)
+    if "\\microsoft\\windowsapps\\" in str(candidate).lower().replace("/", "\\"):
+        raise OperationError("software_alias", "WindowsApps alias: select a real executable "
+                             "with software.discover or use an explicit project interpreter")
+    if candidate.suffix.lower() in {".cmd", ".bat"}:
+        raise OperationError("shell_required", "Use powershell.run for batch scripts")
+    if not candidate.is_file():
+        raise OperationError("software_missing", f"Executable does not exist: {candidate}")
+    return str(candidate.resolve())
+
+
 def filtered_environment(redactor, overrides=None):
     environment = dict(os.environ)
     environment.update(overrides or {})
@@ -53,6 +77,8 @@ class LocalProcessDriver:
         self.processes = set()
 
     async def run(self, argv, cwd, *, timeout, context, env=None):
+        from .user_execution import require_ordinary_user
+        require_ordinary_user()
         context.check()
         deadline = min(context.deadline, time.monotonic() + timeout)
         if (
@@ -63,9 +89,22 @@ class LocalProcessDriver:
         ):
             raise OperationError("process_timeout", "Command deadline has expired")
         environment = filtered_environment(self.redactor, env)
-        if os.name == "nt":
-            return await self._windows(argv, cwd, deadline, context, environment)
-        return await self._posix(argv, cwd, deadline, context, environment)
+        started = time.monotonic()
+        try:
+            if os.name == "nt":
+                result = await self._windows(argv, cwd, deadline, context, environment)
+            else:
+                result = await self._posix(argv, cwd, deadline, context, environment)
+        except Exception as exc:
+            if getattr(exc, "winerror", None) == 740:
+                raise OperationError("elevation_required", "Program requires administrator "
+                                     "privileges; AgentHub does not request elevation") from exc
+            if isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5:
+                raise OperationError("permission_denied", "Windows denied program execution") from exc
+            raise
+        result["executable"] = argv[0]
+        result["elapsed_seconds"] = time.monotonic() - started
+        return result
 
     async def _windows(self, argv, cwd, deadline, context, environment):
         import win32api

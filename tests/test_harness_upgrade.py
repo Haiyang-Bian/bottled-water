@@ -74,7 +74,7 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
         timeout=45,
     )
     assert upgraded.returncode == 0, upgraded.stderr
-    assert json.loads(upgraded.stdout)["database_version"] == 5
+    assert json.loads(upgraded.stdout)["database_version"] == 6
     assert "upgrade-test-private-key" not in upgraded.stdout + upgraded.stderr
     assert config_before == hashlib.sha256((home / "config.toml").read_bytes()).hexdigest()
     assert credentials_before == {
@@ -102,13 +102,19 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
             assert identity["memory_ids"]["forgotten"] not in ids
             memory.rebuild(memory.access())
             assert identity["memory_ids"]["forgotten"] not in {r.id for r in memory.search(memory.access())}
+        if identity.get("resource_id"):
+            from agent_adapters.storage.resources import SQLiteResources
+            resources = SQLiteResources(store)
+            saved = resources.read(resources.access(), identity["resource_id"])
+            assert saved.content.name == "旧项目"
+            assert os.path.normcase(saved.content.path) == os.path.normcase(str(project))
         assert not store.db.execute("SELECT 1 FROM resource_jobs").fetchone()
     finally:
         store.close()
     assert list(home.glob("*.bak"))
     with sqlite3.connect(next(home.glob("*.bak"))) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == identity["schema"]
-    # Old binaries refuse v5 instead of silently overwriting it.
+    # Old binaries refuse v6 instead of silently overwriting it.
     old = subprocess.run(
         [old_python, "-B", "-m", "agent_cli.main", "sessions"],
         env=env,

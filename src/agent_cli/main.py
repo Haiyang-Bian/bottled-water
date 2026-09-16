@@ -19,9 +19,14 @@ def parser():
     session = root.add_mutually_exclusive_group()
     session.add_argument("-c", "--continue", dest="continue_session", action="store_true")
     session.add_argument("-r", "--resume", nargs="?", const="", default=None)
-    root.add_argument("--add-dir", action="append", default=[])
+    root.add_argument("--add-dir", action="append", default=[], help="Add a reference directory")
     root.add_argument("--here", action="store_true", help="Filter tasks by saved working location")
-    root.add_argument("--cwd", help="Explicit working location within the task's granted roots")
+    root.add_argument("--cwd", help="Working location accessible to the ordinary OS user")
+    root.add_argument("--sandbox", choices=["windows", "current-user"],
+                      help="Execution mode; Windows isolation is paused")
+    root.add_argument("--permissions", choices=["inherit", "custom"])
+    root.add_argument("--read-dir", action="append", default=[])
+    root.add_argument("--write-dir", action="append", default=[])
     root.add_argument("--profile")
     root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
@@ -29,6 +34,10 @@ def parser():
     root.add_argument("--no-color", action="store_true")
     root.add_argument("--verbose", action="store_true", help="Detailed tool and phase output")
     commands = root.add_subparsers(dest="command")
+    from .permissions import add_parser as add_permissions_parser
+    from .sandbox import add_parser as add_sandbox_parser
+    add_permissions_parser(commands)
+    add_sandbox_parser(commands)
     from .memory import add_parser as add_memory_parser
     add_memory_parser(commands)
     from .resources import add_parser as add_resources_parser
@@ -106,6 +115,20 @@ def initialize(args, home):
 
 async def dispatch(args):
     home = home_directory()
+    if args.command == "trust":
+        raise ConfigurationError(
+            "trust add/remove 已停用。原生执行按普通用户权限访问目录；"
+            "旧 trust 记录保留，但不再限制或撤销访问。"
+        )
+    if args.command == "model":
+        from agent_adapters.local.user_execution import require_ordinary_user
+        require_ordinary_user()
+    if args.command in {"permissions", "sandbox"}:
+        from .permissions import command as permissions_command
+        from .sandbox import command as sandbox_command
+        return await (permissions_command if args.command == "permissions" else sandbox_command)(
+            args, home,
+        )
     if args.command in {"resources", "software"}:
         from .resources import command
         return await command(args, home)
@@ -148,7 +171,6 @@ async def dispatch(args):
         from .app import history_command
         return await history_command(args, home)
     from agent_adapters.storage.sqlite import SQLiteStore
-    from agent_subsystems.workspaces.paths import canonical_directory
 
     from .privacy import display_redactor
     readonly = args.command in {"replay", "doctor", "model"}
@@ -161,11 +183,6 @@ async def dispatch(args):
             print(json.dumps({"database_version": store.schema_version,
                               "environment_id": store.environment.environment_id,
                               "backup": str(store.backup_path) if store.backup_path else None}))
-            return 0
-        if args.command == "trust":
-            path = canonical_directory(args.path)
-            store.trust(path, args.operation == "add")
-            print(f"Trust {args.operation}: {path}", file=sys.stderr)
             return 0
         if args.command == "replay":
             if store is None or store.queries().run_scope(args.run_id) is None:
@@ -252,8 +269,11 @@ def main():
         return 130
     except Exception as exc:
         from agent_adapters.storage.session_lock import SessionBusyError
+        from agent_adapters.storage.permissions import PermissionBusyError
 
-        if isinstance(exc, SessionBusyError):
+        if isinstance(exc, (SessionBusyError, PermissionBusyError)) or (
+            isinstance(exc, OperationError) and exc.code == "permission_busy"
+        ):
             code, message = 3, str(exc)
         elif isinstance(
             exc, (ConfigurationError, OperationError, OSError, ValueError, KeyError, ImportError)

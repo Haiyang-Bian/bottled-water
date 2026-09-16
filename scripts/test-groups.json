@@ -120,6 +120,9 @@
   },
     "system": {
       "sandbox:unit": [
+        "tests/test_permission_cli.py",
+        "tests/test_permission_transactions.py",
+        "tests/test_permission_storage.py",
         "tests/test_restricted_probe_reporting.py",
         "tests/test_cli_restricted_assembly.py",
         "tests/test_restricted_boundary.py",
@@ -132,6 +135,11 @@
         "tests/test_lpac_movement_probe.py"
       ],
       "sandbox:integration": [
+        "tests/test_sandbox_initialization.py",
+        "tests/test_permission_cli_native.py",
+        "tests/test_permission_backend_native.py",
+        "tests/test_permission_hosts_native.py",
+        "tests/test_permission_control.py",
         "tests/test_restricted_runtime_native.py",
         "tests/test_lpac_completion_native.py",
         "tests/test_lpac_native.py",
@@ -158,6 +166,7 @@
       "tests/test_harness_execution.py"
     ],
     "cli:unit": [
+      "tests/test_native_cli_mode.py",
       "tests/test_cli_sessions.py",
       "tests/test_cli_presentation.py",
       "tests/test_local_system.py",
@@ -173,7 +182,9 @@
     "providers:live": [
       "tests/test_cli_live.py"
     ],
-    "workspaces:unit": [
+      "workspaces:unit": [
+        "tests/test_native_commands.py",
+        "tests/test_native_access.py",
       "tests/test_execution_location.py",
       "tests/test_harness_discovery.py"
     ]

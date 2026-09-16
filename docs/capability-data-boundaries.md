@@ -2,9 +2,15 @@
 
 AgentHub exposes powerful capabilities through agents, tools, skills, MCP servers, sandbox commands, and external coding agents. This document defines the current boundaries.
 
-The [system architecture](./architecture/README.md) separates host identity/RBAC from the shared tool subsystem's execution grants. That extraction is a target design; the existing tool paths still have the implementation gap described below.
+The [system architecture](./architecture/README.md) separates host identity/RBAC from shared execution grants. The CLI uses the shared contracts and adapters; some Web tool paths retain the implementation gap described below.
 
-## Permission Model
+## Native CLI 0.2.3
+
+The ordinary-user CLI explicitly selects `ResourceGrant.file_access_scope=user`; the shared default remains `workspace`. Files, discovery, command cwd, resource checks and output observations follow that explicit scope. Working directories and reference directories organize execution; they no longer restrict ordinary-user CLI access. OS errors remain real tool failures. This does not relax Web execution roots or turn retained LPAC code into a released sandbox.
+
+Global task discovery still checks the local environment identity; task histories do not merge. Memory candidates require adoption, forgotten records stay suppressed, and resource observations need confirmed sources. These data rules survive the broader native file scope. `trust remove` is not an access revocation mechanism in native mode. For current limitations and migration behavior, see the [CLI manual](./cli.md).
+
+## Web Permission Model
 
 Agents can be configured with explicit permissions for:
 

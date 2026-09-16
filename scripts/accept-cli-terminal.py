@@ -93,7 +93,6 @@ def main():
         with tempfile.TemporaryDirectory(prefix="agenthub-terminal-") as temporary:
             with contextlib.contextmanager(cli_fixture.__wrapped__)(Path(temporary)) as fixture:
                 run, project, _, requests = fixture
-                run("trust", "add", str(project))
                 run("--json", "-p", "REPAIR")
                 terminal = Terminal([run.python, "-B", "-m", "agent_cli.main", "-r"],
                                     project, run.environment, output)

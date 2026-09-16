@@ -44,6 +44,11 @@ def cli_fixture(tmp_path):
         def log_message(self, *args):
             pass
 
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"native network artifact")
+
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append(body)
@@ -90,6 +95,23 @@ def cli_fixture(tmp_path):
                     delta = call("Probe a resource", {"id": resource_id})
                 elif step == 2:
                     delta = call("Read a bounded prior task", {"id": task_id})
+            elif scenario == "NATIVE" and step == 0:
+                delta = call("Discover Python", {"kind": "python", "cwd": str(second)})
+            elif scenario == "NATIVE" and step == 1:
+                candidates = json.loads(body["messages"][-1]["content"])["result"]["candidates"]
+                selected = next(row["path"] for row in candidates if row["source"] == "project_venv")
+                output = project.parent / "external-cache" / "result.txt"
+                code = (
+                    "import sys,urllib.request; from pathlib import Path; "
+                    "p=Path(sys.argv[2]); p.parent.mkdir(exist_ok=True); "
+                    "p.write_bytes(urllib.request.urlopen(sys.argv[1],timeout=5).read()); "
+                    "print('NATIVE OK')"
+                )
+                delta = call("Execute a local executable", {
+                    "executable": selected,
+                    "args": ["-c", code, f"http://127.0.0.1:{server.server_port}/artifact", str(output)],
+                    "cwd": str(second), "outputs": [str(output)],
+                })
             elif scenario == "SOFTWARE" and step == 0:
                 delta = call("Execute an enabled software ID", {
                     "id": user.split()[1], "args": ["-c", "from pathlib import Path; Path('result.txt').write_text('42')"],
@@ -118,6 +140,43 @@ def cli_fixture(tmp_path):
                              "```python\n" + "\n".join(f"value_{i} = {i}" for i in range(45))
                              + "\n```\n\n继续输入可处理下一项任务。\n"
                              '```status_report\n{"state":"completed","will":"complete"}\n```'}
+            elif scenario == "RESTRICTED":
+                if step == 0:
+                    delta = call("Read text", {"path": "calc.py"})
+                elif step == 1:
+                    observation = json.loads(body["messages"][-1]["content"])["result"]
+                    delta = call("Replace exactly", {
+                        "path": "calc.py", "old_text": "a - b", "new_text": "a + b",
+                        "expected_hash": observation["sha256"],
+                    })
+                elif step == 2:
+                    delta = call("Execute a non-interactive", {"script":
+                        "python -B -c \"from calc import add; assert add(2,3)==5; print('PYTHON OK')\"\n"
+                        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+                        "uv run --offline --no-project -- python -B -c \"print('UV OK')\""})
+                elif step == 3:
+                    delta = call("Execute Git", {"args": ["diff", "--", "calc.py"]})
+                elif step == 4:
+                    delta = call("Read text", {"path": str(second / "note.txt")})
+                elif step == 5:
+                    delta = call("Read text", {"path": str(project.parent / "Private" / "secret.txt")})
+                elif step == 6:
+                    code = (
+                        "import os,socket\nfrom pathlib import Path\n"
+                        "assert 'AGENTHUB_TEST_KEY' not in os.environ\n"
+                        f"for path,mode in [({str(second / 'note.txt')!r},'w'),"
+                        f"({str(project.parent / 'Private' / 'secret.txt')!r},'r')]:\n"
+                        " try: Path(path).open(mode).close()\n"
+                        " except PermissionError: print('OS DENIED', mode)\n"
+                        " else: raise AssertionError('file bypass')\n"
+                        f"try: socket.create_connection(('127.0.0.1',{server.server_port}),timeout=2)\n"
+                        "except OSError as exc:\n"
+                        " assert getattr(exc,'winerror',None)==10013 or exc.errno==13\n"
+                        " print('NETWORK DENIED')\n"
+                        "else: raise AssertionError('network bypass')\n"
+                    )
+                    delta = call("Execute a non-interactive", {
+                        "script": "$testCode = @'\n" + code + "'@\npython -B -c $testCode"})
             elif scenario == "REPAIR":
                 if step == 0:
                     delta = call("Read text", {"path": "calc.py"})
@@ -262,7 +321,6 @@ def records(result):
 
 def test_cli_keyboard_resume_without_id(cli_fixture):
     run, project, _, requests = cli_fixture
-    run("trust", "add", str(project))
     run("--json", "-p", "REPAIR")
     keys = project / "keys.txt"
     keys.write_text("\rREMEMBER\r/exit\r", encoding="utf-8", newline="")
@@ -284,7 +342,6 @@ def test_cli_redacts_credentials_and_does_not_persist_private_reasoning(cli_fixt
 
     run, project, _, _ = cli_fixture
     secret = run.environment["AGENTHUB_TEST_KEY"]
-    run("trust", "add", str(project))
     response = run("--json", "-p", "SECRET")
     assert secret not in response.stdout + response.stderr
     assert "private-reasoning-must-not-persist" not in response.stdout + response.stderr
@@ -302,10 +359,6 @@ def test_cli_redacts_credentials_and_does_not_persist_private_reasoning(cli_fixt
 
 def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     run, project, second, requests = cli_fixture
-    rejected = run("--json", "-p", "REPAIR", expected=2)
-    assert records(rejected)[0]["type"] == "error"
-    assert not requests
-    run("trust", "add", str(project))
     fixed = run("--json", "-p", "REPAIR")
     events = records(fixed)
     result = events[-1]
@@ -320,10 +373,9 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
     assert replay[-1]["type"] == "system.run_completed"
     run("--continue", "--json", "-p", "REMEMBER")
     assert any(m["role"] == "user" and m["content"] == "REPAIR" for m in requests[-1]["messages"])
-    run("trust", "add", str(second))
     run("--json", "-p", "ISOLATED", cwd=second)
     assert not any("REPAIR" in m["content"] for m in requests[-1]["messages"])
-    run("--continue", "--here", "--json", "-p", "CROSS_DENIED", expected=1)
+    run("--continue", "--here", "--json", "-p", "CROSS_NATIVE")
     run("--continue", "--here", "--add-dir", str(second), "--json", "-p", "CROSS_ALLOWED")
     failed = records(run("--json", "-p", "FAIL", expected=1))[-1]
     assert failed["state"] == "failed"
@@ -347,10 +399,29 @@ def test_cli_real_sdk_repair_resume_cross_directory_and_failure(cli_fixture):
         assert isolated.returncode == 0, isolated.stderr
 
 
+def test_installed_native_project_interpreter_network_and_outputs(cli_fixture):
+    import sqlite3
+    run, project, second, _ = cli_fixture
+    created = subprocess.run([run.python, "-m", "venv", "--without-pip", str(second / ".venv")],
+                             capture_output=True, timeout=45)
+    assert created.returncode == 0, created.stderr
+    response = records(run("--json", "-p", "NATIVE"))
+    assert response[-1]["state"] == "completed"
+    outcomes = [event["payload"] for event in response if event["type"] == "agent.tool_result"]
+    assert len(outcomes) == 2 and all(outcome["success"] for outcome in outcomes)
+    command = outcomes[-1]["result"]
+    assert "NATIVE OK" in command["stdout"]
+    assert ".venv" in command["executable"]
+    target = project.parent / "external-cache/result.txt"
+    assert target.read_text() == "native network artifact"
+    assert command["outputs"][0]["after"]["sha256"]
+    with sqlite3.connect(Path(run.environment["AGENTHUB_HOME"]) / "state.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM trusted").fetchone()[0] == 0
+    assert json.loads(run("--json", "resources", "search", "result").stdout)
+
+
 def test_installed_resources_software_and_cross_task_summaries(cli_fixture):
     run, project, second, requests = cli_fixture
-    run("trust", "add", str(project))
-    run("trust", "add", str(second))
     first = records(run("--json", "-p", "REPAIR"))[-1]
     resources = json.loads(run("--json", "resources", "search", "calc").stdout)
     assert len(resources) == 1
@@ -359,7 +430,8 @@ def test_installed_resources_software_and_cross_task_summaries(cli_fixture):
     other = records(run("--json", "-p", f"RESOURCECHECK {record['id']} {first['context_scope_id']}", cwd=second))
     results = [e["payload"] for e in other if e["type"] == "agent.tool_result"]
     assert results[0]["success"] is True
-    assert results[1]["success"] is False and results[1]["result"]["error_code"] == "outside_workspace"
+    assert results[1]["success"] is True
+    assert results[1]["result"]["resource_records"][0]["observation"]["facts"]["sha256"]
     assert results[2]["result"]["task_records"][0]["id"] == first["context_scope_id"]
     assert not any(m["role"] == "user" and m["content"] == "REPAIR" for m in requests[-1]["messages"])
     software = json.loads(run("--json", "software", "add", "--kind", "python", "--path", run.python).stdout)
@@ -374,14 +446,14 @@ def test_installed_resources_software_and_cross_task_summaries(cli_fixture):
 def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture):
     from agent_subsystems.workspaces.paths import canonical_directory
     run, project, second, requests = cli_fixture
-    run("trust", "add", str(project))
-    run("trust", "add", str(second))
     initial = records(run("--json", "-p", "REPAIR"))
     first = initial[-1]
     started = next(e["payload"] for e in initial if e["type"] == "system.run_started")
     assert started["environment_id"] and started["agent_id"] == "local"
     assert started["execution_location"] == {"cwd": str(canonical_directory(project)), "version": 0}
-    assert started["effective_roots"] == [str(canonical_directory(project))]
+    assert started["effective_roots"] == [] and started["file_access_scope"] == "user"
+    assert started["reference_roots"] == [str(canonical_directory(project))]
+    assert started["network"] == "available"
     task = first["context_scope_id"]
     run("-c", "--json", "-p", "REMEMBER", cwd=second)
     messages = requests[-1]["messages"]
@@ -393,9 +465,8 @@ def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture
     assert len(json.loads(run("--json", "sessions", "--here").stdout)) == 1
     calls = len(requests)
     run("--here", "--resume", task, "--json", "-p", "INVALID", expected=2)
-    run("--resume", task, "--cwd", str(second), "--json", "-p", "INVALID", expected=2)
     assert len(requests) == calls
-    changed = records(run("--resume", task, "--add-dir", str(second), "--cwd", str(second),
+    changed = records(run("--resume", task, "--cwd", str(second),
                           "--json", "-p", "LOCATION"))
     outcome = next(e["payload"]["result"] for e in changed if e["type"] == "agent.tool_result")
     assert outcome["content"] == "separate project"
@@ -412,7 +483,6 @@ def test_global_tasks_saved_location_and_read_only_missing_directory(cli_fixture
     history = records(run("--json", "history", task))
     assert any(t["request"] == "REPAIR" for t in history)
     assert len(requests) == calls
-    run("trust", "add", str(moved))
     run("--resume", task, "--add-dir", str(moved), "--cwd", str(moved),
         "--json", "-p", "LOCATION_REPAIRED")
     assert json.loads(run("--json", "sessions").stdout)[0]["workspace_version"] == 2
@@ -426,8 +496,6 @@ def test_cli_process_tree_lock_cancellation_and_crash_recovery(cli_fixture, mode
     from agent_adapters.storage.sqlite import SQLiteStore
 
     run, project, second, _ = cli_fixture
-    run("trust", "add", str(project))
-    run("trust", "add", str(second))
     trigger = project / "interrupt.signal"
     wrapper = Path(__file__).parent / "helpers" / "cli_signal_host.py"
     handles = []

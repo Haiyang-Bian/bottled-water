@@ -24,12 +24,17 @@ class ResourceGrant:
     capabilities: frozenset[str]
     execution_mode: str = "current_user"
     policy: ExecutionPolicySnapshot | None = None
+    file_access_scope: Literal["workspace", "user"] = "workspace"
 
     def __post_init__(self):
         if self.execution_mode not in {"current_user", "windows_lpac"}:
             raise ValueError("Unsupported execution mode")
         if (self.execution_mode == "windows_lpac") != (self.policy is not None):
             raise ValueError("Restricted execution requires a frozen policy")
+        if self.file_access_scope not in {"workspace", "user"}:
+            raise ValueError("Unsupported file access scope")
+        if self.execution_mode == "windows_lpac" and self.file_access_scope != "workspace":
+            raise ValueError("Restricted execution cannot use current-user file scope")
 
 
 @dataclass(frozen=True)

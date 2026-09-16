@@ -16,9 +16,9 @@ Web 界面和 Windows 桌面端，用来验证对话、调度、工具调用、�
 - 创建并运行简单工作流，查看执行状态与产物。
 - 通过持久运行记录补齐断线期间的可见事件。
 - 使用本地 CLI 跨目录恢复任务，保存和采纳基础记忆。
-- 在 0.2.2 中查找已知资源、验证并调用 Python/uv/Git，通过查询选择旧实验继续工作，详见[资源与软件](./docs/resources.md)。
+- 查找已知资源与旧实验；0.2.3 支持直接调用本机 Python/uv/Git、项目虚拟环境和正常网络，软件登记成为可选入口，详见[资源与软件](./docs/resources.md)。
 
-具体能力和已知限制以[当前实现状态](./docs/implementation-status.md)为准。
+具体能力和已知限制以[当前实现状态](./docs/implementation-status.md)为准。归档交接、源码与 wheel 对应关系、尚未合入的 PR 及本地证据位置见 [0.2.3 归档记录](./docs/operations/archive-handoff-0.2.3.md)。
 
 ## 运行方式
 
@@ -33,9 +33,7 @@ agenthub
 agenthub --continue
 ```
 
-首次启动询问信任，接受后以当前 Windows 用户权限自动执行工具。配置与记录默认保存到
-`%USERPROFILE%\.agenthub`。支持 PowerShell、Git、文件读写、显式跨目录和 JSONL；
-0.2.0 可从任意目录用 `-r` 找回任务，并用 `/cd` 在已授权范围内修改保存位置。详见 [CLI 使用说明](./docs/cli.md)及[0.2.0 验收](./docs/acceptance/local-environment-0.2.0.md)。
+0.2.3 以普通用户执行，可直接跨目录操作、调用项目 Python/本机软件并联网，无需逐目录信任或管理员初始化。配置与记录默认保存在 `%USERPROFILE%\.agenthub`。从任意目录用 `-r` 找回任务，`/cd` 修改保存位置；任务历史保持独立。LPAC 强隔离暂缓，旧受限任务须显式转换。详见 [CLI 使用说明](./docs/cli.md)和[本版验收](./docs/acceptance/native-user-experience-0.2.3.md)。
 
 ### Windows 桌面端
 
@@ -80,7 +78,7 @@ Copy-Item docker/env.example docker/.env
 docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 ```
 
-启动前请替换 `docker/.env` 中的占位密钥和密码，随后访问 `http://localhost:8080`。
+启动前请替换 `docker/.env` 中的占位密钥和密码；示例 `WEB_PORT=80` 对应 `http://localhost`，如修改端口则使用配置值。本版未重新执行 Docker 验收。
 
 ## 仓库结构
 
@@ -111,6 +109,9 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 ## 文档
 
 - [文档索引](./docs/README.md)
+- [CLI 安装与使用手册](./docs/cli.md)
+- [0.2.3 升级与回退](./docs/releases/0.2.3.md)
+- [0.2.3 归档与后续交接](./docs/operations/archive-handoff-0.2.3.md)
 - [系统架构与拆分设计](./docs/architecture/README.md)
 - [子系统与模块职责](./docs/architecture/subsystems.md)
 - [新旧架构差异与迁移验收](./docs/architecture/migration.md)
@@ -121,9 +122,7 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
 
 ## 项目边界
 
-当前工作的重点是 Runtime 生命周期、事件日志、调度策略和桌面端可用性，而不是继续扩张
-社区或平台功能。Windows 桌面端是首个本地发行目标；部分文档转换、外部编码 Agent 和
-浏览器能力仍依赖单独安装的本机工具。
+当前已交付独立 CLI wheel，并维护共享 Runtime、事件日志及 Web/桌面执行链。0.2.3 的重点是原生本机使用体验；LPAC 强隔离暂缓。桌面 sidecar 构建和启动已回归，不代表完整安装器及所有 UI 已验收。部分文档转换、外部编码 Agent 和浏览器能力仍依赖单独安装的本机工具。
 
 后续拆分以 Runtime 为内核，将执行、模型、上下文、工具、MCP、Skill、工作空间等能力
 整理为共享子系统，由 AgentHub、本地 CLI 和未来评测宿主组装。CLI MVP 已完成首条公共执行链迁移，

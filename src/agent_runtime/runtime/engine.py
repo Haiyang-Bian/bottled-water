@@ -669,7 +669,8 @@ class RunKernel:
                         key: self.request.metadata.get(key)
                         for key in ("model", "provider", "profile", "effective_limits",
                                     "environment_id", "agent_id", "execution_location",
-                                    "effective_roots", "inactive_roots", "execution_mode", "isolation")
+                                    "effective_roots", "inactive_roots", "execution_mode", "isolation",
+                                    "file_access_scope", "reference_roots", "network")
                     },
                 },
             )
@@ -1174,7 +1175,9 @@ class RunKernel:
                         persisted = await self.run_journal.try_finish(result, terminal_event)
                 except Exception as exc:
                     reason_code = (
-                        "context_conflict"
+                        exc.reason_code
+                        if isinstance(exc, ExecutionStopped)
+                        else "context_conflict"
                         if isinstance(exc, ContextConflictError)
                         else "event_sequence_conflict"
                         if isinstance(exc, EventSequenceConflictError)

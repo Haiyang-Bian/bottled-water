@@ -75,7 +75,7 @@ def observations(event):
         facts = {k: v for k, v in data.items() if k in FACTS}
         facts.update({"exists": True, "kind": "file", "observation_status": "observed"})
         return [(path, facts, "read" if tool == "file.read" else "modified")]
-    if tool == "software.run":
+    if tool in {"software.run", "process.run"}:
         results = []
         for output in data.get("outputs", []):
             after = output.get("after", {})

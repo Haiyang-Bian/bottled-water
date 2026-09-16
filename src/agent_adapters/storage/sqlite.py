@@ -44,7 +44,7 @@ class SQLiteStore:
             )
             self.db.row_factory = sqlite3.Row
             self.schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if self.schema_version not in (1, 2, 3, 4, SCHEMA_VERSION):
+            if self.schema_version not in (1, 2, 3, 4, 5, SCHEMA_VERSION):
                 self.db.close()
                 raise ValueError("Unsupported state database version")
             try:
@@ -65,7 +65,7 @@ class SQLiteStore:
     def _initialize(self, path):
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, 4, 5, SCHEMA_VERSION):
             raise ValueError(f"Unsupported state database version: {version}")
         self.schema_version = version
         self._check_environment()  # Refuse a foreign binding before any persistent writes.
@@ -132,7 +132,8 @@ class SQLiteStore:
         else:
             self.db.execute("DELETE FROM trusted WHERE path=?", (str(path),))
 
-    def new_session(self, root, *, cwd=None, granted_roots=None):
+    def new_session(self, root, *, cwd=None, granted_roots=None,
+                    execution_mode="current_user", permission_selection=None):
         session = {
             "id": str(uuid4()),
             "environment_id": self.environment.environment_id,
@@ -143,6 +144,11 @@ class SQLiteStore:
             "created": utc_now().isoformat(),
             "updated": utc_now().isoformat(),
         }
+        with self.transaction():
+            self._insert_session(session, execution_mode, permission_selection)
+        return self.session(session["id"])
+
+    def _insert_session(self, session, execution_mode, permission_selection):
         self.db.execute(
             "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)",
             (
@@ -153,7 +159,16 @@ class SQLiteStore:
                 session["updated"],
             ),
         )
-        return session
+        self._save_task_permissions(session["id"], execution_mode, permission_selection)
+
+    def _save_task_permissions(self, session_id, mode, selection):
+        from agent_subsystems.workspaces.permission_records import selection_from_dict, document
+        if mode not in {"current_user", "windows_lpac"}:
+            raise ValueError("Invalid execution mode")
+        value = selection_from_dict(selection or {"mode": "inherit", "roots": []})
+        self.db.execute("INSERT OR REPLACE INTO task_permissions VALUES(?,?,?)", (
+            session_id, mode, document(value),
+        ))
 
     def sessions(self, root=None):
         query = "SELECT id FROM sessions WHERE environment_id=?"
@@ -167,7 +182,8 @@ class SQLiteStore:
     def session(self, identifier):
         return self.queries().session(identifier)
 
-    def update_workspace(self, session_id, *, cwd, granted_roots, expected_version, lock):
+    def update_workspace(self, session_id, *, cwd, granted_roots, expected_version, lock,
+                         execution_mode=None, permission_selection=None):
         if not lock.owns(self.path.parent / "locks", session_id):
             raise ValueError("Session lock is required for a workspace update")
         with self.transaction():
@@ -179,7 +195,12 @@ class SQLiteStore:
             ).fetchone():
                 raise ValueError("Cannot change workspace while a Run is active")
             roots = list(dict.fromkeys(map(str, granted_roots)))
-            if current["cwd"] == str(cwd) and current["granted_roots"] == roots:
+            mode = execution_mode or current["execution_mode"]
+            selection = (permission_selection if permission_selection is not None
+                         else current["permission_selection"])
+            if (current["cwd"] == str(cwd) and current["granted_roots"] == roots
+                    and current["execution_mode"] == mode
+                    and current["permission_selection"] == selection):
                 return current
             version = expected_version + 1
             self.db.execute(
@@ -192,8 +213,10 @@ class SQLiteStore:
                     "type": "session.workspace_changed", "actor": "user",
                     "created": utc_now().isoformat(), "previous_cwd": current["cwd"],
                     "cwd": str(cwd), "granted_roots": roots, "version": version,
+                    "execution_mode": mode, "permission_selection": selection,
                 }),
             ))
+            self._save_task_permissions(session_id, mode, selection)
         return self.session(session_id)
 
     async def load(self, scope_id):
@@ -259,12 +282,16 @@ class SQLiteStore:
     async def try_complete(self, delta, result, terminal_event):
         with self.transaction():
             row = self.db.execute(
-                "SELECT result,scope FROM runs WHERE id=?", (result.run_id,)
+                "SELECT result,scope,request FROM runs WHERE id=?", (result.run_id,)
             ).fetchone()
             if row is None or row["scope"] != result.context_scope_id:
                 raise KeyError(result.run_id)
             if row["result"] is not None:
                 return None
+            from .permissions import SQLitePermissions
+            SQLitePermissions(self).check_completion(
+                result.run_id, json.loads(row["request"]).get("metadata", {}),
+            )
             await self._commit_in_transaction(result.context_scope_id, delta)
             self.memory_outbox(result.run_id)
             self._append(terminal_event)

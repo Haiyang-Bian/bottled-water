@@ -1,6 +1,29 @@
 # Feature Guide
 
-AgentHub is organized around conversations. A user starts from an IM-style workbench, chooses a workspace and conversation, then collaborates with one or more agents. Files, tools, artifacts, workflows, and deployment records all attach back to the workspace or conversation.
+AgentHub has a standalone local CLI and a Web workbench packaged by the desktop client. They share the Runtime, but their configuration, data ownership and available tools differ. Current evidence and unfinished work are summarized in the [archive handoff](./operations/archive-handoff-0.2.3.md).
+
+## Local CLI 0.2.3
+
+Install the wheel, run `agenthub init` with your own model credentials, then start `agenthub` from any directory. Native tasks run as the ordinary user with cross-directory access and normal networking; they do not require Web registration, per-directory trust or administrator setup.
+
+| Goal | User action |
+| --- | --- |
+| Start a separate task | `agenthub` or `/new`; an empty draft is not saved |
+| Find previous work without remembering IDs | `agenthub -r`, `/resume 昨天的实验`; `-c` resumes the most recent task |
+| Change the saved working location | `/cd PATH` or `--cwd PATH`; location does not grant permission |
+| Read, modify and test a project | Describe the files, intended change and interpreter; tools record actual paths and results |
+| Keep knowledge across tasks | `/memory add` saves directly; `/memory candidates` reviews model proposals before adoption |
+| Find resources and previous experiments | `/resources`, task search and the [resource/software commands](./resources.md) |
+| Inspect what happened | `/history`, `/tools`, `sessions`, `replay RUN_ID`; these read records without running a model |
+| Cancel and continue | Ctrl+C stops the current Run and managed processes; the next user input starts a new Run with saved context |
+
+Tasks retain separate histories. Approved memory and bounded resource summaries provide continuity, not a merged global transcript. Cancellation does not undo files or other external effects. Software registration is optional: native `process.run` and `software.discover` support installed programs and project environments. LPAC and fine-grained directory prohibitions are paused; saved restricted tasks require an explicit mode conversion.
+
+See the [CLI manual](./cli.md) for installation without cloning, keyboard controls, JSONL, upgrades and troubleshooting. DeepSeek and Windows terminal acceptance are documented [here](./acceptance/native-user-experience-0.2.3.md); other providers/platforms are not implied to have passed.
+
+## Web And Desktop Scope
+
+The remaining sections describe the IM-style workbench: choose a workspace and conversation, then collaborate with one or more agents. Files, tools, artifacts, workflows and deployments attach to that workspace or conversation. These features are not all available in the local CLI.
 
 ## Authentication And Workspaces
 

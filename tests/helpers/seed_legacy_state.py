@@ -61,6 +61,14 @@ async def main():
             forgotten = memory.save(access, MemoryRevision("已遗忘", "不可召回"))
             memory.set_status(access, forgotten.id, 1, "forgotten")
             memory_ids = {"active": active.id, "forgotten": forgotten.id}
+        resource_id = None
+        if store.db.execute("PRAGMA user_version").fetchone()[0] >= 5:
+            from agent_adapters.storage.resources import SQLiteResources
+            from agent_contracts.resources import ResourceRevision
+            resources = SQLiteResources(store)
+            resource_id = resources.save(
+                resources.access(), ResourceRevision("旧项目", str(project), "project")
+            ).id
         print(
             json.dumps(
                 {
@@ -68,6 +76,7 @@ async def main():
                     "credential_ref": reference,
                     "schema": store.db.execute("PRAGMA user_version").fetchone()[0],
                     "memory_ids": memory_ids,
+                    "resource_id": resource_id,
                 }
             )
         )

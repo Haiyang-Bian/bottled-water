@@ -18,6 +18,8 @@ class TrustAuthorization:
         spec, context = request.spec, request.context
         if spec.capability not in context.grant.capabilities:
             return "deny"
+        if context.grant.file_access_scope == "user":
+            return "allow"
         if not all(self.store.is_trusted(root) for root in context.grant.workspace.roots):
             return "requires_user"
         return "allow"
@@ -96,7 +98,7 @@ class LocalToolExecutor:
                     execution["path"] = str(await files.resolve(kwargs.get("path", ".")))
                 result = await handler(**kwargs)
                 if isinstance(result, dict):
-                    result["execution"] = execution
+                    result["execution"] = {**execution, **result.get("execution", {})}
                 return result
 
             registry.register(name, description, schema, invoke)
@@ -225,4 +227,30 @@ class LocalToolExecutor:
             ["args"],
             "process",
         )
+        if self.grant.execution_mode == "current_user" and self.grant.file_access_scope == "user":
+            from .resources import LocalSoftware, discover
+            software = LocalSoftware(self.process_driver)
+
+            async def native(executable, args, cwd=".", timeout=120, outputs=()):
+                return await software.run_native(executable, args, context, cwd=cwd,
+                                                 timeout=timeout, outputs=outputs)
+
+            async def software_discover(kind, cwd=".", path=None):
+                directory = await files.resolve(cwd, directory=True)
+                return {"candidates": discover(kind, directory, path),
+                        "registered": False, "execution": {"cwd": str(directory)},
+                        "notice": "Discovery only. Use process.run with the selected actual path; "
+                                  "AgentHub's interpreter may differ from the project's Python."}
+
+            register("process.run", "Execute a local executable directly with an argument array, "
+                     "ordinary user permissions and network access. No software ID required. "
+                     "Use an explicit project interpreter or PATH name; no implicit shell. "
+                     "Declare outputs for before/after observations. Batch scripts use powershell.run.",
+                     native, {"executable": string, "args": {"type": "array", "items": string},
+                              "outputs": {"type": "array", "items": string}, **common},
+                     ["executable", "args"], "process")
+            register("software.discover", "Discover Python, uv or Git in the project .venv, PATH "
+                     "and AgentHub interpreter. Returns candidates with sources, without running "
+                     "or registering them. kind: python|uv|git.", software_discover,
+                     {"kind": string, "cwd": string, "path": string}, ["kind"], "files")
         return AuthorizedToolInvoker(registry, specs, self.authorization, context, self.redactor)

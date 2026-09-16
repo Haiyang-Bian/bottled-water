@@ -386,7 +386,7 @@ def test_v3_upgrade_preserves_binding_and_rolls_back_all_new_tables(tmp_path, mo
     store = SQLiteStore(path, identity=identity)
     try:
         assert store.environment.environment_id == environment_id
-        assert store.schema_version == 5
+        assert store.schema_version == 6
     finally:
         store.close()
 

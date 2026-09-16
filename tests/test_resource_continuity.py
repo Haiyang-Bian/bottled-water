@@ -226,7 +226,7 @@ def test_reference_budget_precedes_history_and_revocation(catalog, tmp_path):
     assert not used and saved.id not in filtered[0].content and filtered[0].tool_call_id == "c"
 
 
-async def test_management_without_credentials_cas_and_explicit_grants(tmp_path, capsys):
+async def test_management_without_credentials_cas_and_native_access(tmp_path, capsys):
     from agent_cli.main import parser
     from agent_cli.resources import command
 
@@ -242,13 +242,11 @@ async def test_management_without_credentials_cas_and_explicit_grants(tmp_path, 
     identifier = saved["id"]
     with pytest.raises(ConfigurationError, match="revision"):
         await run("disable", identifier)
-    with pytest.raises(OperationError):
-        await run("verify", identifier, "--revision", "1")
+    _, missing = await run("verify", identifier, "--revision", "1")
+    assert missing["observation"]["facts"]["exists"] is False
     (tmp_path / "data.txt").write_text("x")
     store = SQLiteStore(home / "state.sqlite3")
-    from agent_subsystems.workspaces.paths import canonical_directory
-
-    store.trust(canonical_directory(tmp_path), True)
+    assert store.db.execute("SELECT COUNT(*) FROM trusted").fetchone()[0] == 0
     store.close()
     _, verified = await run("verify", identifier, "--revision", "1")
     assert verified["observation"]["facts"]["exists"]

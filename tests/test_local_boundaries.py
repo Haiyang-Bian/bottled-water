@@ -27,25 +27,13 @@ from agent_subsystems.observability.redaction import Redactor
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 
 
-def test_interactive_trust_is_asked_once_across_restarts(tmp_path, monkeypatch, capsys):
-    import io
-    from agent_cli.host import ensure_trusted
-
-    database = tmp_path / "state.sqlite3"
-    store = SQLiteStore(database)
-    try:
-        monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
-        ensure_trusted(store, tmp_path, True)
-        assert "PowerShell/Git" in capsys.readouterr().err
-    finally:
-        store.close()
-    store = SQLiteStore(database)
-    try:
-        monkeypatch.setattr("sys.stdin", io.StringIO(""))
-        ensure_trusted(store, tmp_path, True)
-        assert not capsys.readouterr().err
-    finally:
-        store.close()
+async def test_trust_command_is_disabled_without_creating_state(tmp_path, monkeypatch):
+    from agent_cli.main import dispatch, parser
+    monkeypatch.setenv("AGENTHUB_HOME", str(tmp_path / "home"))
+    for operation in ("add", "remove"):
+        with pytest.raises(ConfigurationError, match="已停用"):
+            await dispatch(parser().parse_args(["trust", operation, str(tmp_path)]))
+    assert not (tmp_path / "home").exists()
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,8 @@
 # AgentHub 系统架构：内核、子系统与宿主
 
-> 文档状态：目标架构与 CLI MVP 迁移现状，2026-09-04。MVP 执行链已迁入根级 `src`；未迁移领域仍按原宿主实现。实测结果及剩余验收见 [CLI 实施记录](./cli-mvp.md)。
+> 2026-09-16：0.2.3 转向[原生使用闭环](./native-user-experience-0.2.3.md)。普通 CLI 明确使用 user 文件范围与正常网络；共享默认 workspace 不变。L4a/LPAC 暂缓，P3 代码、schema v6 与失败证据保留。下述旧阶段结果不代表强隔离已通过；多助手继续待实现。
+
+> 文档状态：目标架构始于 2026-09-04；当前公共 CLI 已到 0.2.3 / schema v6。执行链位于根级 `src`，未迁移领域仍按原宿主实现。早期 [CLI 实施记录](./cli-mvp.md)保留历史结论；最新实测见 [0.2.3 验收](../acceptance/native-user-experience-0.2.3.md)，源码、产物与下一次开发入口见[归档交接](../operations/archive-handoff-0.2.3.md)。
 
 > 2026-09-15 实施增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。L1、L2 已分别在 0.2.0、0.2.1 实现；0.2.2 的 [L3 资源与软件](./resource-continuity-l3.md)已接入本地 CLI，[验收记录](../acceptance/resource-continuity-0.2.2.md)区分通过、失败及未执行项。身份、记忆、资源元数据、位置和文件授权各自独立，保持已有 Run 生命周期。
 
@@ -20,6 +22,7 @@ AgentHub 的目标是成为能够被多种宿主使用的智能体执行系统�
 | [L1 0.2.0 实施计划](./local-environment-l1.md) | 本轮如何分阶段实现身份、迁移、位置和全局任务入口 | 已实施，验收记录分别列出通过及限制 |
 | [L2 0.2.1 基础记忆](./foundational-memory-l2.md) | 知识保存、采纳、检索、修正、遗忘及 schema v4 | 已实施，独立于任务历史和文件授权 |
 | [L3 0.2.2 资源连续性](./resource-continuity-l3.md) | 资源事实、软件登记、任务摘要、schema v5 | 已实施，经验仍须采纳，软件仍为当前用户权限执行 |
+| [0.2.3 原生使用闭环](./native-user-experience-0.2.3.md) | 当前用户跨目录访问、直接程序调用、正常网络和暂停 LPAC | 已构建并验收；schema v6 保留实验表，不等于 L4 放行 |
 | [Backend architecture](../backend-architecture.md) | 当前 FastAPI 后端的真实组织方式 | 当前实现说明 |
 | [Runtime 架构](../runtime/architecture.md)与[不变量](../runtime/invariants.md) | 生命周期、调度权限、Journal、协作和隔离的精确语义 | 内核契约 |
 | [Runtime 当前实现](../runtime/current-state.md)与[项目状态](../implementation-status.md) | 哪些契约已经实现，哪些还存在差距 | 当前状态 |

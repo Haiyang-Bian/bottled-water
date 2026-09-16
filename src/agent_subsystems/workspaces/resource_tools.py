@@ -155,7 +155,8 @@ class ResourceToolExecutor:
                     path = facts.pop("path")
                 else:
                     path = resolve_resource(
-                        self.context.grant.workspace, self.context.location, record.content.path
+                        self.context.grant.workspace, self.context.location, record.content.path,
+                        file_access_scope=self.context.grant.file_access_scope,
                     )
                     facts = await self.probe(path, self.context)
                 record = self.resources.observe(
@@ -191,6 +192,7 @@ class ResourceToolExecutor:
             return ToolResult(
                 call.call_id,
                 False,
-                {"error_code": getattr(exc, "code", "resource_error")},
+                {"error_code": "permission_denied" if isinstance(exc, PermissionError)
+                 else getattr(exc, "code", "resource_error")},
                 str(exc),
             )

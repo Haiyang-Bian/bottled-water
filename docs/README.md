@@ -4,14 +4,16 @@ This directory contains the current documentation for AgentHub. Current-state do
 
 The [system architecture](./architecture/README.md) defines the split into a Runtime Kernel, reusable subsystems, drivers, and application hosts. The CLI MVP execution path now lives in root `src`; the subsystem catalog distinguishes migrated capabilities from remaining work.
 
-The [local agent environment with persistent memory](./architecture/local-agent-environment.md) separates task continuity, working locations and resource permissions. L1 global tasks and L2 foundational memory are implemented in 0.2.0 and 0.2.1. L3 resource/software continuity is implemented in 0.2.2; its [acceptance evidence](./acceptance/resource-continuity-0.2.2.md) records validated behavior and remaining limits. L4 remains planned.
+The [local agent environment with persistent memory](./architecture/local-agent-environment.md) separates task continuity, working locations and resource permissions. L1 global tasks, L2 foundational memory and L3 resource/software continuity shipped in 0.2.0–0.2.2. Current **0.2.3 / local schema v6** adds native current-user access across directories, direct executable calls and normal networking. L4a/LPAC is paused; its retained code is not a completed isolation guarantee. Start with the [archive handoff](./operations/archive-handoff-0.2.3.md) for progress, evidence, local artifacts and the next-session checklist.
 
 ## Start Here
 
-- [Local CLI](./cli.md): installation, configuration, trust, sessions, tools and JSONL.
-- [Resources and software](./resources.md): resource metadata, executable verification, task queries, upgrades and authority boundaries in 0.2.2.
+- [Local CLI](./cli.md): wheel installation without cloning, configuration, global tasks, native tools, troubleshooting and JSONL.
+- [0.2.3 release and upgrade](./releases/0.2.3.md): behavior changes, preserved data and rollback.
+- [0.2.3 acceptance](./acceptance/native-user-experience-0.2.3.md): installed DeepSeek tasks, terminal, upgrades, Web/sidecar checks and untested items.
+- [Resources and software](./resources.md): resource metadata, optional pinned executables, task queries and source boundaries.
 - [Foundational memory](./architecture/foundational-memory-l2.md): explicit saves, candidate adoption, cross-task recall, revisions and forgetting in 0.2.1.
-- [CLI acceptance](./architecture/cli-mvp.md): implementation milestones, measured tests and pending live-service checks.
+- [Historical CLI MVP](./architecture/cli-mvp.md): original milestones and evidence at that release; use the current acceptance record for 0.2.3.
 - [System architecture](./architecture/README.md): OS-style responsibilities, public contracts, state ownership, dependency rules, and Web/CLI/eval hosts.
 - [Local agent environment design](./architecture/local-agent-environment.md): persistent identity, cross-task memory, resource discovery, working locations, sharing and authority boundaries.
 - [Local agent development stages](./architecture/local-agent-roadmap.md): incremental delivery, migration, acceptance gates, failure cases and evidence requirements.
@@ -35,7 +37,8 @@ The [local agent environment with persistent memory](./architecture/local-agent-
 - Shared system and CLI source of truth: root `src`; shared tests: root `tests`.
 - Web backend source of truth: `backend/src`.
 - Frontend source of truth: `frontend/src`.
-- Database schema source of truth: `backend/src/db/models` plus `backend/alembic/versions`.
+- Local CLI schema source of truth: `src/agent_adapters/storage`, including its migration and schema modules; v6 retains paused permission tables.
+- Web database schema source of truth: `backend/src/db/models` plus `backend/alembic/versions`; it is separate from CLI state.
 - Deployment source of truth: `docker/docker-compose.yml`, `docker/Dockerfile.backend`, `docker/Dockerfile.frontend`, and `docker/nginx.conf`.
 
 ## Current Architecture At A Glance
