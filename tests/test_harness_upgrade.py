@@ -106,7 +106,8 @@ def test_installed_upgrade_preserves_legacy_identity_and_history(tmp_path):
             from agent_adapters.storage.resources import SQLiteResources
             resources = SQLiteResources(store)
             saved = resources.read(resources.access(), identity["resource_id"])
-            assert saved.content.name == "旧项目" and saved.content.path == str(project)
+            assert saved.content.name == "旧项目"
+            assert os.path.normcase(saved.content.path) == os.path.normcase(str(project))
         assert not store.db.execute("SELECT 1 FROM resource_jobs").fetchone()
     finally:
         store.close()
