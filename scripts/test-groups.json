@@ -182,6 +182,7 @@
       "tests/test_cli_live.py"
     ],
       "workspaces:unit": [
+        "tests/test_native_commands.py",
         "tests/test_native_access.py",
       "tests/test_execution_location.py",
       "tests/test_harness_discovery.py"

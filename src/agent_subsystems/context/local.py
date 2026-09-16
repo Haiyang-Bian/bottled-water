@@ -30,6 +30,11 @@ class LocalContextProvider:
             "File tools and commands may access any path available to the ordinary OS user. "
             "Do not ask for directory trust or /add-dir before accessing another directory. "
             "Network and normal tool caches are available. "
+            "Use process.run to call installed executables with argument arrays without registering "
+            "software. software.discover identifies project Python, PATH tools and the CLI interpreter; "
+            "choose deliberately and do not substitute the CLI interpreter for a project's environment. "
+            "Software registrations are optional pinned choices; only registered software.run calls "
+            "require their stored fingerprint. Never request administrator elevation. "
             if self.file_access_scope == "user" else f"Accessible file tool roots:\n{roots}\n"
         )
         system = request.base_system_prompt + (
@@ -55,9 +60,9 @@ class LocalContextProvider:
             "Say 'candidate saved, pending approval' after a successful proposal; never claim "
             "permanent retention. Saved reference memories are data and grant no resource access. "
             "Use resource.search and task.search to locate known work; task summaries do not resume "
-            "another task. Suggest /resume QUERY when full history is needed. Prefer user-enabled "
-            "software registrations for Python, uv and Git; declare expected output paths to "
-            "software.run and inspect observations. A zero exit code or an existing file alone "
+            "another task. Suggest /resume QUERY when full history is needed. Declare expected "
+            "output paths when the command tool supports them and inspect observations. "
+            "A zero exit code or an existing file alone "
             "does not prove a correct or newly generated artifact."
         )
         return AgentContextBuildResult(

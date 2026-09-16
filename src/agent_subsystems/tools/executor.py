@@ -77,6 +77,8 @@ class ToolExecutorImpl:
             raise
         except OperationError as exc:
             return ToolResult(tool_call.call_id, False, {"error_code": exc.code}, str(exc))
+        except PermissionError as exc:
+            return ToolResult(tool_call.call_id, False, {"error_code": "permission_denied"}, str(exc))
         except Exception as e:
             logger.error(
                 "内置工具执行失败",

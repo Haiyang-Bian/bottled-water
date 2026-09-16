@@ -31,6 +31,8 @@ class ToolView:
         args = self.arguments
         value = args.get("path") or args.get("cwd") or args.get("pattern") or ""
         command = args.get("script") or args.get("args")
+        if args.get("executable"):
+            command = f"{args['executable']} {args.get('args', [])}"
         if command:
             value = f"{value} · {command}"
         return " ".join(safe_text(value).split())[:160]
@@ -42,7 +44,7 @@ class ToolView:
             fields.append(f"{self.elapsed:.1f}s")
         if isinstance(self.result, dict):
             for key in ("path", "start_line", "end_line", "exit_code", "total_matches",
-                        "count", "scope", "next_offset", "sha256", "conflict"):
+                        "count", "scope", "next_offset", "sha256", "conflict", "executable"):
                 if key in self.result:
                     fields.append(f"{key}={self.result[key]}")
             if self.result.get("truncated"):

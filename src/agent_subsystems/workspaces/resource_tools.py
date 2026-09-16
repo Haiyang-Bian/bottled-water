@@ -192,6 +192,7 @@ class ResourceToolExecutor:
             return ToolResult(
                 call.call_id,
                 False,
-                {"error_code": getattr(exc, "code", "resource_error")},
+                {"error_code": "permission_denied" if isinstance(exc, PermissionError)
+                 else getattr(exc, "code", "resource_error")},
                 str(exc),
             )

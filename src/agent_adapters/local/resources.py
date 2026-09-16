@@ -14,6 +14,7 @@ from agent_runtime.core.run_types import utc_now
 from agent_runtime.runtime.cancellation import CancellationScope
 from agent_subsystems.workspaces.paths import resolve_resource
 from .file_probes import check, probe
+from .processes import native_executable
 
 
 @dataclass
@@ -40,23 +41,23 @@ def discover(kind, cwd, explicit=None):
     candidates = []
     if explicit:
         value = Path(explicit).expanduser()
-        candidates.append(value if value.is_absolute() else Path(cwd) / value)
+        candidates.append((value if value.is_absolute() else Path(cwd) / value, "explicit"))
     else:
         if kind == "python":
             candidates.extend(
                 [
-                    Path(cwd)
+                    (Path(cwd)
                     / ".venv"
-                    / ("Scripts/python.exe" if os.name == "nt" else "bin/python"),
-                    Path(sys.executable),
+                    / ("Scripts/python.exe" if os.name == "nt" else "bin/python"), "project_venv"),
+                    (Path(sys.executable), "agenthub_interpreter"),
                 ]
             )
         for directory in os.get_exec_path():
             found = shutil.which(kind, path=directory)
             if found:
-                candidates.append(Path(found))
+                candidates.append((Path(found), "path"))
     result, seen = [], set()
-    for path in candidates:
+    for path, source in candidates:
         absolute = os.path.normcase(str(path.resolve()))
         if absolute in seen or not path.exists():
             continue
@@ -65,11 +66,12 @@ def discover(kind, cwd, explicit=None):
         result.append(
             {
                 "kind": kind,
+                "source": source,
                 "path": absolute,
                 "verified": False,
                 "notice": "WindowsApps alias: choose a real executable"
                 if placeholder
-                else "Requires verification",
+                else "Discovered only; registration is optional for native execution",
                 "placeholder": placeholder,
             }
         )
@@ -129,14 +131,39 @@ class LocalSoftware:
                 "software_changed",
                 "Executable missing or changed; run agenthub software verify ID --revision N",
             )
-        targets = [resolve_resource(workspace, location, str(directory / p),
-                                    file_access_scope=scope) for p in outputs]
-        before = [await probe(p, context) for p in targets]
         argv = [cfg.executable, *args]
         env = None
         if cfg.kind == "git":
             argv.insert(1, "--no-pager")
             env = {"GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true"}
+        result = await self._observed_run(argv, directory, context, timeout=timeout,
+                                          outputs=outputs, env=env)
+        result.update(software_id=cfg.resource_id, software_sha256=cfg.sha256,
+                      software_version=cfg.version)
+        return result
+
+    async def run_native(self, executable, args, context, *, cwd=".", timeout=120, outputs=()):
+        if context.grant.execution_mode != "current_user" or context.grant.file_access_scope != "user":
+            raise OperationError("software_incompatible", "Native commands require user file scope")
+        if len(outputs) > 20 or len(args) > 200 or any("\0" in arg for arg in args):
+            raise OperationError("software_argument_limit", "At most 20 outputs and 200 arguments; no NUL")
+        directory = resolve_resource(context.grant.workspace, context.location, cwd,
+                                     directory=True, file_access_scope="user")
+        selected = native_executable(executable, directory)
+        argv = [selected, *args]
+        env = None
+        if Path(selected).stem.casefold() == "git":
+            argv.insert(1, "--no-pager")
+            env = {"GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true"}
+        return await self._observed_run(argv, directory, context, timeout=timeout,
+                                        outputs=outputs, env=env)
+
+    async def _observed_run(self, argv, directory, context, *, timeout, outputs, env=None):
+        workspace, location = context.grant.workspace, context.location
+        scope = context.grant.file_access_scope
+        targets = [resolve_resource(workspace, location, str(directory / p),
+                                    file_access_scope=scope) for p in outputs]
+        before = [await probe(p, context) for p in targets]
         result = await self.driver.run(argv, directory, timeout=timeout, context=context, env=env)
         result["outputs"] = []
         for path, previous in zip(targets, before):
@@ -154,13 +181,13 @@ class LocalSoftware:
             result["outputs"].append(item)
         context.check()
         result.update(
-            software_id=cfg.resource_id,
-            software_sha256=cfg.sha256,
-            software_version=cfg.version,
+            executable=argv[0],
+            args=argv[1:],
             execution={
                 "cwd": str(directory),
                 "default_cwd": str(location.cwd),
                 "workspace_version": location.version,
+                "executable": argv[0],
             },
             notice="Output observations do not certify correctness or who created a file",
         )
