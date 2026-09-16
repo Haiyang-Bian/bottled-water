@@ -134,6 +134,8 @@
         "tests/test_lpac_movement_probe.py"
       ],
       "sandbox:integration": [
+        "tests/test_permission_backend_native.py",
+        "tests/test_permission_hosts_native.py",
         "tests/test_permission_control.py",
         "tests/test_restricted_runtime_native.py",
         "tests/test_lpac_completion_native.py",

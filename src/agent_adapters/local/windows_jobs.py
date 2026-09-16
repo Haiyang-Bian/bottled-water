@@ -8,7 +8,8 @@ class OwnedJob:
     def __init__(self):
         import win32job
 
-        self.handle = win32job.CreateJobObject(None, "Local\\AgentHub-Probe-" + uuid4().hex)
+        self.name = "Local\\AgentHub-Run-" + uuid4().hex
+        self.handle = win32job.CreateJobObject(None, self.name)
         value = win32job.QueryInformationJobObject(
             self.handle, win32job.JobObjectExtendedLimitInformation)
         value["BasicLimitInformation"]["LimitFlags"] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE

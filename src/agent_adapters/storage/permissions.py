@@ -197,6 +197,12 @@ class SQLitePermissions:
         row = self.db.execute("SELECT * FROM permission_leases WHERE run=?", (run,)).fetchone()
         if row is None or row["state"] != "active":
             raise ExecutionStopped("permission_lease_invalid")
+        prepared = self.db.execute("SELECT state,host,snapshot FROM permission_preparations WHERE id=?",
+                                   (row["preparation"],)).fetchone()
+        if (prepared is None or prepared["state"] != "prepared"
+                or prepared["host"] != row["host"] or prepared["snapshot"] != row["snapshot"]
+                or self.host_record(row["host"])["state"] != "open"):
+            raise ExecutionStopped("permission_lease_invalid")
         if not still_allowed(snapshot_from_dict(json.loads(row["snapshot"])), self.load()):
             raise ExecutionStopped("permission_revoked")
 

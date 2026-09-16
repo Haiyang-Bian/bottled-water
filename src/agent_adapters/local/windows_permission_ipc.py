@@ -13,18 +13,25 @@ LIMIT = 32768
 OPERATIONS = {"status", "freeze", "retire", "thaw"}
 
 
+class ProcessExitedError(OSError):
+    """A process object may remain queryable after it has exited."""
+
+
 def process_identity(pid=None):
     import win32api
     import win32con
     import win32process
     import win32security as sec
+    import win32event
     import pywintypes
     pid = pid or os.getpid()
     try:
-        process = win32api.OpenProcess(0x1000, False, pid)
+        process = win32api.OpenProcess(0x101000, False, pid)
     except pywintypes.error as exc:
         raise ctypes.WinError(exc.winerror) from exc
     try:
+        if win32event.WaitForSingleObject(process, 0) == win32event.WAIT_OBJECT_0:
+            raise ProcessExitedError(f"Permission host process {pid} has exited")
         token = sec.OpenProcessToken(process, win32con.TOKEN_QUERY)
         try:
             query = ctypes.WinDLL("advapi32", use_last_error=True).GetTokenInformation
