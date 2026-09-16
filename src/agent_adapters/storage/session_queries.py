@@ -60,7 +60,13 @@ class SessionQueries:
         if row is None:
             return None
         if self.version >= 3:
-            return {**dict(row), "granted_roots": decode(row["granted_roots"], [])}
+            settings = self.db.execute(
+                "SELECT mode,selection FROM task_permissions WHERE session=?", (identifier,)
+            ).fetchone() if self.version >= 6 else None
+            return {**dict(row), "granted_roots": decode(row["granted_roots"], []),
+                    "execution_mode": settings["mode"] if settings else "current_user",
+                    "permission_selection": decode(settings["selection"]) if settings else
+                    {"mode": "inherit", "roots": []}}
         return {"id": row["id"], "environment_id": None, "origin_root": row["root"],
                 "cwd": row["root"], "granted_roots": [row["root"], *decode(row["dirs"], [])],
                 "workspace_version": 0, "created": row["created"], "updated": row["updated"]}

@@ -151,7 +151,7 @@ def test_v4_upgrade_preserves_memory_and_rolls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(migration, "RESOURCE_SCHEMA", schema)
     store = SQLiteStore(path, identity=identity)
     try:
-        assert store.schema_version == 5
+        assert store.schema_version == 6
         memory = SQLiteMemory(store)
         saved = memory.save(memory.access(), MemoryRevision("偏好", "中文"))
         assert memory.read(memory.access(), saved.id).content.body == "中文"

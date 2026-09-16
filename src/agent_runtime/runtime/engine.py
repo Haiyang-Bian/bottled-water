@@ -1174,7 +1174,9 @@ class RunKernel:
                         persisted = await self.run_journal.try_finish(result, terminal_event)
                 except Exception as exc:
                     reason_code = (
-                        "context_conflict"
+                        exc.reason_code
+                        if isinstance(exc, ExecutionStopped)
+                        else "context_conflict"
                         if isinstance(exc, ContextConflictError)
                         else "event_sequence_conflict"
                         if isinstance(exc, EventSequenceConflictError)

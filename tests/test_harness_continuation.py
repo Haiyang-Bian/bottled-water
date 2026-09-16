@@ -179,7 +179,7 @@ def test_migration_requires_session_locks_and_backs_up_wal_consistently(tmp_path
     original.execute("INSERT INTO trusted VALUES('wal-only','now')")
     original.commit()
     migrated = SQLiteStore(path)
-    assert migrated.schema_version == 5
+    assert migrated.schema_version == 6
     assert migrated.session(session["id"]) and migrated.is_trusted(tmp_path)
     with sqlite3.connect(migrated.backup_path) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1

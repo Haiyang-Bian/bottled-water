@@ -11,8 +11,9 @@ from agent_contracts.identity import LocalEnvironment
 from .session_lock import SessionLock
 from .memory_schema import MEMORY_SCHEMA
 from .resource_schema import RESOURCE_SCHEMA
+from .permission_schema import PERMISSION_SCHEMA
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 BASE_SCHEMA = (
     "CREATE TABLE trusted(path TEXT PRIMARY KEY, created TEXT NOT NULL)",
@@ -73,6 +74,9 @@ def migrate(db, path, version, identity):
                     db.execute(statement)
             if version < 5:
                 for statement in RESOURCE_SCHEMA:
+                    db.execute(statement)
+            if version < 6:
+                for statement in PERMISSION_SCHEMA:
                     db.execute(statement)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             db.commit()

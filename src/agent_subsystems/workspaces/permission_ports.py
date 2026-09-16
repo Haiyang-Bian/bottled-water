@@ -1,0 +1,16 @@
+"""Workspace authority/control ports; OS objects stay inside local adapters."""
+
+from typing import Protocol
+
+from agent_contracts.permissions import StandingPermissionPolicy
+
+
+class StandingPolicyStore(Protocol):
+    def load(self) -> StandingPermissionPolicy: ...
+    def begin(self, target: StandingPermissionPolicy, expected_revision: int) -> tuple: ...
+    def transition(self, identifier: str, state: str, details: dict | None = None) -> None: ...
+    def commit(self, identifier: str) -> StandingPermissionPolicy: ...
+
+
+class HostControl(Protocol):
+    async def __call__(self, host: str, operation: str, transition: str) -> dict: ...

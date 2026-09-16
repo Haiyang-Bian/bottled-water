@@ -120,6 +120,8 @@
   },
     "system": {
       "sandbox:unit": [
+        "tests/test_permission_transactions.py",
+        "tests/test_permission_storage.py",
         "tests/test_restricted_probe_reporting.py",
         "tests/test_cli_restricted_assembly.py",
         "tests/test_restricted_boundary.py",
@@ -132,6 +134,7 @@
         "tests/test_lpac_movement_probe.py"
       ],
       "sandbox:integration": [
+        "tests/test_permission_control.py",
         "tests/test_restricted_runtime_native.py",
         "tests/test_lpac_completion_native.py",
         "tests/test_lpac_native.py",
