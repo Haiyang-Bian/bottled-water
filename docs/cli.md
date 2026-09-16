@@ -2,7 +2,7 @@
 
 本地 CLI 直接使用共享 Runtime、SingleAgentPolicy 和 AgentLoop。它不需要启动 Web 服务或产品数据库。当前源码版本为 `agenthub-system 0.2.3`，主要验证平台为 Windows、Python 3.11；本机实际安装版本用 `agenthub --version` 核对。
 
-> 0.2.0 实现 L1 全局任务与独立位置，0.2.1 实现 L2 基础记忆。0.2.2 增加 L3 资源、软件、任务查询和 schema v5，见[资源操作说明](./resources.md)及[验收记录](./acceptance/resource-continuity-0.2.2.md)。`-c` 恢复本机最近任务；`/resume 昨天的实验` 搜索选择，`--here` 限定目录。L4 强隔离仍待实现。
+> 当前为 **0.2.3 / schema v6**：在 L1 任务、L2 记忆和 L3 资源基础上，默认普通用户跨目录访问、直接调用软件并联网。LPAC 暂缓。版本与升级见[发行说明](./releases/0.2.3.md)，验证范围见[本版验收](./acceptance/native-user-experience-0.2.3.md)，项目进度与后续接续见[归档记录](./operations/archive-handoff-0.2.3.md)。
 
 ## 安装与首次使用
 
@@ -21,12 +21,17 @@ cd D:\Work\my-project
 agenthub
 ```
 
-也可以安装构建产物：
+同事试用无需克隆源码，也不需要 Node.js、Web 服务或源码构建。将 wheel 与配套 `.whl.sha256` 交给对方，在已装好 `uv` 的普通 PowerShell 中进入文件所在目录：
 
 ```powershell
-uv build --package agenthub-system --wheel
-uv tool install --force --python 3.11 ".\dist\agenthub_system-0.2.3-py3-none-any.whl[cli]"
+Get-FileHash .\agenthub_system-0.2.3-py3-none-any.whl -Algorithm SHA256
+uv tool install --force --python 3.11 ".\agenthub_system-0.2.3-py3-none-any.whl[cli]"
+agenthub --version
+agenthub init
+agenthub doctor
 ```
+
+先将哈希与配套值核对；当前产物应为 `38f78a150c6ee147d826c1e794dd32a235f5d8c05931a325180feffc609b0880`。安装会获取 Python/依赖（本地尚不存在时），不是完整离线包。每人使用自己的模型凭据和状态目录，不复制原用户的 `.agenthub` 或 DPAPI 密文。已有用户升级时保留配置，按下文执行状态升级，无须再次 `init`。
 
 `init` 询问 Provider、模型 ID、base URL 和隐藏输入的 API Key；凭据使用当前 Windows 用户的 DPAPI 加密。模型请求只在执行任务或显式运行 `agenthub model check` 时发起。若终端找不到命令，运行 `uv tool update-shell` 后重新打开终端。
 
@@ -80,6 +85,8 @@ credential_ref = "env:MY_MODEL_KEY"
 max_tokens = 4096
 timeout_seconds = 120
 max_history_chars = 64000
+max_context_chars = 64000
+# 可选：仅在已确认模型窗口大小时填写 context_window_tokens。
 
 [limits]
 wall_time_seconds = 1200
@@ -98,6 +105,8 @@ cancellation_grace_seconds = 5
 空闲看门狗监测未处于有效执行阶段的异常空闲。模型和工具阶段有独立截止时间，并受 Run 总期限约束；流式 token 不视为任务进展。模型轮数、总 token、单次输出截断、模型超时和协议错误保留独立原因码。
 
 `max_tokens` 限制单次模型输出，`timeout_seconds` 为 Provider 请求超时。`max_history_chars` 是历史和当前请求的字符预算：按完整历史轮次裁剪，当前请求始终保留，裁剪信息写入 `agent.context_built`。它不是准确 tokenizer 上限，不自动调用摘要模型。Runtime 总预算与命令超时另行约束；未知用量明确标为估算，实际 usage 优先使用 Provider 值。
+
+`max_context_chars` 在每次模型请求前约束装配后的上下文，包含系统提示、工具 schema、消息及记忆/资源资料。资料可被裁剪，不挤掉当前请求或破坏工具调用与结果配对。未填写模型窗口时不根据模型名称猜测 token 容量。
 
 ## 会话、跨目录与批处理
 
@@ -206,9 +215,7 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 
 工具可正常联网和写缓存，依赖安装由用户任务驱动，不在启动时自动进行。AgentHub 不主动向工具注入模型凭据，环境过滤和日志脱敏继续生效。登记的 `software.run` 仍可选用，保留版本和指纹检查。任意脚本的防提权及强隔离不属于本版保证。
 
-## 开发验证
-
-### 0.2.3 升级、位置修复与续接
+## 0.2.3 升级、位置修复与续接
 
 保留原 `.agenthub`，退出使用该状态目录的所有 CLI 后安装 0.2.3 wheel，再执行 `agenthub state upgrade`。配置、profile、凭据引用、信任和 Session/Run ID 不重新初始化。首次必要写入也能触发升级；仅浏览草稿、列表、历史、replay、旧库记忆/资源查询或 doctor 不升级。
 
@@ -220,6 +227,26 @@ JSONL 模式 stdout 只含结构化事件/结果，诊断走 stderr。工具开�
 
 升级失败保留旧库及备份。回退时先退出所有实例，保存升级后的数据库，再使用对应旧 wheel 和升级前 `.bak` 恢复；旧二进制不能打开 v6，备份不包含升级后的会话、记忆和资源。回退应使用生成该备份的旧 wheel。不要只复制运行中数据库的主文件；应使用 SQLite backup API 或在所有连接关闭后操作配套备份。本轮没有 Web schema 变化；此前完成事务的 Alembic 迁移 `b8c9d0e1f2a3` 保留。
 
+## 常见问题
+
+| 情况 | 处理方法 |
+| --- | --- |
+| 不记得任务 ID | `agenthub -r`，或输入 `/resume 昨天的实验` 搜索选择；`-c` 是最近任务，不是选择器 |
+| 最近任务不是预期项目 | 默认全环境查找；使用 `-r --here` 或 `sessions --here` 限定保存位置 |
+| 重定向或 JSON 模式不能打开列表 | 先用 `agenthub --json sessions` 查询，再用 `--resume SESSION_ID` |
+| 保存目录已移走 | 只读 `history SESSION_ID` 仍可查看；用 `--resume SESSION_ID --cwd "有效路径"` 修复 |
+| 会话占用 / 退出码 3 | 在原窗口结束任务并退出，或选择其他任务；不要删锁文件冒充进程退出 |
+| 终端找不到命令或版本不对 | `uv tool update-shell` 后重开终端；用 `Get-Command agenthub`、`agenthub --version`、`agenthub doctor` 核对安装来源 |
+| 提示管理员宿主被拒绝 | 关闭提升的终端，改用普通用户终端；无须管理员初始化 |
+| 旧受限任务提示功能暂缓 | 明确选择 `--resume SESSION_ID --sandbox current-user`；这会改变执行边界 |
+| Python 指向 WindowsApps | 运行 `agenthub software discover --kind python` 找实际解释器，或让助手使用项目 `.venv\Scripts\python.exe` |
+| 模型超时、断连或预算用尽 | 查看具体停止原因；`replay RUN_ID` 检查已知结果，再由用户输入或 `-c` 开始新的 Run，不自动重试副作用 |
+| 想禁止某个目录 | 本版没有不可绕过的目录禁止；`trust remove` 已停用，不能作为撤权操作 |
+
+`process.run`、`file.read` 等是供模型调用的工具名，不是要在 PowerShell 输入的独立命令。通常只需向助手说明任务、路径和期望的软件环境；用 `/tools` 核对实际执行记录。
+
+## 开发验证
+
 ```powershell
 uv sync --all-packages --all-extras
 .\scripts\run-tests.ps1 -Stack system -Module cli -Type unit
@@ -229,9 +256,9 @@ uv sync --all-packages --all-extras
 
 最后一个脚本在 `var/cli-install-validation` 中构建、隔离安装 wheel，并在仓库外运行完整工具循环、会话恢复及 Windows 进程故障测试；不改用户全局 `uv tool` 安装。共享工作区测试环境会随所选 package 同步；桌面打包使用独立环境。
 
-真实服务测试必须显式启用：设置 `AGENTHUB_LIVE_HOME` 指向用户配置目录，并设置 `AGENTHUB_LIVE_OPENAI_PROFILE` 或 `AGENTHUB_LIVE_DEEPSEEK_PROFILE`，再运行 `system/providers/live` 分组。测试使用独立临时项目，会产生真实模型费用。当前自动 live 场景覆盖修复和续聊；完整八项验收清单及未执行项见 [实施记录](./architecture/cli-mvp.md)。
+真实服务测试必须显式启用：设置 `AGENTHUB_LIVE_HOME` 指向用户配置目录，并设置 `AGENTHUB_LIVE_OPENAI_PROFILE` 或 `AGENTHUB_LIVE_DEEPSEEK_PROFILE`，再运行 `system/providers/live` 分组。测试使用独立临时项目，会产生真实模型费用。0.2.3 完整原生场景使用 `scripts/accept-native-cli.py`，其参数先查看 `--help`；显式读取 profile/凭据，另建状态与 A/B/C 项目。当前通过、失败修复及未执行项见[本版验收](./acceptance/native-user-experience-0.2.3.md)；早期 MVP 记录保留其历史结论。
 
-本期未实现 MCP/Skill 接入、AppContainer/受限 Token、多 Agent 权限治理、完整终端模拟或崩溃原地续跑。剩余源代码归属见[子系统目录](./architecture/subsystems.md)。
+CLI 尚未接入 MCP/Skill、多 Agent 权限治理、完整终端模拟或崩溃原地续跑；AppContainer/LPAC 已有实验代码，但暂停正式启用与发行验收。剩余源代码归属见[子系统目录](./architecture/subsystems.md)。
 
 ## 会话与界面（0.1.6—0.1.7）
 

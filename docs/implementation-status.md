@@ -6,15 +6,21 @@ This file is the compact status reference for current docs. It avoids historical
 
 ## Local Agent Environment With Persistent Memory
 
-Originally recorded on 2026-09-15 against shared package 0.1.7 (`d43f07b`): [design](./architecture/local-agent-environment.md) and [development stages](./architecture/local-agent-roadmap.md). L1 global tasks shipped in 0.2.0, L2 foundational memory in 0.2.1, and L3 resource/software continuity in 0.2.2 with local schema v5; see [acceptance](./acceptance/resource-continuity-0.2.2.md). Objective resource observations are automatic; experience and preferences still need user adoption. L4 shared memory with fine-grained OS execution remains **not implemented**. AgentMemory remains scope-bound alongside independent memory and resource stores; native commands run as the current user without OS filesystem/network isolation.
+Current shared package and backend: **0.2.3**; local SQLite: **schema v6**. The [design](./architecture/local-agent-environment.md) began against 0.1.7; that historical baseline is not the current version. L1 global tasks shipped in 0.2.0, L2 foundational memory in 0.2.1, and L3 resource/software continuity in 0.2.2. Objective resource observations are automatic; model-proposed experience and preferences still require adoption. AgentMemory remains scope-bound alongside independent memory and resource stores.
+
+0.2.3 completes the native current-user workflow: cross-directory files and cwd, direct `process.run`, read-only `software.discover`, project interpreters, networking and external caches. Directory trust no longer gates native tasks. Elevated hosts cannot run model tasks or tool management; ordinary scripts are not strongly isolated. Saved LPAC tasks and restricted defaults require explicit conversion and never silently downgrade. L4a is paused; multi-assistant shared memory and handoff remain unimplemented.
+
+The [0.2.3 acceptance record](./acceptance/native-user-experience-0.2.3.md) contains the installed DeepSeek A/B/C task, cancellation/resume, ConPTY, v1–v5 upgrades, Web regression and sidecar results. OpenAI-compatible, other platforms/builds, Docker and full LPAC certification were not run for this release. Test groups overlap and must not be summed. The [archive handoff](./operations/archive-handoff-0.2.3.md) maps source, wheel, local evidence and PR #30; this checkpoint does not imply the PR is merged.
 
 ## Architecture Split Status
 
-The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. The local CLI MVP now uses the root `agenthub-system` distribution and shared Kernel/AgentLoop. It includes persistent sessions, trust, DPAPI/env credentials, file operations, PowerShell/Git, JSONL, replay and managed Windows processes. See [CLI acceptance](./architecture/cli-mvp.md) for measured results and remaining live-service validation. A standalone eval host and non-MVP subsystem extraction remain planned; desktop still packages the full Web host.
+The OS-style [system architecture](./architecture/README.md), [subsystem catalog](./architecture/subsystems.md), and [migration acceptance plan](./architecture/migration.md) were established on 2026-09-04. The CLI uses root `agenthub-system` and the shared Runtime → SingleAgentPolicy → AgentLoopExecutor chain. It includes global persistent tasks, DPAPI/env credentials, file/process operations, memory/resources, JSONL, replay and managed Windows process trees. CLI explicitly selects `file_access_scope=user`; the shared default stays `workspace`. A standalone eval host and remaining subsystem extraction are still planned; desktop packages the full Web host.
 
 Runtime lifecycle and public ports already exist. CLI executes without application context or ORM; Web-specific Skill/MCP and product adapters remain in the Web host. The generic tool user-permission check also retains a warnings-only path; see [capability boundaries](./capability-data-boundaries.md).
 
-## Stable For Local Development And Demos
+## Web And Desktop: Existing Local Development Features
+
+The following inventory concerns the Web host and its desktop packaging. It is not a claim that every feature is available in the standalone CLI or was retested in the 0.2.3 release.
 
 - Authentication, open member registration, database-backed RBAC, administrator bootstrap, users, workspaces, projects, and conversation management.
 - Single-agent and group conversations with persisted messages and streaming responses.
@@ -32,16 +38,16 @@ Runtime lifecycle and public ports already exist. CLI executes without applicati
 - Security operations for audit logs, roles, permissions, and user role changes.
 - Docker compose deployment for nginx, backend, PostgreSQL, and Redis.
 
-## Implemented With Environment-Dependent Degradation
+## Web Features With Environment-Dependent Degradation
 
-- Real LLM responses depend on configured model provider credentials. Without keys, local mock/fallback behavior is expected.
+- Real LLM responses depend on configured provider credentials. Web mock/fallback paths are distinct from CLI behavior: the CLI reports missing configuration or credentials and does not substitute a successful mock task.
 - Office/PDF preview quality depends on available conversion tools in the runtime environment.
 - Sandbox and external coding agent execution depend on installed command runtimes and workspace-safe cwd constraints.
 - Interactive terminal sessions depend on the command runtime being installed and on a single live backend process for the active session.
 - MCP stdio/HTTP calls depend on external server availability and declared transport support.
 - Deployment preview validates accessible artifacts. Container mode is implemented as an AgentHub app or Docker Compose stack preview endpoint; full production cloud orchestration remains outside the current runtime.
 
-## Recently Hardened
+## Earlier Web Hardening
 
 - Duplicate registration no longer logs into an existing account; disabled users and legacy Demo JWTs are rejected.
 - Demo authentication and its username permission bypass were removed. Database roles and permissions are now the authorization source of truth, with final-administrator protection.
@@ -68,7 +74,7 @@ Runtime lifecycle and public ports already exist. CLI executes without applicati
 - Distributed multi-process runtime coordination without sticky sessions.
 - Production-grade remote control and cloud deployment automation.
 - Enterprise approval workflows and advanced audit search.
-- Fully isolated production container sandbox policy. The current local sandbox has command/cwd/time/output controls, but production isolation belongs to deployment infrastructure.
+- Strong isolation for local native tools. The CLI runs with normal user file/network access; timeout and Job cleanup do not constitute an OS sandbox. Web command/cwd controls and retained LPAC experiments have separate boundaries.
 - Broad document rendering parity across every Office feature without environment-specific conversion dependencies.
 
 ## Maintenance Rule

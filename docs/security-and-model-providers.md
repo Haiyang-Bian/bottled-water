@@ -1,5 +1,13 @@
 # Security And Model Providers
 
+## Local CLI And Web Have Different Boundaries
+
+The authentication, RBAC and administrator bootstrap sections below describe the **Web host**. The standalone CLI uses a machine/user-bound local environment and DPAPI or environment-variable credential references; it does not create a Web login or require Web administrator setup.
+
+In 0.2.3, ordinary CLI tasks explicitly use `file_access_scope=user`, normal networking and the current user's OS access. Directory trust is disabled for that mode. Job cleanup, input validation and redaction remain, but are not a filesystem/network sandbox. Elevated hosts cannot run model tasks or tool management; there is no absolute anti-elevation guarantee for arbitrary scripts. LPAC is paused, and old restricted tasks never silently become native tasks. Model credentials are not deliberately injected into tool environments, but same-user scripts are not a strong secret-isolation boundary. See [CLI behavior](./cli.md) and [verified limits](./acceptance/native-user-experience-0.2.3.md).
+
+Memory adoption, environment ownership and source validation remain separate from file access. Retained schema v6 permission records do not mean restricted execution is enabled. Normal installation/upgrade does not change business-directory ACLs or invoke UAC.
+
 ## Authentication And Authorization
 
 Open registration creates an active `member`; it never grants administrator access. Disabled users are rejected on every authenticated request, so previously issued JWTs stop working immediately. Duplicate email or username registration returns HTTP 409 without issuing a token.

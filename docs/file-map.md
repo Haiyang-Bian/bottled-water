@@ -28,6 +28,24 @@ Important root files:
 - `.dockerignore`: root Docker build-context ignore file.
 - `agenthub.code-workspace`: VS Code workspace settings.
 
+## Shared System And Native CLI (0.2.3)
+
+| Area | Primary paths |
+| --- | --- |
+| CLI commands, session selection, cwd and assembly | `src/agent_cli/main.py`, `app.py`, `sessions.py`, `host.py`, `execution_bindings.py` |
+| Terminal input and rendering | `src/agent_cli/input.py`, `selection.py`, `presentation.py`, `rendering.py`, `tool_details.py` |
+| Runtime lifecycle and completion | `src/agent_runtime/runtime`, `src/agent_runtime/core` |
+| Public contracts and defaults | `src/agent_contracts`; native CLI chooses user access, shared defaults remain workspace-scoped |
+| AgentLoop, context and tools | `src/agent_subsystems/execution`, `context`, `tools` |
+| Memory, resources and task retrieval | `src/agent_subsystems/memory`, `src/agent_subsystems/workspaces` |
+| Native files, executables and Job lifecycle | `src/agent_adapters/local/files.py`, `file_operations.py`, `tools.py`, `processes.py`, `resources.py`, `user_execution.py`, `windows_jobs.py` |
+| Local schema v6 and durable records | `src/agent_adapters/storage/migration.py`, `sqlite.py`, `session_queries.py`, `memory.py`, `resources.py` and schema modules |
+| Retained, paused LPAC work | `src/agent_adapters/local/restricted*.py`, `windows_lpac.py`, permission/setup/IPC modules and local permission tables |
+| Deterministic and installed checks | `tests`, `scripts/test-groups.json`, `scripts/verify-cli-install.ps1`, `scripts/verify-cli-upgrade.ps1` |
+| Real native/terminal acceptance | `scripts/accept-native-cli.py`, `scripts/accept-cli-terminal.py`; explicitly selected provider credentials only |
+
+The [archive handoff](./operations/archive-handoff-0.2.3.md) records the exact production source, wheel and local `dist/`/`var/` evidence. Those ignored artifacts are not uploaded by pushing Git. CLI state migrations are separate from the Web Alembic schema below.
+
 ## Backend
 
 ```text

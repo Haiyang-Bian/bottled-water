@@ -1,6 +1,6 @@
 # 子系统与模块目录
 
-> 本文定义目标职责，基于 2026-09-07 的源码核对。编号用于职责和迁移追踪；MVP 迁移现状见下表，其余描述仍是目标职责。总体依赖与状态规则见[系统架构](./README.md)，旧结构证据与验收见[迁移说明](./migration.md)。
+> 本文定义目标职责，初始源码核对为 2026-09-07；迁移现状于 2026-09-16 更新至 0.2.3。编号用于职责和迁移追踪；下表列出当前实现，其余目标职责不代表全部已经迁移。总体依赖与状态规则见[系统架构](./README.md)，证据与暂停范围见[归档交接](../operations/archive-handoff-0.2.3.md)。
 
 模块按可维护的职责划分，不要求每行对应一个文件或一个发行包。每个子系统都应具备：通用输入/输出、明确依赖、资源关闭责任、可检查的失败状态和不依赖 Web 的契约测试。以下“迁出”指通用机制，“保留”指 AgentHub 业务适配；不能把一个现有大文件整体移动就视为完成。
 
@@ -15,13 +15,13 @@
 | S1 执行 | `agent_subsystems/execution`：AgentLoop、AgentLoopExecutor、产品扩展接口 | Web 注入 `app/services/execution_extension.py`；旧 `services/agents/function_loop.py` 仍待后续收敛 |
 | S2 调度 | `agent_subsystems/scheduling/single_agent.py` | 复杂团队、Workflow 策略待迁移 |
 | S3 模型 | `src/model_provider`，SDK 延迟加载、usage 与流关闭 | UI Provider 目录在 `app/services/provider_catalog.py`，拥有者与加密字段在 Web |
-| S4 上下文 | `agent_subsystems/context` 消费 ContextSnapshot、每次请求预算整理、失败/取消续接快照 | SQL/附件/知识库 contributors 待迁移 |
+| S4 上下文 | `agent_subsystems/context` 消费 ContextSnapshot、请求预算、失败续接；`agent_subsystems/memory` 管理获准知识和候选，装配记录实际使用清单 | SQL/附件/知识库 contributors 待迁移；Web 记忆管理界面未接入 |
 | S5 工具 | `agent_subsystems/tools` 注册表、执行器、schema/授权边界、同 scope 工具记录检索 | Web 工具 CRUD、Skill/MCP 组装仍由 Web 持有 |
-| S6 工作空间 | `agent_subsystems/workspaces` 规范路径、分层忽略与源码发现；`agent_adapters/local` 文件、PowerShell、Git、Job Object | Web 工作树、常驻终端和产品文件树待迁移 |
+| S6 工作空间 | `agent_subsystems/workspaces` 位置/范围、发现、资源和任务检索；`agent_adapters/local` 文件、PowerShell、Git、直接进程、软件发现及 Job | Web 工作树、常驻终端和产品文件树待迁移 |
 | S7/S8/S9/S10/S11 | MCP、Skill、Workflow、内容、外部 Agent 均仅建立职责目录 | 原 Web 功能继续使用原实现 |
 | S12 观测 | `agent_subsystems/observability` 脱敏；SQLite 保存事件、CLI 消费 | Web 审计/实时投影/业务统计仍属宿主 |
-| 驱动 | `agent_adapters/storage` SQLite v2、事务完成、迁移/会话锁，`credentials` DPAPI/env，`local` 本机操作 | 不提供 AppContainer、受限 Token 或网络隔离 |
-| H2 CLI | `src/agent_cli` 初始化、信任、草稿/会话选择、历史、Rich/纯文本/JSONL、doctor/replay | 独立 eval 宿主与高级多 Agent 治理待实现 |
+| 驱动 | `agent_adapters/storage` SQLite v6、环境/任务/记忆/资源、原子完成、迁移/会话锁；`credentials` DPAPI/env；`local` 本机操作 | LPAC/P3 实验与权限表保留但暂缓；普通用户驱动不提供文件或网络强隔离 |
+| H2 CLI | `src/agent_cli` 配置、全局任务/位置、记忆和资源入口、Rich/纯文本/JSONL、doctor/replay；显式选择 user 文件范围 | 默认共享范围仍为 workspace；旧 trust 停用，独立 eval 与多助手治理待实现 |
 
 ## K. Runtime Kernel
 
@@ -50,7 +50,7 @@
 | S1.2 默认 AgentLoop | 模型/工具轮次、流式响应、工具结果回填、终止条件 | [`agent_loop.py`](../../src/agent_subsystems/execution/agent_loop.py)；拆出通用循环，产品交付启发式交 H1 |
 | S1.3 调用帧与消息转换 | 消息、工具 schema、工具调用/响应、模型流片段的归一化 | [`core/types.py`](../../src/agent_runtime/core/types.py)、[`services/agents`](../../backend/src/app/services/agents)；避免保留两套通用 loop |
 | S1.4 状态报告与进展 | 将可观察工作结果转换为结构化 report 和 usage；不从措辞推定工具成功 | [`status_report.py`](../../src/agent_runtime/runtime/status_report.py)；业务交付校验为可选扩展 |
-| S1.5 执行上下文桥接 | 显式使用 Scope 历史、AgentMemory、Blackboard、当前输入与 inbox | 当前 `AgentLoopExecutor` 主要传入 Blackboard 和 metadata；必须补足通用历史消费路径 |
+| S1.5 执行上下文桥接 | 显式使用 Scope 历史、AgentMemory、Blackboard、当前输入与 inbox | `AgentLoopExecutor` 已传递 ContextSnapshot；CLI 增加有界记忆/资源资料，成功历史不重复写入资料块 |
 
 **依赖：** S3 模型接口、S4 上下文接口、S5 工具调用接口及 Kernel 执行契约。只持有当次调用帧，不自行保存长期私有推理。嵌套模型/工具调用的用量和取消必须回到同一预算约束。
 
@@ -94,12 +94,12 @@
 
 | 模块 | 功能 / 输入输出 | 当前来源与拆分要求 |
 | --- | --- | --- |
-| S4.1 上下文装配器 | Scope 快照、Agent 规格、任务、来源片段 → 消息列表和来源信息 | [`context/builder.py`](../../backend/src/app/services/context/builder.py)；去除 Session 与 Conversation 参数 |
-| S4.2 预算与压缩 | Token 估计、优先级、裁剪、片段拼装、预留输出空间 | [`compression.py`](../../backend/src/app/services/context/compression.py)；纯算法优先抽取 |
+| S4.1 上下文装配器 | Scope 快照、Agent 规格、任务、来源片段 → 消息列表和来源信息 | 公共 [`assembler.py`](../../src/agent_subsystems/context/assembler.py)；Web [`builder.py`](../../backend/src/app/services/context/builder.py) 保留 ORM 素材提供职责 |
+| S4.2 预算与压缩 | Token 估计、优先级、裁剪、片段拼装、预留输出空间 | 公共 ContextAssembler 已实现确定性整理；Web [`compression.py`](../../backend/src/app/services/context/compression.py) 仍有宿主处理，自动语义摘要不属于 CLI |
 | S4.3 消息与记忆映射 | Scope history、Blackboard、AgentMemory → Agent 可见上下文；生成有类型的增量 | [`agent_runtime/context`](../../src/agent_runtime/context)、[`context/memory.py`](../../backend/src/app/services/context/memory.py)；不得隐式跨 scope 取数据 |
 | S4.4 Context contributors | 附件、工作空间、任务、运行态、变量、团队成员等来源适配 | [`services/context`](../../backend/src/app/services/context)；通用 contributor 接口迁出，DB 来源留 H1 |
 | S4.5 检索与索引 | 分块、检索接口、打分、来源引用，按授权返回片段 | [`knowledge.py`](../../backend/src/app/services/knowledge.py)；当前为词项/相似度方案，不能标作已实现向量语义检索 |
-| S4.6 基础记忆生命周期 | 用户保存、模型候选、采纳、修订、停用、遗忘与来源抑制 | `agent_subsystems/memory`、`agent_contracts/memory.py`、`agent_adapters/storage/memory.py`；本地 schema v4，不共享全局 Context scope |
+| S4.6 基础记忆生命周期 | 用户保存、模型候选、采纳、修订、停用、遗忘与来源抑制 | `agent_subsystems/memory`、`agent_contracts/memory.py`、`agent_adapters/storage/memory.py`；v4 引入、当前 v6 保留，不共享全局 Context scope |
 | S4.7 记忆读取与处理 | 跨任务检索、预算、使用清单、幂等处理与可恢复失败 | `memory/context.py`、`context/assembler.py`、SQLite 终态 outbox；复用 Journal 和完成 Port |
 
 **状态与错误：** 检索索引独立于 ContextStore；知识库权限和文档归属由宿主控制。缺失来源、截断和上下文构建失败要有可诊断状态。临时工具帧、原始推理和密钥不进入长期记忆。
@@ -138,7 +138,7 @@
 | S6.5 仓库与工作树 | 仓库探测、基准提交、managed/adopted 工作树、生命周期 | [`worktrees.py`](../../backend/src/app/services/worktrees.py)；Conversation 绑定和归档策略留宿主 |
 | S6.6 Git 协作 | status/diff/commit/integrate、安全前置检查与冲突回传 | [`git_collaboration.py`](../../backend/src/app/services/tools/git_collaboration.py)；不引入隐式 push 或历史改写 |
 | S6.7 隔离与运行环境 | 声明本机/子进程/容器可用能力，解析依赖、执行取消与资源清理 | 当前 sandbox、terminal 与外部进程机制分散；统一契约不等于已实现生产沙箱 |
-| S6.8 资源与软件目录 | 资源身份、别名、位置、观察、任务关系、软件指纹与验证时间 | 0.2.2：`agent_contracts/resources.py`、`workspaces/resource_*`、`adapters/storage/resources.py`、`adapters/local/resources.py`；元数据不授予文件权，软件须用户验证启用 |
+| S6.8 资源与软件目录 | 资源身份、别名、位置、观察、任务关系、软件指纹与验证时间 | `agent_contracts/resources.py`、`workspaces/resource_*`、`adapters/storage/resources.py`、`adapters/local/resources.py`；登记软件须验证启用；0.2.3 原生 process.run 无需登记，元数据查询不探测文件 |
 | S6.10 任务资料查询 | 日期、名称、路径与关联资源查询，输出有来源的有界摘要 | 0.2.2：`workspaces/task_queries.py`、`adapters/storage/tasks.py`；不自动恢复任务或转移完整历史 |
 | S6.9 可变工作位置 | cwd 与 grants 解耦、位置持久事件、每调用不可变快照 | 0.2.0 已实现；禁止依赖宿主全局 chdir，具体见[本机环境](./local-agent-environment.md) |
 

@@ -2,7 +2,7 @@
 
 本目录定义 AgentHub Runtime 的架构契约并记录实现差距。它面向 Runtime 实现者和 Coding Agent，不是产品能力清单。Runtime 长期保留在当前 monorepo；`agent_runtime` 通过公开 Port 与 AgentHub Adapter 集成，并由依赖边界测试阻止反向导入 `app` 或 `db`。
 
-从全项目视角，请先阅读[系统架构](../architecture/README.md)：Runtime Kernel 是内核，默认 AgentLoop、模型、上下文、工具、MCP、Skill 等是子系统，AgentHub 与计划中的 CLI/eval 是宿主。当前 `agent_runtime` 包仍包含多种非 Kernel 模块；直接导入边界通过不等于完整系统已经可以独立安装运行。[模块目录](../architecture/subsystems.md)和[迁移说明](../architecture/migration.md)记录目标归属与差距，本轮未移动源码。
+从全项目视角，请先阅读[系统架构](../architecture/README.md)：Runtime Kernel 是内核，默认 AgentLoop、模型、上下文、工具、MCP、Skill 等是子系统；Web 和已实现的 CLI 是宿主，独立 eval 仍待实现。CLI 0.2.3 已有独立 wheel 和真实任务验收，但不意味着所有 Web 子系统已迁出。当前 `agent_runtime` 仍包含部分非 Kernel 模块，[模块目录](../architecture/subsystems.md)和[迁移说明](../architecture/migration.md)记录这些差距。
 
 ## 阅读顺序
 
@@ -26,4 +26,4 @@ V1 已提供 `RuntimeEngine`、`RunHandle`、`RunRequest`、`RunState`、`Runtim
 
 Runtime 已收敛生命周期、Watchdog、Actor/Mailbox、ContextStore、持久 Event Log 和 Conversation 内的平权团队通信。AgentHub 支持幂等投影、前端断线补拉、实时用户插话、可审计团队动态，以及 Conversation 绑定仓库下的独立 Agent 工作树。有界 Sink 背压、跨进程实时广播、中途检查点和安全续跑仍属于后续阶段。
 
-下一阶段通过本地 CLI 验证同一套执行子系统能否脱离 Web/Conversation ORM 使用；它需要通用上下文消费、工具/资源和存储适配，不只是包装 `RuntimeEngine.start()`。接口拆分与 CLI 实现均按系统迁移计划逐步推进。
+同一执行链已通过本地 CLI 的独立安装、跨目录操作、记忆/资源、取消与恢复验证，见[0.2.3 证据](../acceptance/native-user-experience-0.2.3.md)。剩余子系统迁移和独立 eval 需要另行确定实施范围；LPAC 暂缓，不因为保留实验接口就自动进入强隔离开发。归档后从[交接清单](../operations/archive-handoff-0.2.3.md)核对分支、安装与证据。
