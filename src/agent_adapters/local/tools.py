@@ -2,6 +2,7 @@
 
 import base64
 
+from agent_contracts.errors import OperationError
 from agent_contracts.execution import ExecutionContext, ToolSpec
 from agent_subsystems.tools.registry import ToolRegistry
 from agent_subsystems.tools.invoker import AuthorizedToolInvoker
@@ -66,6 +67,14 @@ class LocalToolExecutor:
 
         files = BoundFileOperations(
             self.file_operations or LocalFileOperations(index_reader=read_index), context)
+
+        def selected_executable(kind):
+            if self.executables is not None:
+                selected = self.executables.get(kind)
+                if not selected:
+                    raise OperationError("software_incompatible", "No verified isolated " + kind + " copy")
+                return selected
+            return powershell_executable(self.shell) if kind == "pwsh" else executable(kind)
 
         def register(name, description, handler, properties, required, capability):
             schema = {
@@ -162,7 +171,7 @@ class LocalToolExecutor:
             encoded = base64.b64encode(code.encode("utf-16-le")).decode("ascii")
             return await self.process_driver.run(
                 [
-                    self.executables["pwsh"] if self.executables else powershell_executable(self.shell),
+                    selected_executable("pwsh"),
                     "-NoLogo",
                     "-NoProfile",
                     "-NonInteractive",
@@ -177,7 +186,7 @@ class LocalToolExecutor:
         async def git(args, cwd=".", timeout=120):
             directory = await files.resolve(cwd, directory=True)
             return await self.process_driver.run(
-                [self.executables["git"] if self.executables else executable("git"), "--no-pager", *args],
+                [selected_executable("git"), "--no-pager", *args],
                 directory,
                 timeout=timeout,
                 context=context,

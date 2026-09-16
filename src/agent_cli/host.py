@@ -90,16 +90,31 @@ async def run_turn(
     plain=False,
     no_color=False,
     verbose=False,
+    execution=None,
 ):
-    roots, inactive = effective_roots(session["granted_roots"], store.is_trusted)
-    workspace = WorkspaceSpec(roots)
-    location = ExecutionLocation(canonical_directory(session["cwd"]), session["workspace_version"])
-    resolve_resource(workspace, location, ".", directory=True)
+    if execution is None:
+        roots, inactive = effective_roots(session["granted_roots"], store.is_trusted)
+        workspace = WorkspaceSpec(roots)
+        location = ExecutionLocation(canonical_directory(session["cwd"]), session["workspace_version"])
+        resolve_resource(workspace, location, ".", directory=True)
+        grant = ResourceGrant(workspace, frozenset({"files", "process"}))
+        driver = LocalProcessDriver(redactor)
+    else:
+        grant, location, driver = execution.grant, execution.location, execution.driver
+        workspace, inactive = grant.workspace, []
+        roots = workspace.roots
+        if grant.execution_mode != "windows_lpac" or not driver.capabilities.get("filesystem_isolation"):
+            raise ConfigurationError("Restricted injection requires the verified isolation driver")
+        if (not driver.capabilities.get("network_isolation")
+                or any(value is None for value in (execution.file_operations, execution.authorization,
+                                                   execution.software, execution.executables))):
+            raise ConfigurationError("Restricted injection requires every controlled operation port")
+        if (grant.policy.policy.environment_id != store.environment.environment_id
+                or grant.policy.policy.agent_id != store.environment.default_agent_id):
+            raise ConfigurationError("Restricted policy belongs to another environment or assistant")
     execution_limits, limits = effective_limits(config, profile)
-    driver = LocalProcessDriver(redactor)
     renderer = renderer_for(redactor, json_mode=json_mode, interactive=interactive,
                             plain=plain, no_color=no_color, verbose=verbose)
-    grant = ResourceGrant(workspace, frozenset({"files", "process"}))
     memory = SQLiteMemory(store)
     memory_access = memory.access(scope_id=session["id"])
     resources = SQLiteResources(store)
@@ -108,9 +123,14 @@ async def run_turn(
     executor = AgentLoopExecutor(
         model_provider=provider,
         tool_executor=MemoryToolExecutor(ResourceToolExecutor(LocalToolExecutor(
-            grant, location, TrustAuthorization(store), driver, redactor, shell=config.get("powershell")
-        ), resources, resource_access, LocalSoftware(driver), tasks, probe, redactor), memory, memory_access),
-        context_provider=LocalContextProvider(workspace, location, profile.max_history_chars),
+            grant, location, execution.authorization if execution else TrustAuthorization(store),
+            driver, redactor, shell=config.get("powershell"),
+            file_operations=execution.file_operations if execution else None,
+            executables=execution.executables if execution else None,
+        ), resources, resource_access, execution.software if execution else LocalSoftware(driver),
+            tasks, probe, redactor, execution.file_operations if execution else None), memory, memory_access),
+        context_provider=LocalContextProvider(workspace, location, profile.max_history_chars,
+                                             execution_mode=grant.execution_mode),
         use_streaming=True,
         run_journal=store,
         context_budget=ContextBudget(
@@ -119,6 +139,7 @@ async def run_turn(
         execution_limits=execution_limits,
         memory_context=RunMemoryContext(memory, memory_access, prompt, location.cwd),
         resource_context=RunResourceContext(resources, resource_access, prompt, tasks),
+        execution_isolation=driver if execution else None,
     )
     engine = RuntimeEngine(
         agent_executor=executor,
@@ -128,6 +149,7 @@ async def run_turn(
         continuation_reader=JournalContinuationReader(store),
     )
     previous = signal.getsignal(signal.SIGINT)
+    permission_watch = None
     try:
         handle = await engine.start(
             RunRequest(
@@ -137,6 +159,8 @@ async def run_turn(
                                     "You are a local coding assistant."),),
                 policy=SingleAgentPolicy(),
                 metadata={
+                    "execution_mode": grant.execution_mode,
+                    "isolation": execution.metadata if execution else driver.capabilities,
                     "memory_enabled": True,
                     "resources_enabled": True,
                     "session_id": session["id"],
@@ -163,6 +187,19 @@ async def run_turn(
         )
         loop = asyncio.get_running_loop()
 
+        if execution:
+            async def watch_permissions():
+                try:
+                    reason = await driver.wait_invalid()
+                    await driver.revoke(reason)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    reason = "isolation_revoke_failed"
+                await handle.fail(reason)
+
+            permission_watch = asyncio.create_task(watch_permissions())
+
         def interrupt(signum, frame):
             loop.call_soon_threadsafe(lambda: asyncio.create_task(handle.cancel("user_cancelled")))
 
@@ -186,7 +223,16 @@ async def run_turn(
                   file=sys.stderr)
         return {"completed": 0, "failed": 1, "cancelled": 130}[result.state.value]
     finally:
+        if permission_watch:
+            permission_watch.cancel()
+            await asyncio.gather(permission_watch, return_exceptions=True)
         renderer.close()
         signal.signal(signal.SIGINT, previous)
         await engine.shutdown()
-        await driver.aclose()
+        if execution:
+            try:
+                await driver.aclose()
+            except Exception:
+                print("受限执行资源清理未确认，需要修复；已提交的 Run 终态保留。", file=sys.stderr)
+        else:
+            await driver.aclose()

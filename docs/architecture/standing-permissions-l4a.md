@@ -12,7 +12,9 @@
 准备新只读策略。单纯移动文件不代表撤权。本轮进展见[停机撤权验收](../acceptance/standing-permissions-quiescent-0.2.3.md)。
 新增[有限原生放行清单](../acceptance/standing-permissions-completion-0.2.3.md)：不同策略并行、
 依赖变更、嵌套 Job、新结构完整工具链及真实符号链接均通过，固定初始化清理也已核实。
-P1b 已放行，可以接入 P2；正式 CLI 尚未完成受限 Runtime 集成。
+P1b 已放行。P2 已通过显式依赖注入接入现有 Runtime，Python 工具循环及故障子集通过；
+完整软件链和真实 Provider 尚待验收，正式 CLI 默认模式不变。
+详见[受限 Runtime 阶段记录](../acceptance/restricted-runtime-p2-0.2.3.md)。
 
 ## 1. 产品约定
 
@@ -60,7 +62,8 @@ D:\Private    未授权
 - `StandingPermissionPolicy`：环境/助手绑定、修订、授权、保护和启用状态。
 - `TaskPermissionSelection`：inherit 或 custom；后者必须明确列出不超过长期许可的根。
 - `ExecutionPolicySnapshot`：冻结规则及确定性摘要；本期 network 固定 deny。
-- `PermissionLeasePort`、`ExecutionIsolationPort`、`FileOperationsPort`：原生门槛后接入。
+- `PermissionLeasePort`、`ExecutionIsolationPort`、`FileOperationsPort`：已用于 P2 实验性宿主接入，
+  文件/资源探测通过单操作受限 worker；持久化策略管理和跨宿主协调仍待 P3。
 
 每个 Run 独立 Package SID、Job、临时目录和租约；每个不可变有效策略独立业务 capability SID。
 相同有效策略复用已准备的权限，不同范围不能共享通行身份。收窄任务不能携带完整长期策略 SID。

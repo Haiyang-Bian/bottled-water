@@ -1,11 +1,16 @@
 # P1 experiment orchestrator. Only the fixed ACL helper is elevated; tools are not.
 [CmdletBinding()]
 param(
-    [ValidateSet('legacy', 'quiescent', 'completion')]
-    [string]$Probe = 'legacy'
+    [ValidateSet('legacy', 'quiescent', 'completion', 'runtime')]
+    [string]$Probe = 'legacy',
+    [string]$LiveProfile,
+    [string]$SourceHome
 )
 
 $ErrorActionPreference = 'Stop'
+if ([bool]$LiveProfile -ne [bool]$SourceHome -or ($LiveProfile -and $Probe -ne 'runtime')) {
+    throw 'Live validation requires -Probe runtime and both -LiveProfile and -SourceHome.'
+}
 $repo = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $repo '.venv\Scripts\python.exe'
 $principal = [Security.Principal.WindowsPrincipal]::new(
@@ -19,6 +24,9 @@ $stopFile = [IO.Path]::ChangeExtension($report, '.stop')
 $output = Join-Path $repo "var\l4a-lpac-namespace-$experiment"
 if ($Probe -eq 'quiescent') {
     $output = Join-Path $repo "var\l4a-quiescent-namespace-$experiment"
+}
+if ($Probe -eq 'runtime') {
+    $output = Join-Path $repo "var\l4a-runtime-namespace-$experiment"
 }
 $helperExtra = @()
 if ($Probe -eq 'completion') {
@@ -64,6 +72,9 @@ try {
     if ($Probe -eq 'completion') {
         & $python (Join-Path $PSScriptRoot 'probe-lpac-completion.py') --output $output `
             --namespace-experiment $experiment
+    } elseif ($Probe -eq 'runtime') {
+        & $python (Join-Path $PSScriptRoot 'probe-restricted-runtime.py') --output $output `
+            --namespace-experiment $experiment
     } elseif ($Probe -eq 'quiescent') {
         & $python (Join-Path $PSScriptRoot 'probe-lpac-quiescent.py') --output $output `
             --toolchain --namespace-experiment $experiment
@@ -73,6 +84,11 @@ try {
             --namespace-experiment $experiment
     }
     $probeExit = $LASTEXITCODE
+    if ($Probe -eq 'runtime' -and $probeExit -eq 0 -and $LiveProfile) {
+        & $python (Join-Path $PSScriptRoot 'probe-restricted-runtime.py') --output "$output-live" `
+            --namespace-experiment $experiment --source-home $SourceHome --profile $LiveProfile
+        $probeExit = $LASTEXITCODE
+    }
 } finally {
     # This marker requests removal only. It carries no executable or ACL parameters.
     if ($null -ne $adminProcess) {

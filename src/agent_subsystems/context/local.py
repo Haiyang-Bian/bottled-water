@@ -6,10 +6,11 @@ from agent_runtime.core.interfaces import AgentContextBuildResult
 class LocalContextProvider:
     fallback_on_error = False
 
-    def __init__(self, workspace, location, max_history_chars=64000):
+    def __init__(self, workspace, location, max_history_chars=64000, *, execution_mode="current_user"):
         self.workspace = workspace
         self.location = location
         self.max_history_chars = max_history_chars
+        self.execution_mode = execution_mode
 
     async def build_agent_context(self, request):
         history = list(request.context_snapshot.messages) if request.context_snapshot else []
@@ -27,7 +28,11 @@ class LocalContextProvider:
             f"Workspace version: {self.location.version}\nAccessible file tool roots:\n{roots}\n"
             "Earlier messages may describe another working location. Use the current location "
             "for relative paths. A command's cwd applies only to that command. "
-            "PowerShell uses the current Windows user's permissions. No OS sandbox is provided. "
+            + ("Local tools and descendants use the Windows LPAC restricted driver, frozen file "
+               "permissions and no network. Denied operations require changing user-managed policy. "
+               if self.execution_mode == "windows_lpac" else
+               "PowerShell uses the current Windows user's permissions. No OS sandbox is provided. ")
+            +
             "Begin with a shallow file.list, then locate and read relevant sources. "
             "Generated content is excluded from discovery unless explicitly included. "
             "Use file.read hashes for edits, inspect actual command exit codes, and never claim "
