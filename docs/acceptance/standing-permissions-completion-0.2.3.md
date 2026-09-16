@@ -3,8 +3,9 @@
 2026-09-16，从 `8f36b460f4ab8c09de9873d1d9569c7cb97c6ab4` 继续。
 代码与本文同提交；各原生报告另存实际执行源码哈希，不能仅用提交号代替工作树内容。
 
-**当前门槛未通过，P2 尚未开始。** 新增策略隔离、依赖变更和嵌套 Job 子集通过；新启动结构下
-完整软件链及真实符号链接检查尚未执行完成。发行仍为 0.2.2，数据库仍为 v5。
+**当前有限 P1b 门槛已通过，P2 可以开始。** 下文保留首次未放行及 UAC 取消记录，随后用户明确
+要求重新请求；源码 `381fdd342e2fe180886b378fb76f8a783419bea7` 的完整结果追加于文末。
+发行仍为 0.2.2，数据库仍为 v5；原生通过不等于正式 Runtime 已接入。
 
 ## 固定范围
 
@@ -112,3 +113,27 @@ $env:AGENTHUB_RUN_LPAC_NATIVE = '1'
 
 此前初始化后的四工具结果和清理记录见[停机撤权验收](standing-permissions-quiescent-0.2.3.md)，
 不追溯修改为新 Job 结构通过，也不为更新本文重复执行原试验。
+
+## 用户重新确认 UAC 后的完整结果
+
+实验 `a91325af5c5d4aab9d079df8e4e6b30f` 在同一 build 26200 运行，源码为 `381fdd3`。
+此项是新的实际执行，不覆盖上面的未执行或失败记录。
+
+- 汇总七组必要检查全部通过：策略、完整工具链、隔离、外层 Job 继承、Run Job 清理、真实
+  符号链接以及对象/ACL 边界；`not_executed=[]`、`coverage_limits={}`。
+- Python、PowerShell 7、Git、uv 通过新 Job 结构下的修改与只读策略矩阵；未回退普通令牌。
+- 符号链接真实创建，LPAC 拒绝未授权目标，夹具链接清理确认；目标内容保持原样。
+- 五个系统对象的本次 ACE 均为 `removed`，前后 DACL 相同；`cleanup_errors=[]`。
+  管理员辅助程序因 `host_requested` 正常清理退出，没有等到 600 秒上限。
+- 最终判定在清理后完成：`gate=passed`、`gate_errors=[]`，入口退出码为 0。
+
+| 证据 | SHA-256 |
+| --- | --- |
+| `var/l4a-completion-a91325af5c5d4aab9d079df8e4e6b30f/report.json` | `354dab2ec44e987015aa31d4eb82687ee66794f07c16c2e5c81aeb153c957c20` |
+| `var/l4a-namespace-a91325af5c5d4aab9d079df8e4e6b30f.json` | `6c3ba87d77ac1b913a658eb1639d683ed08579afe901575bffd479d168d30fb3` |
+| `var/l4a-quiescent-completion-2df3aa5386ab487fb559bbbe9e662feb/report.json` | `5af1619cabdbe0ee9fffb9447cf0a24174bfae5ea002cce4dd68a072c3146107` |
+| `var/l4a-isolation-completion-230cb4c7281949dea5f6dafa05329eaf/report.json` | `8f0cfa89b15b6d3ee48d10f41d1be445c0cd4994691adb5a9aee65d736084a99` |
+| `var/l4a-standing-completion-781b32fb519147069a284232318ea7f5/report.json` | `97d624302b3d2372fbfee5ab44b3c46f9aeff3341ab062cb1c092e1dde98bac6` |
+
+后续 P2 必须复用这些启动原语，并单独验证文件 worker、宿主无绕过、真实工具循环和终态；
+本记录不替代 P2、P3、P4 验收。开发继续当前分支，不合并、不切分支、不创建发行物。
