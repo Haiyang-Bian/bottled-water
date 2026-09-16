@@ -1,5 +1,7 @@
 # AgentHub 系统架构：内核、子系统与宿主
 
+> 2026-09-16：0.2.3 转向[原生使用闭环](./native-user-experience-0.2.3.md)。普通 CLI 明确使用 user 文件范围与正常网络；共享默认 workspace 不变。L4a/LPAC 暂缓，P3 代码、schema v6 与失败证据保留。下述旧阶段结果不代表强隔离已通过；多助手继续待实现。
+
 > 文档状态：目标架构与 CLI MVP 迁移现状，2026-09-04。MVP 执行链已迁入根级 `src`；未迁移领域仍按原宿主实现。实测结果及剩余验收见 [CLI 实施记录](./cli-mvp.md)。
 
 > 2026-09-15 实施增补：[本机持续记忆的智能体环境](./local-agent-environment.md)与[开发阶段](./local-agent-roadmap.md)。L1、L2 已分别在 0.2.0、0.2.1 实现；0.2.2 的 [L3 资源与软件](./resource-continuity-l3.md)已接入本地 CLI，[验收记录](../acceptance/resource-continuity-0.2.2.md)区分通过、失败及未执行项。身份、记忆、资源元数据、位置和文件授权各自独立，保持已有 Run 生命周期。

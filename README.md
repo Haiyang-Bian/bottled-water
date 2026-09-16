@@ -33,9 +33,7 @@ agenthub
 agenthub --continue
 ```
 
-首次启动询问信任，接受后以当前 Windows 用户权限自动执行工具。配置与记录默认保存到
-`%USERPROFILE%\.agenthub`。支持 PowerShell、Git、文件读写、显式跨目录和 JSONL；
-0.2.0 可从任意目录用 `-r` 找回任务，并用 `/cd` 在已授权范围内修改保存位置。详见 [CLI 使用说明](./docs/cli.md)及[0.2.0 验收](./docs/acceptance/local-environment-0.2.0.md)。
+0.2.3 以普通用户执行，可直接跨目录操作、调用项目 Python/本机软件并联网，无需逐目录信任或管理员初始化。配置与记录默认保存在 `%USERPROFILE%\.agenthub`。从任意目录用 `-r` 找回任务，`/cd` 修改保存位置；任务历史保持独立。LPAC 强隔离暂缓，旧受限任务须显式转换。详见 [CLI 使用说明](./docs/cli.md)和[本版验收](./docs/acceptance/native-user-experience-0.2.3.md)。
 
 ### Windows 桌面端
 

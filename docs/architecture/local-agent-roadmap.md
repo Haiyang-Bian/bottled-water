@@ -1,5 +1,7 @@
 # 本机持续记忆：开发阶段与验收计划
 
+> 2026-09-16：0.2.3 转向[原生使用闭环](./native-user-experience-0.2.3.md)。普通 CLI 明确使用 user 文件范围与正常网络；共享默认 workspace 不变。L4a/LPAC 暂缓，P3 代码、schema v6 与失败证据保留。下述旧阶段结果不代表强隔离已通过；多助手继续待实现。
+
 > 状态：L1 已实现于 0.2.0，L2 已实现于 0.2.1，L3 已实现于 0.2.2，见[资源实施记录](./resource-continuity-l3.md)和[验收证据](../acceptance/resource-continuity-0.2.2.md)。L4a 的 [Windows 原生实验](./windows-permissions-l4a.md)尚未通过 P1，未发行 0.2.3；L4b 多助手共享与交接待实现。各旧版本验收记录保留原时点结论。
 > 实现基线：`agenthub-system 0.1.7`，源码 `d43f07ba954b74ea544815f4ba8a294766109f34`。
 > 本文与[方向及详细设计](./local-agent-environment.md)配套。L0 的历史文档检查记录保留；后续实施结果按阶段补充，不追溯改变旧验收结论。

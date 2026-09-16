@@ -1,5 +1,7 @@
 # Current Implementation Status
 
+> 2026-09-16：0.2.3 转向[原生使用闭环](./architecture/native-user-experience-0.2.3.md)。普通 CLI 明确使用 user 文件范围与正常网络；共享默认 workspace 不变。L4a/LPAC 暂缓，P3 代码、schema v6 与失败证据保留。下述旧阶段结果不代表强隔离已通过；多助手继续待实现。
+
 This file is the compact status reference for current docs. It avoids historical closure notes and only tracks present behavior and known boundaries.
 
 ## Local Agent Environment With Persistent Memory
