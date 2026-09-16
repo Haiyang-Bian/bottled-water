@@ -11,22 +11,35 @@ from .movement import evaluate
 from .standing import environment
 
 
+def prepare_powershell(runtime):
+    """Copy the selected PowerShell 7 without Git's system initialization."""
+    pwsh = Path(shutil.which("pwsh.exe") or "")
+    if not pwsh.is_file():
+        raise RuntimeError("An explicit PowerShell 7 installation is required")
+    destination = runtime / "pwsh"
+    destination.mkdir()
+    for item in pwsh.parent.iterdir():
+        if item.is_file():
+            shutil.copyfile(item, destination / item.name)
+    for folder in ("Modules", "en-US"):
+        shutil.copytree(pwsh.parent / folder, destination / folder)
+    return pwsh
+
+
 def prepare(runtime, root):
     pwsh = Path(shutil.which("pwsh.exe") or "")
     uv = Path(shutil.which("uv.exe") or "")
     git = Path(shutil.which("git.exe") or "").parent.parent / "mingw64/bin/git.exe"
     if not all(path.is_file() for path in (pwsh, uv, git)):
         raise RuntimeError("Explicit PowerShell 7, uv and Git for Windows installations are required")
-    for name, source in (("pwsh", pwsh.parent), ("git", git.parent)):
+    prepare_powershell(runtime)
+    for name, source in (("git", git.parent),):
         destination = runtime / name
         destination.mkdir()
         for item in source.iterdir():
-            if item.is_file() and (name == "pwsh" or item.suffix.lower() == ".dll"
+            if item.is_file() and (item.suffix.lower() == ".dll"
                                    or item.name == "git.exe"):
                 shutil.copyfile(item, destination / item.name)
-        if name == "pwsh":
-            for folder in ("Modules", "en-US"):
-                shutil.copytree(source / folder, destination / folder)
     shutil.copyfile(uv, runtime / "uv.exe")
     for folder in ("Work", "Archive", "Private"):
         for command in ([str(git), "init", "--template=", str(root / folder)],

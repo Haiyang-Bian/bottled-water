@@ -5,6 +5,12 @@ from pathlib import Path
 
 
 def tree(path):
+    # PowerShell's private package cache can exceed MAX_PATH. Keep all traversal
+    # and ACL calls on the same extended absolute name, without following aliases.
+    if os.name == "nt" and not str(path).startswith("\\\\?\\"):
+        if not path.is_absolute() or str(path).startswith("\\\\"):
+            raise RuntimeError("Expected a local absolute Run dependency path")
+        path = Path("\\\\?\\" + str(path))
     info = path.lstat()
     if info.st_file_attributes & 0x400 or (not path.is_dir() and info.st_nlink != 1):
         raise RuntimeError("Run dependency/private directory contains an unsupported alias")

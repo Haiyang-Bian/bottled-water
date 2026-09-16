@@ -116,6 +116,7 @@ class WindowsRestrictedDriver:
         system = Path(os.environ["SystemRoot"])
         result = {"SystemRoot": str(system), "WINDIR": str(system), "SystemDrive": system.drive,
                   "PATH": os.pathsep.join([str(Path(p).parent) for p in self.executables.values()]),
+                  "PATHEXT": ".COM;.EXE;.BAT;.CMD",
                   "TEMP": str(self.private), "TMP": str(self.private), "USERPROFILE": str(self.private),
                   "LOCALAPPDATA": str(self.private), "APPDATA": str(self.private),
                   "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
@@ -150,7 +151,8 @@ class WindowsRestrictedDriver:
                 self.profile.run,
                 [self.executables["python"], "-I", "-S", "-B", str(self.bundle / "worker.py")],
                 self.private, environment=self.environment(), timeout=remaining,
-                registry_read=True, namespace_experiment=self.namespace_experiment,
+                registry_read=True, instrumentation="pwsh" in self.executables,
+                namespace_experiment=self.namespace_experiment,
                 policy_experiment=self.prepared.generation, parent_jobs=(self.job.handle,),
                 cancel_event=self.stop, stdin_data=payload, output_limit=RESPONSE_LIMIT + 4,
                 binary_output=True))

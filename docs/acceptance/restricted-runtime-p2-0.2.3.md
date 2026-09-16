@@ -3,7 +3,7 @@
 2026-09-16。分支 `codex/windows-permissions-l4a`；公共适配器检查点 `ec2aa25`。
 发行保持 0.2.2/schema v5。本阶段通过专用验收入口注入驱动，普通 CLI 的默认模式不变。
 
-**P1b 有限清单已通过；P2 Python 工具循环和故障子集通过，完整软件链及真实模型尚未放行。**
+**P1b 有限清单已通过；P2 Python、PowerShell 工具循环和故障子集通过，完整软件链及真实模型尚未放行。**
 本记录不替代[完整 P1b 证据](standing-permissions-completion-0.2.3.md)，也不宣称 P3/P4 完成。
 
 ## 实现边界
@@ -32,6 +32,7 @@
 
 ```powershell
 .venv\Scripts\python.exe scripts/probe-restricted-runtime.py --output var/l4a-runtime-NEW
+.venv\Scripts\python.exe scripts/probe-restricted-runtime.py --powershell --output var/l4a-runtime-pwsh-NEW
 .venv\Scripts\python.exe scripts/probe-restricted-failures.py --output var/l4a-faults-NEW
 $env:AGENTHUB_RUN_LPAC_NATIVE = '1'
 .venv\Scripts\python.exe -m pytest tests/test_restricted_runtime_native.py tests/test_restricted_boundary.py
@@ -47,6 +48,11 @@ $env:AGENTHUB_RUN_LPAC_NATIVE = '1'
 管理员步骤仅准备固定系统查询 ACE，最长 600 秒；业务工具始终普通用户 LPAC。
 不安装开机项、不重启。只读使用源配置/凭据，隔离数据库位于新夹具，不升级日常状态。
 省略 LiveProfile/SourceHome 不调用模型。初始化清理报告必须另行核对为 `cleaned`。
+
+`--powershell` 单独验证 PowerShell 和 Python，不触发管理员初始化或模型请求；仍保留
+`full_toolchain_requires_initialization` 未执行标记。可用于先修复普通接入缺陷，减少完整批次的 UAC。
+当前固定系统初始化是有界实验，每批结束撤销自己的 ACE，不能当作正式安装器的常驻准备。
+Codex 请求在开发沙箱外执行原生测试，与 Windows UAC 是两个不同层次；普通 LPAC 测试不提权。
 
 ## 已通过的实际受限循环
 
@@ -94,6 +100,39 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
    修复 Actor 在执行前后核对共享取消状态，并增加确定性回归。停止仅属本测试的宿主后，核实
    目录对象、唯一 profile 与已登记业务 SID，删除自有 ACE；`repair.json` 保存核实结果，未恢复旧完整 DACL。
    同时补齐 profile 创建前意图和清理审计，避免新 Run 缺少可恢复身份。原失败报告不改写为通过。
+5. `l4a-runtime-namespace-9dce4d06c0a94ee5bf2e9ade3ef3365f`：此前记录等待 UAC，之后已确认并执行。
+   Runtime 组装遗漏 P1 已验证的 `lpacInstrumentation` 能力，PowerShell ETW 初始化拒绝。
+   Run `0201f498-4656-4aa3-9833-aff4de1c9e63` 失败；修复为仅包含 PowerShell 副本时传入该能力。
+   此能力不增加业务目录授权。该批次 Run 与五个系统对象均完成清理。
+6. 用户明确要求再次申请后，批次 `6cb98da21aa3435fabeb663f48526f02` 初始化成功。
+   PowerShell 起始位置错误导致查找 `C:\calc.py`，Run `d14751d6-8452-48fa-9a36-502fe779f857`
+   失败；私有 PowerShell 缓存路径超过 MAX_PATH，又导致 Run ACE 清理失败。
+   五个系统对象已正常清理，Run 记录保留 `repair_required`。确认原宿主退出、目录对象身份
+   与审计一致后，使用扩展绝对路径遍历，移除该 Run/准备实例的专属 ACE 并删除其 profile；
+   独立 `repair.json` 记录清理核实，保留原失败报告。没有恢复完整旧 DACL。
+7. 不再触发 UAC，改用 PowerShell 子集。批次 `a24b62a6da7c4915a56ba05eb9ef3500`
+   证明 `-WorkingDirectory` 仍尝试检查未授权的祖先目录，不能直接作为修复。
+   改用临时 `AgentHub:` PSDrive，根为 worker 已校验的 cwd，不向祖先授予访问。
+   [Microsoft New-PSDrive 文档](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/new-psdrive)
+   描述了以指定目录建立临时 PowerShell 工作盘的机制。对外提供真实路径的是
+   `(Get-Location).ProviderPath`；子进程继续使用实际文件系统 cwd。
+8. 批次 `11cc3839fa7749bd9e31b3b5a72d6911` 中 PowerShell 返回 0，但缺少预期的 Python
+   子进程输出；验收检查判失败，未把退出码独立当作执行证据。隔离环境补充固定 PATHEXT
+   白名单后通过下一节的子进程断言。以上两次非 UAC 失败均已核实清理。
+
+## PowerShell 修复后的原生子集
+
+- 报告：`var/l4a-runtime-powershell-native-3b5f0897e66942ebaacbeb8286960120/report.json`。
+- SHA-256：`1e99b9646557d8473b58d427fd16b760f4cc1ab522e712f48cd24c4b8b45d4d3`。
+- Run：`988534da-6c4e-4ab4-98a8-12cc2ec8ec9a`；completed/0；15 次确定性请求、14 次工具调用。
+- Python/文件/资源权限循环、BOM/CRLF 和 hash 冲突继续通过；PowerShell 正确相对读取 calc.py。
+  指定含中文、空格、单引号的子目录后，PowerShell 相对读取与 Python 子进程断言均通过。
+- `host_bypasses=[]`、唯一终态、Run 私有/依赖 ACE、profile 及业务准备清理全部核实。
+- OS build 26200，source_commit 为 `e4d4199`；实际修复源码由报告 `source_files` 逐文件固定。
+  后续工具说明文字调整不改变上述执行证据；此批次没有调用 Git、uv 或真实模型。
+- `var/l4a-p2-powershell-final.xml`：1 项原生参数场景通过，23.76 秒；
+  `var/l4a-p2-powershell-regression.xml`：36 项 current-user、组装、协议/终态回归通过。
+  Ruff 与 `git diff --check` 通过。原测试分组已包含此原生测试文件，新增参数场景沿用该分组。
 
 ## 回归和未完成
 
@@ -105,8 +144,9 @@ SHA-256：`cdaddc9f033337522072e2f7b85cabc33dd15d835fde67c8437e50fb8de72b41`。
   跨环境策略在调用模型前拒绝；与共享组重叠，不相加。
 - Web 聊天、取消、持久化及桌面入口：49 项通过，732.35 秒，`var/l4a-p2-web.xml`。
 - 桌面打包输入只读核查包含新共享 worker、适配器及根锁文件；完整构建留 P4。
-- P2 完整 Python/Pwsh7/Git/uv 与 DeepSeek：请求初始化后尚未开始，不能用此前 P1 软件链代替。
-  请求身份 `9dce4d06c0a94ee5bf2e9ade3ef3365f`；核查 Windows consent 正在等待，尚无初始化报告。
-  等待用户在 Windows 确认，不自动重试、跳过 UAC 或改用普通令牌。
+- P2 完整 Python/Pwsh7/Git/uv：上述两个批次都在 PowerShell 接入检查处失败，不能宣称通过。
+  对应 `var/l4a-namespace-<批次ID>.json` 均为 `cleaned`、`cleanup_errors=[]`。
+  非 UAC PowerShell 修复子集通过后，尚未重跑完整批次。不存在仍等待本次确认的 UAC 请求。
+  DeepSeek 入口由确定性检查成功后才启动，因此这两批都未调用真实模型。
   已确认唯一 profile 为 default/deepseek/deepseek-v4-flash；OpenAI-compatible 未配置、未执行。
 - P3/P4、schema v6、wheel/tag/Release 均未进行。P2 完整验收结束前不推进正式权限管理。

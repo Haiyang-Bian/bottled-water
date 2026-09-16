@@ -33,10 +33,11 @@ from model_provider.core.interfaces import BaseModelProvider, StreamChunk
 
 
 class FixtureProvider(BaseModelProvider):
-    def __init__(self, root, software_ids, resource_id, paths, *, full=False):
+    def __init__(self, root, software_ids, resource_id, paths, *, full=False, powershell=False):
         super().__init__({"model": "restricted-deterministic"})
         self.root, self.software_ids, self.full = root, software_ids, full
         self.resource_id, self.paths = resource_id, paths
+        self.powershell = powershell or full
         self.steps, self.results = 0, []
         self.expected = True
 
@@ -76,9 +77,17 @@ class FixtureProvider(BaseModelProvider):
             ("file.edit", {"path": "calc.py", "old_text": "a + b", "new_text": "a * b",
                            "expected_hash": "0" * 64}),
         ]
-        if self.full:
+        if self.powershell:
+            python = self.paths["python"].replace("'", "''")
             calls.extend([
                 ("powershell.run", {"script": "Get-Content calc.py | Select-Object -First 1"}),
+                ("powershell.run", {"cwd": "子 ' 目录", "script":
+                    "Get-Content -LiteralPath 'location.txt';\n"
+                    f"& '{python}' -B -c \"from pathlib import Path; "
+                    "assert Path('location.txt').read_text()=='PS CWD OK'; print('CHILD CWD OK')\""}),
+            ])
+        if self.full:
+            calls.extend([
                 ("git.run", {"args": ["diff", "--", "calc.py"]}),
                 ("software.run", {"id": self.software_ids["uv"], "args": ["--no-config", "run",
                     "--offline", "--no-project", "--no-managed-python", "--python", self.paths["python"],
@@ -103,6 +112,8 @@ async def run(args, repo, output, report, save):
         (root / name).mkdir(parents=True)
         (root / name / "sample.txt").write_text(name, encoding="utf-8")
     (root / "Work/calc.py").write_bytes(b"\xef\xbb\xbfdef add(a, b):\r\n    return a - b\r\n")
+    (root / "Work/子 ' 目录").mkdir()
+    (root / "Work/子 ' 目录/location.txt").write_text("PS CWD OK", encoding="utf-8")
     paths = bundle(repo, runtime)
     if args.namespace_experiment:
         from lpac_probe.toolchain import prepare
@@ -112,6 +123,11 @@ async def run(args, repo, output, report, save):
                      uv=str(runtime / "uv.exe"))
         subprocess.run([paths["git"], "-C", str(root / "Work"), "add", "calc.py"], check=True,
                        capture_output=True, timeout=10)
+    elif args.powershell:
+        from lpac_probe.toolchain import prepare_powershell
+
+        prepare_powershell(runtime)
+        paths["pwsh"] = str(runtime / "pwsh/pwsh.exe")
     (output / "Runs").mkdir()
     store = SQLiteStore(output / "state.sqlite3")
     cwd = Path(os.path.normcase(str(root / "Work")))
@@ -196,7 +212,7 @@ async def run(args, repo, output, report, save):
             )
         else:
             model = FixtureProvider(root, software_ids, resource.id, paths,
-                                    full=bool(args.namespace_experiment))
+                                    full=bool(args.namespace_experiment), powershell=args.powershell)
         with (output / "events.jsonl").open("w", encoding="utf-8") as events:
             with redirect_stdout(events), block_host_business_io(root, enabled, violations):
                 code = await run_turn(store, session, model, profile, config, redactor, prompt,
@@ -218,9 +234,15 @@ async def run(args, repo, output, report, save):
             "single_terminal": sum(e.get("type") in {"system.run_completed", "system.run_failed",
                                                        "system.run_cancelled"} for e in events) == 1,
         }
+        if args.namespace_experiment or args.powershell:
+            report["checks"]["powershell"] = any(t["tool"] == "powershell.run" and t["success"]
+                and "def add(a, b):" in t["result"].get("stdout", "") for t in tool_results)
+            if not args.profile:
+                report["checks"]["powershell_child_cwd"] = any(
+                    t["tool"] == "powershell.run" and t["success"]
+                    and "CHILD CWD OK" in t["result"].get("stdout", "") for t in tool_results)
         if args.namespace_experiment:
-            for kind, tool in (("powershell", "powershell.run"), ("git", "git.run")):
-                report["checks"][kind] = any(t["tool"] == tool and t["success"] for t in tool_results)
+            report["checks"]["git"] = any(t["tool"] == "git.run" and t["success"] for t in tool_results)
             report["checks"]["uv"] = any(t["tool"] == "software.run" and t["success"]
                 and (t.get("result") or {}).get("software_id") == software_ids["uv"] for t in tool_results)
         report["passed"] = (code == 0 and not violations
@@ -245,6 +267,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--namespace-experiment")
+    parser.add_argument("--powershell", action="store_true",
+                        help="Add PowerShell cwd and private-cache cleanup checks without UAC")
     parser.add_argument("--source-home", type=Path)
     parser.add_argument("--profile")
     args = parser.parse_args()

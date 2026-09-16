@@ -162,9 +162,20 @@ class LocalToolExecutor:
         async def powershell(script, cwd=".", timeout=120):
             directory = await files.resolve(cwd, directory=True)
             prefix = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; $ErrorActionPreference = 'Stop'; $global:LASTEXITCODE = 0;\n"
+            location_setup = ""
+            if self.executables is not None:
+                # A PSDrive rooted at the approved cwd avoids walking ungranted
+                # ancestors while PowerShell normalizes its initial location.
+                literal = str(directory).replace("'", "''")
+                location_setup = (
+                    f"New-PSDrive -Name AgentHub -PSProvider FileSystem -Root '{literal}' "
+                    "-Scope Global -ErrorAction Stop | Out-Null;\n"
+                    "Set-Location -LiteralPath 'AgentHub:\\' -ErrorAction Stop;\n"
+                )
             code = (
                 prefix
                 + "try {\n"
+                + location_setup
                 + script
                 + "\nif ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }\n} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }"
             )
@@ -196,7 +207,9 @@ class LocalToolExecutor:
         common = {"cwd": string, "timeout": {"type": "number"}}
         register(
             "powershell.run",
-            ("Execute PowerShell 7 inside the Windows restricted driver; offline with frozen file permissions."
+            ("Execute PowerShell 7 inside the Windows restricted driver; offline with frozen file permissions. "
+             "Initial location is the temporary AgentHub: drive rooted at cwd. "
+             "Use (Get-Location).ProviderPath for its actual filesystem path."
              if self.grant.execution_mode == "windows_lpac" else
              "Execute a non-interactive PowerShell script with current-user permissions. Supports pipes and multiline scripts; no OS sandbox."),
             powershell,
