@@ -20,6 +20,7 @@ class PermissionHost:
         self.instances = {}
         self.frozen = None
         self.running = False
+        self.active_preparation = None
         self.server = None
         self.lock = None
 
@@ -66,7 +67,8 @@ class PermissionHost:
         affected = [item for item in self.instances.values()
                     if not still_allowed(item.snapshot, target)]
         busy = self.authority.busy({item.generation for item in affected})
-        if (self.running and affected) or busy:
+        starting = self.running and any(item.generation == self.active_preparation for item in affected)
+        if starting or busy:
             detail = ", ".join(r["run"] for r in busy) or "CLI 正在启动或清理执行"
             raise PermissionBusyError("请先取消受影响 Run 或等待清理完成：" + detail)
         if operation == "freeze":
@@ -101,7 +103,12 @@ class PermissionHost:
             backend = WindowsPermissionBackend(self.authority, self.id, manifest, progress=progress)
             prepared = PreparedPolicy(snapshot, manifest.digest, backend)
             self.instances[key] = prepared
-            prepared.prepare()
+            try:
+                prepared.prepare()
+            except BaseException:
+                if prepared.state == "retired":
+                    self.instances.pop(key, None)
+                raise
         return self.instances[key]
 
     def require_live_owner(self, identifier):

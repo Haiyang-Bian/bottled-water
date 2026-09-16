@@ -13,7 +13,7 @@ def create_prompt(home, scope=None, *, color=True, cwd=None):
     from prompt_toolkit.styles import Style
 
     commands = ["/resume", "/new", "/history", "/session", "/add-dir", "/cd",
-                "/help", "/exit",
+                "/help", "/exit", "/permissions",
                 "/tools", "/verbose on", "/verbose off", "/memory", "/resources", "/software"]
 
     class CommandCompleter(Completer):

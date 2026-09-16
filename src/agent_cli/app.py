@@ -35,6 +35,7 @@ HELP = """/resume       从本机环境列表恢复任务；/resume --here 按�
 /resume 查询  搜索旧任务，如 /resume 昨天的实验
 /verbose on|off 详细输出开关
 /add-dir PATH 添加目录
+/permissions  查看执行模式、长期权限与任务范围
 /cd [PATH]    查看或切换默认工作位置（不会增加授权）
 /help         帮助
 /exit         退出
@@ -85,6 +86,7 @@ def show_restored(controller, ui):
                     if s.id == session["id"]), None)
     ui.note("已恢复：" + (summary.label() if summary else session["id"]), "cyan bold")
     ui.note(f"位置：{session['cwd']} · 版本 {session['workspace_version']}", "dim")
+    show_permissions(controller, ui)
     for item in controller._validate(session):
         ui.note(f"目录暂不可用：{item['path']} · {item['reason']}", "yellow")
     turns, _ = SessionHistoryReader(controller.home, controller.redactor).page(session["id"])
@@ -109,6 +111,16 @@ def show_restored(controller, ui):
     if truncated:
         print("历史回显已截断；/history 可完整分页查看。")
     print("以上为已保存记录；输入后将开始新的 Run。/history 查看更早记录。")
+
+
+def show_permissions(controller, ui, *, detailed=False):
+    from .permissions import task_view
+    view = task_view(controller)
+    label = "Windows 受限执行" if view["mode"] == "windows_lpac" else "当前用户执行"
+    ui.note(f"{label} · 长期权限修订 {view['policy_revision']} · "
+            f"{view['selection']['mode']}", "yellow")
+    if detailed:
+        ui.note(safe_text(json.dumps(view, default=str, ensure_ascii=False)))
 
 
 async def browse_history(controller):
@@ -140,9 +152,21 @@ async def chat(args, home):
         home, root, lambda store, path: ensure_trusted(store, path, interactive), services.redactor
     )
     ui = UserInterface(args)
+    permission_host = None
+    execution_options = {name: getattr(args, name, None) for name in ("sandbox", "permissions")}
+    execution_options.update({name: getattr(args, name, []) for name in ("read_dir", "write_dir")})
 
     async def execute(prompt):
+        nonlocal permission_host
         with controller.execution() as session:
+            execution = None
+            if session["execution_mode"] == "windows_lpac":
+                from .permission_host import PermissionHost
+                from .restricted_assembly import assemble
+                if permission_host is None:
+                    permission_host = PermissionHost(controller.store)
+                    permission_host.start()
+                execution = assemble(controller, permission_host, json_mode=args.json)
             services.prepare()
             controller.redactor = controller.catalog.redactor = services.redactor
             controller.store.redactor = services.redactor
@@ -150,11 +174,26 @@ async def chat(args, home):
                 ui.note("你", "cyan bold")
                 ui.note(services.redactor.text(prompt))
                 ui.note("AgentHub", "cyan bold")
-            return await run_turn(
-                controller.store, session, services.provider, services.profile, services.config,
-                services.redactor, prompt, json_mode=args.json,
-                interactive=interactive, plain=args.plain, no_color=not ui.color, verbose=args.verbose,
-            )
+            if permission_host:
+                permission_host.running = True
+                permission_host.active_preparation = (
+                    execution.driver.prepared.generation if execution else None
+                )
+            try:
+                return await run_turn(
+                    controller.store, session, services.provider, services.profile, services.config,
+                    services.redactor, prompt, json_mode=args.json,
+                    interactive=interactive, plain=args.plain, no_color=not ui.color,
+                    verbose=args.verbose, execution=execution,
+                )
+            finally:
+                try:
+                    if execution:
+                        await execution.driver.aclose()
+                finally:
+                    if permission_host:
+                        permission_host.running = False
+                        permission_host.active_preparation = None
 
     def prompt_for_session():
         return create_prompt(home, controller.session["id"], color=ui.color,
@@ -175,16 +214,20 @@ async def chat(args, home):
             if identifier is None:
                 return 0
         if identifier:
-            await controller.activate(identifier, args.add_dir, args.cwd)
+            await controller.activate(identifier, args.add_dir, args.cwd,
+                                      execution_options=execution_options)
             if interactive and args.prompt is None:
                 show_restored(controller, ui)
         else:
-            controller.configure(args.add_dir, args.cwd, startup=True)
+            controller.default_mode()
+            controller.configure(args.add_dir, args.cwd, startup=True,
+                                 execution_options=execution_options)
         if args.prompt is not None:
             return await execute(args.prompt)
 
         prompt_session = prompt_for_session()
         ui.note(f"AgentHub {system_version()} · {controller.session['cwd']}", "cyan bold")
+        show_permissions(controller, ui)
         try:
             config = load_config(home)
             name, profile = select_profile(config, args.profile)
@@ -240,8 +283,16 @@ async def chat(args, home):
                     ui.note("详细输出已开启" if args.verbose else "详细输出已关闭", "dim")
                 elif prompt == "/session":
                     print(safe_text(controller.redactor.dumps(controller.session)))
+                elif prompt == "/permissions":
+                    show_permissions(controller, ui, detailed=True)
                 elif prompt.startswith("/add-dir "):
-                    controller.configure([path_argument(prompt[len("/add-dir "):])])
+                    value = prompt[len("/add-dir "):]
+                    access = "read"
+                    if " --access " in value:
+                        value, access = value.rsplit(" --access ", 1)
+                        if access not in {"read", "modify"}:
+                            raise ConfigurationError("--access 只接受 read 或 modify。")
+                    controller.configure([path_argument(value)], access=access)
                     ui.note("已更新任务的显式目录授权。", "cyan")
                 elif prompt == "/cd" or prompt.startswith("/cd "):
                     if prompt != "/cd":
@@ -261,8 +312,12 @@ async def chat(args, home):
                     sqlite3.Error, OSError, ValueError) as exc:
                 print(safe_text(services.redactor.text(str(exc))), file=sys.stderr)
     finally:
-        controller.close()
-        await services.close()
+        try:
+            if permission_host:
+                await permission_host.close()
+        finally:
+            controller.close()
+            await services.close()
 
 
 def list_sessions(args, home):

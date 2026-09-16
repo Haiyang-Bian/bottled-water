@@ -166,7 +166,9 @@ class SessionController:
     @staticmethod
     def _draft(cwd, roots):
         return {"id": None, "environment_id": None, "origin_root": str(cwd), "cwd": str(cwd),
-                "granted_roots": list(roots), "workspace_version": 0}
+                "granted_roots": list(roots), "workspace_version": 0,
+                "execution_mode": "current_user",
+                "permission_selection": {"mode": "inherit", "roots": []}}
 
     def _idle(self):
         if self.running:
@@ -182,21 +184,90 @@ class SessionController:
         if self.lock:
             self.lock.__exit__()
         self.lock = None
-        self.session = self._draft(self.session["cwd"], self.session["granted_roots"])
+        previous = self.session
+        self.session = self._draft(previous["cwd"], previous["granted_roots"])
+        for name in ("execution_mode", "permission_selection"):
+            self.session[name] = previous[name]
+
+    def permission_snapshot(self, session=None):
+        from dataclasses import replace
+        from agent_adapters.storage.permissions import SQLitePermissions
+        from agent_subsystems.workspaces.permissions import freeze_policy
+        from agent_subsystems.workspaces.permission_records import selection_from_dict
+        session = session or self.session
+        from .permissions import mandatory_rules
+        policy = SQLitePermissions(self.writable()).load()
+        mandatory = {rule.path: rule for rule in (*policy.mandatory, *mandatory_rules(self.home))}
+        policy = replace(policy, mandatory=tuple(mandatory.values()))
+        return freeze_policy(policy,
+                             selection_from_dict(session["permission_selection"]))
+
+    def default_mode(self):
+        path = self.home / "state.sqlite3"
+        if path.exists():
+            from agent_adapters.storage.permissions import SQLitePermissions
+            store = SQLiteStore(path, readonly=True)
+            try:
+                if store.schema_version >= 3 and SQLitePermissions(store).windows_default():
+                    self.session["execution_mode"] = "windows_lpac"
+            finally:
+                store.close()
 
     def _validate(self, session, *, trusted=True):
         cwd = canonical_directory(session["cwd"])
         if str(cwd) != session["cwd"]:
             raise ConfigurationError("保存位置的实际路径已改变，请显式重新选择位置。")
+        if session.get("execution_mode") == "windows_lpac":
+            from agent_subsystems.workspaces.permissions import authorize_path
+            if not authorize_path(self.permission_snapshot(session), cwd, "read").allowed:
+                raise ConfigurationError("保存位置不在长期权限范围内；使用 --cwd 选择已授权位置。")
+            return []
         check = self.writable().is_trusted if trusted else lambda _: True
         roots, inactive = effective_roots(session["granted_roots"], check)
         resolve_resource(WorkspaceSpec(roots), ExecutionLocation(cwd), ".", directory=True)
         return inactive
 
-    def _prepare(self, session, additional, cwd, base):
+    def _prepare(self, session, additional, cwd, base, execution_options=None, access="read"):
         candidate = {**session, "granted_roots": list(session["granted_roots"])}
+        if execution_options:
+            from agent_subsystems.workspaces.permission_records import document
+            from agent_contracts.permissions import TaskPermissionSelection, PathPermission
+            import json
+            mode = execution_options.get("sandbox")
+            if mode:
+                candidate["execution_mode"] = (
+                    "windows_lpac" if mode == "windows" else "current_user"
+                )
+                if mode == "windows" and session.get("execution_mode") != "windows_lpac":
+                    candidate["permission_selection"] = {"mode": "inherit", "roots": []}
+            selection = execution_options.get("permissions")
+            reads, writes = execution_options.get("read_dir", []), execution_options.get("write_dir", [])
+            if reads or writes:
+                if selection != "custom":
+                    raise ConfigurationError("--read-dir/--write-dir 需要 --permissions custom。")
+            if selection:
+                if candidate["execution_mode"] != "windows_lpac":
+                    raise ConfigurationError("权限选择需要 --sandbox windows。")
+                rules = {canonical_directory(p, base=base): level
+                         for level, paths in (("read", reads), ("modify", writes)) for p in paths}
+                candidate["permission_selection"] = json.loads(document(TaskPermissionSelection(
+                    selection, tuple(PathPermission(p, level) for p, level in rules.items()),
+                )))
         for name in additional:
             path = canonical_directory(name, base=base)
+            if candidate.get("execution_mode") == "windows_lpac":
+                from agent_subsystems.workspaces.permissions import authorize_path, freeze_policy
+                from agent_adapters.storage.permissions import SQLitePermissions
+                if not authorize_path(freeze_policy(SQLitePermissions(self.writable()).load()),
+                                      path, "modify" if access == "modify" else "read").allowed:
+                    raise ConfigurationError("目录未获长期授权；请使用 permissions grant。")
+                selected = candidate["permission_selection"]
+                if selected["mode"] == "custom":
+                    roots = [r for r in selected["roots"] if r["path"] != str(path)]
+                    candidate["permission_selection"] = {"mode": "custom", "roots": [
+                        *roots, {"path": str(path), "access": access},
+                    ]}
+                continue
             self.ensure_trusted(self.writable(), path)
             if str(path) not in candidate["granted_roots"]:
                 candidate["granted_roots"].append(str(path))
@@ -212,14 +283,17 @@ class SessionController:
             self.session = self.writable().update_workspace(
                 candidate["id"], cwd=candidate["cwd"], granted_roots=candidate["granted_roots"],
                 expected_version=candidate["workspace_version"], lock=self.lock,
+                execution_mode=candidate["execution_mode"],
+                permission_selection=candidate["permission_selection"],
             )
 
-    def configure(self, additional=(), cwd=None, *, startup=False):
+    def configure(self, additional=(), cwd=None, *, startup=False,
+                  execution_options=None, access="read"):
         self._idle()
         base = self.startup_root if startup else Path(self.session["cwd"])
-        self._save(self._prepare(self.session, additional, cwd, base))
+        self._save(self._prepare(self.session, additional, cwd, base, execution_options, access))
 
-    async def activate(self, identifier, additional=(), cwd=None):
+    async def activate(self, identifier, additional=(), cwd=None, *, execution_options=None):
         self._idle()
         self.catalog.resolve(identifier)
         store = self.writable()
@@ -230,7 +304,7 @@ class SessionController:
         try:
             session = self.catalog.resolve(identifier)
             try:
-                candidate = self._prepare(session, additional, cwd, self.startup_root)
+                candidate = self._prepare(session, additional, cwd, self.startup_root, execution_options)
             except (OSError, ValueError, ConfigurationError, OperationError) as exc:
                 raise ConfigurationError(
                     f"无法恢复保存位置：{session['cwd']}。"
@@ -241,6 +315,8 @@ class SessionController:
             session = store.update_workspace(
                 identifier, cwd=candidate["cwd"], granted_roots=candidate["granted_roots"],
                 expected_version=session["workspace_version"], lock=target,
+                execution_mode=candidate["execution_mode"],
+                permission_selection=candidate["permission_selection"],
             )
         except BaseException:
             if not same:
@@ -257,13 +333,16 @@ class SessionController:
             self._validate(self.session)
             return self.session
         cwd = canonical_directory(self.session["cwd"])
-        for name in self.session["granted_roots"]:
+        for name in (self.session["granted_roots"]
+                     if self.session["execution_mode"] == "current_user" else []):
             if cwd.is_relative_to(Path(name)):
                 self.ensure_trusted(self.writable(), canonical_directory(name))
                 break
         self._validate(self.session)
         session = self.writable().new_session(
-            self.session["origin_root"], cwd=cwd, granted_roots=self.session["granted_roots"]
+            self.session["origin_root"], cwd=cwd, granted_roots=self.session["granted_roots"],
+            execution_mode=self.session["execution_mode"],
+            permission_selection=self.session["permission_selection"],
         )
         target = SessionLock(self.home / "locks", session["id"])
         target.__enter__()

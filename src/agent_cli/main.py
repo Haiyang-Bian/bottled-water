@@ -22,6 +22,10 @@ def parser():
     root.add_argument("--add-dir", action="append", default=[])
     root.add_argument("--here", action="store_true", help="Filter tasks by saved working location")
     root.add_argument("--cwd", help="Explicit working location within the task's granted roots")
+    root.add_argument("--sandbox", choices=["windows", "current-user"])
+    root.add_argument("--permissions", choices=["inherit", "custom"])
+    root.add_argument("--read-dir", action="append", default=[])
+    root.add_argument("--write-dir", action="append", default=[])
     root.add_argument("--profile")
     root.add_argument("--max-turns", help="Model request limit: positive integer or unlimited")
     root.add_argument("--json", action="store_true")
@@ -29,6 +33,10 @@ def parser():
     root.add_argument("--no-color", action="store_true")
     root.add_argument("--verbose", action="store_true", help="Detailed tool and phase output")
     commands = root.add_subparsers(dest="command")
+    from .permissions import add_parser as add_permissions_parser
+    from .sandbox import add_parser as add_sandbox_parser
+    add_permissions_parser(commands)
+    add_sandbox_parser(commands)
     from .memory import add_parser as add_memory_parser
     add_memory_parser(commands)
     from .resources import add_parser as add_resources_parser
@@ -106,6 +114,12 @@ def initialize(args, home):
 
 async def dispatch(args):
     home = home_directory()
+    if args.command in {"permissions", "sandbox"}:
+        from .permissions import command as permissions_command
+        from .sandbox import command as sandbox_command
+        return await (permissions_command if args.command == "permissions" else sandbox_command)(
+            args, home,
+        )
     if args.command in {"resources", "software"}:
         from .resources import command
         return await command(args, home)
@@ -252,8 +266,11 @@ def main():
         return 130
     except Exception as exc:
         from agent_adapters.storage.session_lock import SessionBusyError
+        from agent_adapters.storage.permissions import PermissionBusyError
 
-        if isinstance(exc, SessionBusyError):
+        if isinstance(exc, (SessionBusyError, PermissionBusyError)) or (
+            isinstance(exc, OperationError) and exc.code == "permission_busy"
+        ):
             code, message = 3, str(exc)
         elif isinstance(
             exc, (ConfigurationError, OperationError, OSError, ValueError, KeyError, ImportError)

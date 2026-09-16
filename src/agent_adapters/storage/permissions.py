@@ -50,6 +50,18 @@ class SQLitePermissions:
             raise ConfigurationError("agenthub state upgrade is required")
         self.identity()
 
+    def windows_default(self):
+        """Disabling an adopted policy must not silently grant full-user execution."""
+        current = self.load()
+        if current.enabled:
+            return True
+        if self.store.schema_version < 6:
+            return False
+        return any(policy_from_dict(json.loads(row[0])).enabled for row in self.db.execute(
+            "SELECT target FROM permission_transitions WHERE agent=? AND state='completed'",
+            (current.agent_id,),
+        ))
+
     def audit(self, operation, body):
         self.db.execute("INSERT INTO permission_events(created,operation,body) VALUES(?,?,?)", (
             utc_now().isoformat(), operation, self.store.redactor.dumps(body),

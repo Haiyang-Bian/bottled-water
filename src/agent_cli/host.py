@@ -160,6 +160,9 @@ async def run_turn(
                 policy=SingleAgentPolicy(),
                 metadata={
                     "execution_mode": grant.execution_mode,
+                    "permission_managed": bool(
+                        execution and execution.metadata.get("permission_managed")
+                    ),
                     "isolation": execution.metadata if execution else driver.capabilities,
                     "memory_enabled": True,
                     "resources_enabled": True,

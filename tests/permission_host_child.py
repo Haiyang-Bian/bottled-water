@@ -9,6 +9,7 @@ import sys
 from agent_adapters.local.dependencies import DependencyManifest
 from agent_adapters.storage.sqlite import SQLiteStore
 from agent_cli.permission_host import PermissionHost
+from agent_contracts.permissions import TaskPermissionSelection, PathPermission
 from agent_subsystems.workspaces.permissions import freeze_policy
 
 
@@ -30,9 +31,20 @@ async def main():
             if operation == "busy":
                 host.authority.register("fixture-run", host.id, prepared.generation, prepared.snapshot)
                 host.running = True
+                host.active_preparation = prepared.generation
+            elif operation == "busy_read":
+                policy = host.authority.load()
+                snapshot = freeze_policy(policy, TaskPermissionSelection(
+                    "custom", (PathPermission(policy.grants[0].path, "read"),),
+                ))
+                narrow = host.prepare(snapshot, DependencyManifest.capture(Path(sys.argv[2])))
+                host.authority.register("fixture-run", host.id, narrow.generation, snapshot)
+                host.active_preparation = narrow.generation
+                host.running = True
             elif operation == "idle":
                 host.authority.finish("fixture-run", cleaned=True)
                 host.running = False
+                host.active_preparation = None
             elif operation == "inspect":
                 print(json.dumps({"running": host.running, "instances": len(host.instances),
                                   "revision": host.authority.load().revision}), flush=True)

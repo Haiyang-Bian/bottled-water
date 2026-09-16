@@ -142,3 +142,50 @@ def test_foreign_snapshot_is_not_read_or_registered(tmp_path):
         assert policy.environment_id != body["environment_id"]
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+def test_v6_failure_rolls_back_all_changes_and_keeps_wal_backup(tmp_path, monkeypatch, version):
+    from agent_adapters.storage import migration
+    from test_local_environment import legacy
+
+    path = tmp_path / "state.sqlite3"
+    if version < 3:
+        legacy(path, version)
+    else:
+        store = SQLiteStore(path)
+        store.new_session(tmp_path)
+        store.close()
+        with sqlite3.connect(path) as db:
+            for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+                if (name.startswith("permission_") or name == "task_permissions"
+                        or version < 5 and (name.startswith("resource") or name == "software")
+                        or version < 4 and name.startswith("memor")):
+                    db.execute('DROP TABLE "' + name + '"')
+            db.execute(f"PRAGMA user_version={version}")
+    schema = migration.PERMISSION_SCHEMA
+    # Fail after every new table has been created, before the v6 commit.
+    monkeypatch.setattr(migration, "PERMISSION_SCHEMA", (*schema, "INVALID SQL"))
+    with sqlite3.connect(path) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO trusted VALUES('wal-only-v6','now')")
+        writer.commit()
+        before = list(writer.iterdump())
+        with pytest.raises(sqlite3.OperationalError):
+            SQLiteStore(path)
+        assert writer.execute("PRAGMA user_version").fetchone()[0] == version
+        assert list(writer.iterdump()) == before
+        backups = list(tmp_path.glob("*.bak"))
+        assert len(backups) == 1
+        with sqlite3.connect(backups[0]) as backup:
+            assert backup.execute("PRAGMA user_version").fetchone()[0] == version
+            assert backup.execute("SELECT path FROM trusted WHERE path='wal-only-v6'").fetchone()
+        monkeypatch.setattr(migration, "PERMISSION_SCHEMA", schema)
+        upgraded = SQLiteStore(path)
+        try:
+            assert upgraded.schema_version == 6
+            assert not SQLitePermissions(upgraded).load().enabled
+            assert upgraded.db.execute("SELECT count(*) FROM permission_events").fetchone()[0] == 0
+        finally:
+            upgraded.close()

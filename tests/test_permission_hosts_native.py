@@ -125,3 +125,19 @@ async def test_dead_host_requires_explicit_repair_and_live_host_is_not_repaired(
             await close(child)
         else:
             child.communicate()
+
+
+async def test_unaffected_active_narrow_scope_does_not_block_idle_policy_cleanup(environment):
+    store, authority, work, tools = environment
+    child = start(store, tools)
+    try:
+        await receive(child)
+        await send(child, "busy_read")
+        policy = authority.load()
+        await change_policy(authority, replace(policy, grants=(PathPermission(work, "read"),)), 1,
+                            lambda *args: remote_control(authority, *args))
+        assert await send(child, "inspect") == {"running": True, "instances": 1, "revision": 2}
+        assert len(authority.preparations()) == 1
+        await send(child, "idle")
+    finally:
+        await close(child)

@@ -118,6 +118,43 @@ def cli_fixture(tmp_path):
                              "```python\n" + "\n".join(f"value_{i} = {i}" for i in range(45))
                              + "\n```\n\n继续输入可处理下一项任务。\n"
                              '```status_report\n{"state":"completed","will":"complete"}\n```'}
+            elif scenario == "RESTRICTED":
+                if step == 0:
+                    delta = call("Read text", {"path": "calc.py"})
+                elif step == 1:
+                    observation = json.loads(body["messages"][-1]["content"])["result"]
+                    delta = call("Replace exactly", {
+                        "path": "calc.py", "old_text": "a - b", "new_text": "a + b",
+                        "expected_hash": observation["sha256"],
+                    })
+                elif step == 2:
+                    delta = call("Execute a non-interactive", {"script":
+                        "python -B -c \"from calc import add; assert add(2,3)==5; print('PYTHON OK')\"\n"
+                        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+                        "uv run --offline --no-project -- python -B -c \"print('UV OK')\""})
+                elif step == 3:
+                    delta = call("Execute Git", {"args": ["diff", "--", "calc.py"]})
+                elif step == 4:
+                    delta = call("Read text", {"path": str(second / "note.txt")})
+                elif step == 5:
+                    delta = call("Read text", {"path": str(project.parent / "Private" / "secret.txt")})
+                elif step == 6:
+                    code = (
+                        "import os,socket\nfrom pathlib import Path\n"
+                        "assert 'AGENTHUB_TEST_KEY' not in os.environ\n"
+                        f"for path,mode in [({str(second / 'note.txt')!r},'w'),"
+                        f"({str(project.parent / 'Private' / 'secret.txt')!r},'r')]:\n"
+                        " try: Path(path).open(mode).close()\n"
+                        " except PermissionError: print('OS DENIED', mode)\n"
+                        " else: raise AssertionError('file bypass')\n"
+                        f"try: socket.create_connection(('127.0.0.1',{server.server_port}),timeout=2)\n"
+                        "except OSError as exc:\n"
+                        " assert getattr(exc,'winerror',None)==10013 or exc.errno==13\n"
+                        " print('NETWORK DENIED')\n"
+                        "else: raise AssertionError('network bypass')\n"
+                    )
+                    delta = call("Execute a non-interactive", {
+                        "script": "$testCode = @'\n" + code + "'@\npython -B -c $testCode"})
             elif scenario == "REPAIR":
                 if step == 0:
                     delta = call("Read text", {"path": "calc.py"})
