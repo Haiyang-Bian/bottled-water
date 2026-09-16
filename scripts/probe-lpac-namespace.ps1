@@ -1,6 +1,9 @@
 # P1 experiment orchestrator. Only the fixed ACL helper is elevated; tools are not.
 [CmdletBinding()]
-param()
+param(
+    [ValidateSet('legacy', 'quiescent')]
+    [string]$Probe = 'legacy'
+)
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -14,9 +17,13 @@ $experiment = [guid]::NewGuid().ToString('N')
 $report = Join-Path $repo "var\l4a-namespace-$experiment.json"
 $stopFile = [IO.Path]::ChangeExtension($report, '.stop')
 $output = Join-Path $repo "var\l4a-lpac-namespace-$experiment"
+if ($Probe -eq 'quiescent') {
+    $output = Join-Path $repo "var\l4a-quiescent-namespace-$experiment"
+}
 $helper = Join-Path $PSScriptRoot 'probe-lpac-namespace-admin.py'
 Write-Output "Namespace experiment: $experiment"
 Write-Output 'The UAC helper can only add/remove five fixed query ACEs for this experiment.'
+Write-Output 'Targets: \GLOBAL??, \GLOBAL??\C:, \GLOBAL??\D:, \GLOBAL??\MountPointManager, \\.\MountPointManager'
 Write-Output "Report: $report"
 $adminProcess = $null
 $probeExit = 1
@@ -42,9 +49,14 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $ready) { throw "Namespace initialization was not ready; inspect $report" }
-    & $python (Join-Path $PSScriptRoot 'probe-windows-lpac.py') --output $output `
-        --toolchain --registry-read --full-toolchain --instrumentation `
-        --namespace-experiment $experiment
+    if ($Probe -eq 'quiescent') {
+        & $python (Join-Path $PSScriptRoot 'probe-lpac-quiescent.py') --output $output `
+            --toolchain --namespace-experiment $experiment
+    } else {
+        & $python (Join-Path $PSScriptRoot 'probe-windows-lpac.py') --output $output `
+            --toolchain --registry-read --full-toolchain --instrumentation `
+            --namespace-experiment $experiment
+    }
     $probeExit = $LASTEXITCODE
 } finally {
     # This marker requests removal only. It carries no executable or ACL parameters.

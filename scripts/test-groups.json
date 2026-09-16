@@ -122,11 +122,13 @@
       "sandbox:unit": [
         "tests/test_lpac_probe.py",
         "tests/test_permission_policy.py",
+        "tests/test_permission_preparation.py",
         "tests/test_lpac_standing_probe.py",
         "tests/test_lpac_movement_probe.py"
       ],
       "sandbox:integration": [
         "tests/test_lpac_native.py",
+        "tests/test_lpac_quiescent_native.py",
         "tests/test_lpac_movement_native.py"
       ],
       "resources:unit": [
