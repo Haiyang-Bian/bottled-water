@@ -63,20 +63,6 @@ def ask(prompt):
     return value.strip()
 
 
-def ensure_trusted(store, path, interactive):
-    if store.is_trusted(path):
-        return
-    if not interactive:
-        raise ConfigurationError(f'Directory is not trusted. Run: agenthub trust add "{path}"')
-    response = ask(
-        f"\n信任此目录：{path}\n智能体将自动读写文件，并以当前 Windows 用户权限执行 PowerShell/Git。"
-        "这不是系统沙箱；脚本可能访问其他目录和网络。信任会被保存。\n允许？[y/N] "
-    )
-    if response.lower() not in {"y", "yes", "是", "允许"}:
-        raise ConfigurationError("Directory trust declined")
-    store.trust(path)
-
-
 async def run_turn(
     store,
     session,
@@ -94,6 +80,10 @@ async def run_turn(
     execution=None,
 ):
     if execution is None:
+        from agent_adapters.local.user_execution import require_ordinary_user
+        from .execution_mode import require_available_mode
+        require_available_mode(session.get("execution_mode", "current_user"), session.get("id"))
+        require_ordinary_user()
         roots, inactive = tuple(Path(p) for p in session["granted_roots"]), []
         workspace = WorkspaceSpec(roots)
         location = ExecutionLocation(canonical_directory(session["cwd"]), session["workspace_version"])

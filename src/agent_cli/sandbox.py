@@ -58,6 +58,9 @@ def require_setup(home):
 
 
 async def command(args, home):
+    if args.operation in {"setup", "self-test"}:
+        from .execution_mode import paused_management
+        paused_management()
     if args.operation == "doctor":
         return await _command(args, home)
     from agent_adapters.storage.session_lock import SessionLock
@@ -111,8 +114,11 @@ async def _command(args, home):
                                                for r in SQLitePermissions(store).preparations()]
             finally:
                 store.close()
+        report.update(feature_status="paused", runtime_enabled=False,
+                      initialization_ready=report.pop("ready"))
+        report.pop("repair", None)
         output(args, report)
-        return 0 if report["ready"] else 2
+        return 0 if report["initialization_ready"] else 2
     if operation == "setup":
         require_platform()
         from agent_adapters.local.sandbox_install import (

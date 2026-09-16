@@ -60,7 +60,6 @@ def main():
                 return subprocess.run([python, "-B", "-m", "agent_cli.main", *arguments],
                                       cwd=project, env=env, capture_output=True, encoding="utf-8",
                                       timeout=300)
-            assert cli("trust", "add", str(project)).returncode == 0
             prompt = ("请用文件工具读取并修复 calc.py 的 add 函数，让测试通过。"
                       f"用 PowerShell 执行 & '{python}' -m unittest -v，"
                       "再用 Git 查看 diff，依据实际工具结果报告。无需安装依赖，也不要提交仓库。")

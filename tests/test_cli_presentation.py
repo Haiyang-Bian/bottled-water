@@ -162,7 +162,7 @@ async def test_tool_viewer_reads_saved_results_without_writes(tmp_path, monkeypa
         return True
     monkeypatch.setattr(tool_details.Selector, "run", choose)
     monkeypatch.setattr(tool_details, "pager", page)
-    controller = SessionController(tmp_path, tmp_path, lambda *_: None)
+    controller = SessionController(tmp_path, tmp_path)
     controller.session = session
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input

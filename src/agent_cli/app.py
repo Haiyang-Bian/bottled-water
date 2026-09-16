@@ -15,7 +15,8 @@ from agent_adapters.storage.session_lock import SessionBusyError
 from agent_subsystems.observability.redaction import Redactor
 from agent_subsystems.workspaces.paths import canonical_directory
 from .config import load_config, select_profile
-from .host import configure_logging, ensure_trusted, run_turn
+from .host import configure_logging, run_turn
+from .execution_mode import NATIVE_LABEL
 from .selection import choose_session, pager
 from .sessions import SessionController, SessionHistoryReader
 from .terminal_text import safe_text
@@ -34,9 +35,9 @@ HELP = """/resume       从本机环境列表恢复任务；/resume --here 按�
 /software     软件目录；discover / add / verify / enable / disable
 /resume 查询  搜索旧任务，如 /resume 昨天的实验
 /verbose on|off 详细输出开关
-/add-dir PATH 添加目录
-/permissions  查看执行模式、长期权限与任务范围
-/cd [PATH]    查看或切换默认工作位置（不会增加授权）
+/add-dir PATH 添加参考目录（不限制访问范围）
+/permissions  查看执行模式及保留的权限配置
+/cd [PATH]    查看或切换默认工作位置
 /help         帮助
 /exit         退出
 Ctrl+C        取消当前任务"""
@@ -49,6 +50,8 @@ class RunServices:
         self.redactor = display_redactor(home)
 
     def prepare(self):
+        from agent_adapters.local.user_execution import require_ordinary_user
+        require_ordinary_user()
         if self.provider:
             return
         from agent_adapters.credentials.local import LocalCredentialStore
@@ -116,9 +119,8 @@ def show_restored(controller, ui):
 def show_permissions(controller, ui, *, detailed=False):
     from .permissions import task_view
     view = task_view(controller)
-    label = "Windows 受限执行" if view["mode"] == "windows_lpac" else "当前用户执行"
-    ui.note(f"{label} · 长期权限修订 {view['policy_revision']} · "
-            f"{view['selection']['mode']}", "yellow")
+    label = "Windows 受限执行（暂缓）" if view["mode"] == "windows_lpac" else NATIVE_LABEL
+    ui.note(label, "yellow")
     if detailed:
         ui.note(safe_text(json.dumps(view, default=str, ensure_ascii=False)))
 
@@ -148,25 +150,13 @@ async def chat(args, home):
         raise ConfigurationError("交互模式需要终端；批处理请使用 -p。")
     root = canonical_directory(".")
     services = RunServices(args, home)
-    controller = SessionController(
-        home, root, lambda store, path: ensure_trusted(store, path, interactive), services.redactor
-    )
+    controller = SessionController(home, root, services.redactor)
     ui = UserInterface(args)
-    permission_host = None
     execution_options = {name: getattr(args, name, None) for name in ("sandbox", "permissions")}
     execution_options.update({name: getattr(args, name, []) for name in ("read_dir", "write_dir")})
 
     async def execute(prompt):
-        nonlocal permission_host
         with controller.execution() as session:
-            execution = None
-            if session["execution_mode"] == "windows_lpac":
-                from .permission_host import PermissionHost
-                from .restricted_assembly import assemble
-                if permission_host is None:
-                    permission_host = PermissionHost(controller.store)
-                    permission_host.start()
-                execution = assemble(controller, permission_host, json_mode=args.json)
             services.prepare()
             controller.redactor = controller.catalog.redactor = services.redactor
             controller.store.redactor = services.redactor
@@ -174,26 +164,14 @@ async def chat(args, home):
                 ui.note("你", "cyan bold")
                 ui.note(services.redactor.text(prompt))
                 ui.note("AgentHub", "cyan bold")
-            if permission_host:
-                permission_host.running = True
-                permission_host.active_preparation = (
-                    execution.driver.prepared.generation if execution else None
-                )
-            try:
-                return await run_turn(
-                    controller.store, session, services.provider, services.profile, services.config,
-                    services.redactor, prompt, json_mode=args.json,
-                    interactive=interactive, plain=args.plain, no_color=not ui.color,
-                    verbose=args.verbose, execution=execution,
-                )
-            finally:
-                try:
-                    if execution:
-                        await execution.driver.aclose()
-                finally:
-                    if permission_host:
-                        permission_host.running = False
-                        permission_host.active_preparation = None
+            if not interactive and not args.json:
+                ui.note(NATIVE_LABEL, "dim")
+            return await run_turn(
+                controller.store, session, services.provider, services.profile, services.config,
+                services.redactor, prompt, json_mode=args.json,
+                interactive=interactive, plain=args.plain, no_color=not ui.color,
+                verbose=args.verbose,
+            )
 
     def prompt_for_session():
         return create_prompt(home, controller.session["id"], color=ui.color,
@@ -289,11 +267,9 @@ async def chat(args, home):
                     value = prompt[len("/add-dir "):]
                     access = "read"
                     if " --access " in value:
-                        value, access = value.rsplit(" --access ", 1)
-                        if access not in {"read", "modify"}:
-                            raise ConfigurationError("--access 只接受 read 或 modify。")
+                        raise ConfigurationError("原生模式的 /add-dir 只添加参考目录，不接受 --access。")
                     controller.configure([path_argument(value)], access=access)
-                    ui.note("已更新任务的显式目录授权。", "cyan")
+                    ui.note("已添加参考目录；普通用户访问范围不受此列表限制。", "cyan")
                 elif prompt == "/cd" or prompt.startswith("/cd "):
                     if prompt != "/cd":
                         controller.configure(cwd=path_argument(prompt[len("/cd "):]))
@@ -313,10 +289,8 @@ async def chat(args, home):
                 print(safe_text(services.redactor.text(str(exc))), file=sys.stderr)
     finally:
         try:
-            if permission_host:
-                await permission_host.close()
-        finally:
             controller.close()
+        finally:
             await services.close()
 
 

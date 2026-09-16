@@ -15,7 +15,6 @@ def test_memory_cli_cross_task_lifecycle_and_candidate(cli_fixture):
         return run("--json", "memory", *args, cwd=b, expected=expected)
 
     saved = json.loads(memory("add", "--title", "语言偏好", "--body", "默认用中文解释").stdout)
-    run("trust", "add", str(b))
     run("--json", "-p", "B_CHECK", cwd=b)
     assert any("默认用中文解释" in m["content"] for m in requests[-1]["messages"])
     assert not any(str(a) in m["content"] for m in requests[-1]["messages"])
@@ -81,7 +80,6 @@ def test_memory_management_without_credentials_or_task_creation(cli_fixture):
 
 def test_model_can_copy_host_generated_source_reference(cli_fixture):
     run, project, _, requests = cli_fixture
-    run("trust", "add", str(project))
     run("--json", "-p", "MEMORYOBSERVE")
     candidate = json.loads(run("--json", "memory", "candidates").stdout)[0]
     assert candidate["status"] == "ready"

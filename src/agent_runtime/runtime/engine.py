@@ -669,7 +669,8 @@ class RunKernel:
                         key: self.request.metadata.get(key)
                         for key in ("model", "provider", "profile", "effective_limits",
                                     "environment_id", "agent_id", "execution_location",
-                                    "effective_roots", "inactive_roots", "execution_mode", "isolation")
+                                    "effective_roots", "inactive_roots", "execution_mode", "isolation",
+                                    "file_access_scope", "reference_roots", "network")
                     },
                 },
             )

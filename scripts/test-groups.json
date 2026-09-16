@@ -166,6 +166,7 @@
       "tests/test_harness_execution.py"
     ],
     "cli:unit": [
+      "tests/test_native_cli_mode.py",
       "tests/test_cli_sessions.py",
       "tests/test_cli_presentation.py",
       "tests/test_local_system.py",

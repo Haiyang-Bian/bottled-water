@@ -152,9 +152,8 @@ class SessionHistoryReader(SessionCatalogReader):
 
 
 class SessionController:
-    def __init__(self, home, root, ensure_trusted, redactor=None):
+    def __init__(self, home, root, redactor=None):
         self.home, self.startup_root = home, root
-        self.ensure_trusted = ensure_trusted
         self.redactor = redactor or Redactor()
         self.catalog = SessionCatalogReader(home, self.redactor)
         self.store = None
@@ -212,63 +211,33 @@ class SessionController:
             finally:
                 store.close()
 
-    def _validate(self, session, *, trusted=True):
+    def _validate(self, session):
+        from .execution_mode import require_available_mode
+        require_available_mode(session.get("execution_mode"), session.get("id"))
         cwd = canonical_directory(session["cwd"])
         if str(cwd) != session["cwd"]:
             raise ConfigurationError("保存位置的实际路径已改变，请显式重新选择位置。")
-        if session.get("execution_mode") == "windows_lpac":
-            from agent_subsystems.workspaces.permissions import authorize_path
-            if not authorize_path(self.permission_snapshot(session), cwd, "read").allowed:
-                raise ConfigurationError("保存位置不在长期权限范围内；使用 --cwd 选择已授权位置。")
-            return []
         return []
 
     def _prepare(self, session, additional, cwd, base, execution_options=None, access="read"):
+        from .execution_mode import require_available_mode
         candidate = {**session, "granted_roots": list(session["granted_roots"])}
         if execution_options:
-            from agent_subsystems.workspaces.permission_records import document
-            from agent_contracts.permissions import TaskPermissionSelection, PathPermission
-            import json
             mode = execution_options.get("sandbox")
             if mode:
-                candidate["execution_mode"] = (
-                    "windows_lpac" if mode == "windows" else "current_user"
-                )
-                if mode == "windows" and session.get("execution_mode") != "windows_lpac":
-                    candidate["permission_selection"] = {"mode": "inherit", "roots": []}
-            selection = execution_options.get("permissions")
-            reads, writes = execution_options.get("read_dir", []), execution_options.get("write_dir", [])
-            if reads or writes:
-                if selection != "custom":
-                    raise ConfigurationError("--read-dir/--write-dir 需要 --permissions custom。")
-            if selection:
-                if candidate["execution_mode"] != "windows_lpac":
-                    raise ConfigurationError("权限选择需要 --sandbox windows。")
-                rules = {canonical_directory(p, base=base): level
-                         for level, paths in (("read", reads), ("modify", writes)) for p in paths}
-                candidate["permission_selection"] = json.loads(document(TaskPermissionSelection(
-                    selection, tuple(PathPermission(p, level) for p, level in rules.items()),
-                )))
+                candidate["execution_mode"] = "windows_lpac" if mode == "windows" else "current_user"
+                candidate["permission_selection"] = {"mode": "inherit", "roots": []}
+            if (execution_options.get("permissions") or execution_options.get("read_dir")
+                    or execution_options.get("write_dir")):
+                raise ConfigurationError("受限权限选择已暂缓；原生模式不接受 --permissions、--read-dir 或 --write-dir。")
+        require_available_mode(candidate["execution_mode"], candidate.get("id"))
         for name in additional:
             path = canonical_directory(name, base=base)
-            if candidate.get("execution_mode") == "windows_lpac":
-                from agent_subsystems.workspaces.permissions import authorize_path, freeze_policy
-                from agent_adapters.storage.permissions import SQLitePermissions
-                if not authorize_path(freeze_policy(SQLitePermissions(self.writable()).load()),
-                                      path, "modify" if access == "modify" else "read").allowed:
-                    raise ConfigurationError("目录未获长期授权；请使用 permissions grant。")
-                selected = candidate["permission_selection"]
-                if selected["mode"] == "custom":
-                    roots = [r for r in selected["roots"] if r["path"] != str(path)]
-                    candidate["permission_selection"] = {"mode": "custom", "roots": [
-                        *roots, {"path": str(path), "access": access},
-                    ]}
-                continue
             if str(path) not in candidate["granted_roots"]:
                 candidate["granted_roots"].append(str(path))
         if cwd is not None:
             candidate["cwd"] = str(canonical_directory(cwd, base=base))
-        self._validate(candidate, trusted=session["id"] is not None)
+        self._validate(candidate)
         return candidate
 
     def _save(self, candidate):
@@ -324,6 +293,8 @@ class SessionController:
 
     def materialize(self):
         self._idle()
+        from agent_adapters.local.user_execution import require_ordinary_user
+        require_ordinary_user()
         if self.session["id"] is not None:
             self._validate(self.session)
             return self.session

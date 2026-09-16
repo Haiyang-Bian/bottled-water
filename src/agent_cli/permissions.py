@@ -80,6 +80,9 @@ def task_view(controller):
     report = {"mode": controller.session["execution_mode"],
               "selection": controller.session["permission_selection"],
               "policy_revision": 0, "preparations": []}
+    report.update(feature_status="paused", applies_to_native_execution=False,
+                  file_access_scope="user" if report["mode"] == "current_user" else "workspace",
+                  network="available" if report["mode"] == "current_user" else "not_started")
     if not path.exists():
         return report
     store = SQLiteStore(path, readonly=True)
@@ -106,6 +109,9 @@ def task_view(controller):
 
 async def command(args, home):
     operation = args.operation or "list"
+    if operation not in {"list", "check", "disable"}:
+        from .execution_mode import paused_management
+        paused_management()
     readonly = operation in {"list", "check"}
     interactive = sys.stdin.isatty() and sys.stdout.isatty() and not args.json
     if not readonly and args.revision is None and not interactive:
@@ -124,14 +130,17 @@ async def command(args, home):
         current = authority.load()
         if operation == "list":
             pending = authority.pending() if store.schema_version >= 6 else None
-            output(args, {"policy": asdict(current), "schema": store.schema_version,
+            output(args, {"feature_status": "paused", "applies_to_native_execution": False,
+                          "policy": asdict(current), "schema": store.schema_version,
                           "transition": {"id": pending["id"], "state": pending["state"]}
                           if pending else None})
             return 0
         if operation == "check":
             snapshot = freeze_policy(current)
             decision = authorize_path(snapshot, check_target(args.path), args.path_operation)
-            output(args, asdict(decision))
+            output(args, {**asdict(decision), "feature_status": "paused",
+                          "applies_to_native_execution": False,
+                          "notice": "仅解释已保存的受限策略；原生执行不采用此目录边界。"})
             return 0 if decision.allowed else 2
         revision = current.revision if args.revision is None else args.revision
         target = replace(current, mandatory=mandatory_rules(home))

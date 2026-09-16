@@ -35,7 +35,7 @@ def no_trust(*_):
 
 
 def test_draft_view_does_not_create_state(tmp_path):
-    controller = SessionController(tmp_path / "absent", tmp_path, no_trust)
+    controller = SessionController(tmp_path / "absent", tmp_path)
     assert task_view(controller)["policy_revision"] == 0
     assert not controller.home.exists()
     assert controller.store is None
@@ -43,55 +43,54 @@ def test_draft_view_does_not_create_state(tmp_path):
 
 async def test_default_inherit_restart_and_explicit_mode_conversion(tmp_path):
     work, home, old = configured(tmp_path)
-    controller = SessionController(home, work, no_trust)
+    store = SQLiteStore(home / "state.sqlite3")
+    restricted = store.new_session(work, execution_mode="windows_lpac")
+    store.close()
+    controller = SessionController(home, work)
     try:
         controller.default_mode()
-        controller.configure()
         assert controller.session["execution_mode"] == "windows_lpac"
-        controller.materialize()
-        identifier = controller.session["id"]
+        with pytest.raises(Exception, match="暂缓"):
+            controller.configure()
         controller.new()
         assert controller.session["execution_mode"] == "windows_lpac"
-        await controller.activate(identifier)
-        assert task_view(controller)["policy_revision"] == 1
         await controller.activate(old["id"])
         assert controller.session["execution_mode"] == "current_user"
-        await controller.activate(old["id"], execution_options={"sandbox": "windows"})
-        assert controller.session["execution_mode"] == "windows_lpac"
+        with pytest.raises(Exception, match="暂缓"):
+            await controller.activate(restricted["id"])
+        assert controller.session["id"] == old["id"]
+        await controller.activate(restricted["id"], execution_options={"sandbox": "current-user"})
+        assert controller.session["execution_mode"] == "current_user"
         assert controller.session["workspace_version"] == 1
+        with pytest.raises(Exception, match="暂缓"):
+            await controller.activate(old["id"], execution_options={"sandbox": "windows"})
+        assert controller.session["id"] == restricted["id"]
     finally:
         controller.close()
 
 
-def test_custom_selection_only_narrows_and_failed_cd_keeps_task(tmp_path):
+def test_paused_custom_selection_preserves_current_task(tmp_path):
     work, home, _ = configured(tmp_path)
     inner = work / "narrow"
     inner.mkdir()
     other = tmp_path / "Private"
     other.mkdir()
-    controller = SessionController(home, work, no_trust)
+    controller = SessionController(home, work)
     try:
-        controller.default_mode()
-        controller.configure(cwd=str(inner), execution_options={
-            "permissions": "custom", "read_dir": [str(inner)], "write_dir": [],
-        })
         original = dict(controller.session)
-        with pytest.raises(Exception, match="permissions grant"):
-            controller.configure([str(other)])
+        with pytest.raises(Exception, match="暂缓"):
+            controller.configure(cwd=str(inner), execution_options={
+                "permissions": "custom", "read_dir": [str(inner)], "write_dir": [],
+            })
         assert controller.session == original
-        with pytest.raises(Exception, match="保存位置"):
-            controller.configure(cwd=str(work))
-        assert controller.session == original
-        snapshot = controller.permission_snapshot()
-        from agent_subsystems.workspaces.permissions import authorize_path
-        assert authorize_path(snapshot, inner, "read").allowed
-        assert not authorize_path(snapshot, inner, "modify").allowed
+        controller.configure(cwd=str(other))
+        assert controller.session["cwd"] == str(other).lower()
     finally:
         controller.close()
 
 
 async def test_script_requires_revision_before_creating_state(tmp_path):
-    with pytest.raises(Exception, match="revision"):
+    with pytest.raises(Exception, match="暂缓"):
         await command(SimpleNamespace(operation="enable", revision=None, json=True), tmp_path / "home")
     assert not (tmp_path / "home").exists()
 
@@ -116,7 +115,7 @@ def test_disabling_adopted_policy_does_not_default_to_full_user(tmp_path):
     authority.transition(identifier, "retiring")
     authority.commit(identifier)
     store.close()
-    controller = SessionController(home, work, no_trust)
+    controller = SessionController(home, work)
     try:
         controller.default_mode()
         assert controller.session["execution_mode"] == "windows_lpac"

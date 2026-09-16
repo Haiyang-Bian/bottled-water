@@ -66,7 +66,6 @@ def test_live_provider_repairs_a_local_project(tmp_path, provider, variable):
         "--credential-env",
         "AGENTHUB_LIVE_TEST_KEY",
     )
-    run("trust", "add", str(project))
     run(
         "--json",
         "-p",

@@ -77,6 +77,8 @@ class LocalProcessDriver:
         self.processes = set()
 
     async def run(self, argv, cwd, *, timeout, context, env=None):
+        from .user_execution import require_ordinary_user
+        require_ordinary_user()
         context.check()
         deadline = min(context.deadline, time.monotonic() + timeout)
         if (

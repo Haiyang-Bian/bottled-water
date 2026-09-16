@@ -59,7 +59,7 @@ def test_catalog_ignores_empty_and_opening_times(saved):
 
 def test_missing_catalog_and_draft_do_not_create_state(tmp_path):
     home = tmp_path / "missing"
-    controller = SessionController(home, tmp_path, lambda *_: None)
+    controller = SessionController(home, tmp_path)
     assert controller.catalog.list() == []
     controller.new()
     controller.close()
@@ -69,7 +69,7 @@ def test_missing_catalog_and_draft_do_not_create_state(tmp_path):
 @pytest.mark.asyncio
 async def test_busy_or_failed_switch_preserves_original(saved):
     home, root, store, a, b, _ = saved
-    controller = SessionController(home, root, lambda *_: None)
+    controller = SessionController(home, root)
     try:
         await controller.activate(a["id"])
         with SessionLock(home / "locks", b["id"]):
@@ -148,7 +148,7 @@ async def test_global_restore_cd_and_draft_preserve_grants_and_history(saved):
     home, root, store, a, b, _ = saved
     elsewhere = root / "乙 B"
     elsewhere.mkdir()
-    controller = SessionController(home, elsewhere, lambda db, p: db.trust(p))
+    controller = SessionController(home, elsewhere)
     try:
         await controller.activate(a["id"])
         assert controller.session["cwd"] == str(root)
@@ -186,7 +186,7 @@ async def test_failed_location_restore_keeps_original_and_history_readable(saved
     with SessionLock(home / "locks", b["id"]) as lock:
         store.update_workspace(b["id"], cwd=missing, granted_roots=[root],
                                expected_version=0, lock=lock)
-    controller = SessionController(home, root, lambda db, p: db.trust(p))
+    controller = SessionController(home, root)
     try:
         await controller.activate(a["id"])
         with pytest.raises(ConfigurationError, match="只读查看"):
@@ -204,7 +204,7 @@ async def test_control_transaction_failure_keeps_current_session_and_lock(saved)
     home, root, store, a, b, _ = saved
     target = root / "target"
     target.mkdir()
-    controller = SessionController(home, root, lambda db, p: db.trust(p))
+    controller = SessionController(home, root)
     try:
         await controller.activate(a["id"])
         original = dict(controller.session)

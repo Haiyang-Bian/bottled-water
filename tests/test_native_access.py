@@ -88,7 +88,7 @@ def test_scope_defaults_and_invalid_values(tmp_path):
                       policy=object(), file_access_scope="user")
 
 
-async def test_native_draft_cd_and_restore_never_consult_trust(tmp_path):
+async def test_native_draft_cd_and_restore_never_consult_trust(tmp_path, monkeypatch):
     a, b = [tmp_path / name for name in ("A", "B")]
     a.mkdir()
     b.mkdir()
@@ -96,14 +96,15 @@ async def test_native_draft_cd_and_restore_never_consult_trust(tmp_path):
     home = tmp_path / "home"
     def forbidden(*_):
         pytest.fail("native mode requested directory trust")
-    controller = SessionController(home, a, forbidden)
+    monkeypatch.setattr(SQLiteStore, "is_trusted", forbidden)
+    controller = SessionController(home, a)
     try:
         controller.configure(cwd=b)
         assert not home.exists(), "editing a draft should not create state"
         session = controller.materialize()
         assert session["granted_roots"] == [str(a)]
         controller.close()
-        controller = SessionController(home, a, forbidden)
+        controller = SessionController(home, a)
         await controller.activate(session["id"])
         assert controller.session["cwd"] == str(b)
         assert controller.store.db.execute("SELECT COUNT(*) FROM trusted").fetchone()[0] == 0

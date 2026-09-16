@@ -30,7 +30,7 @@ from .terminal_text import safe_text
 def add_parser(commands):
     for family in ("resources", "software"):
         root = commands.add_parser(
-            family, help="Manage saved metadata; file grants remain separate"
+            family, help="Manage saved metadata; native software registration is optional"
         )
         sub = root.add_subparsers(dest="resource_operation")
         names = ["list", "search", "show", "add", "verify", "disable", "enable"]
@@ -120,6 +120,9 @@ def authorized(store, cwd, roots=None):
 
 async def command(args, home, *, cwd=None, roots=None, scope_id=None, interactive_override=False):
     operation = args.resource_operation or "list"
+    if operation not in {"list", "search", "show", "discover"}:
+        from agent_adapters.local.user_execution import require_ordinary_user
+        require_ordinary_user()
     family = args.command
     cwd = Path(cwd or Path.cwd())
     interactive = (
