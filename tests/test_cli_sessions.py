@@ -79,11 +79,8 @@ async def test_busy_or_failed_switch_preserves_original(saved):
         with pytest.raises(SessionBusyError):
             with SessionLock(home / "locks", a["id"]):
                 pass
-        def reject(*_):
-            raise ConfigurationError("declined")
-        controller.ensure_trusted = reject
-        with pytest.raises(ConfigurationError, match="declined"):
-            await controller.activate(b["id"], [root])
+        with pytest.raises(ConfigurationError, match="无法恢复"):
+            await controller.activate(b["id"], cwd=root / "missing")
         assert controller.session["id"] == a["id"]
         with SessionLock(home / "locks", b["id"]):
             pass
@@ -148,7 +145,6 @@ async def test_browsing_and_exit_do_not_construct_provider(tmp_path, monkeypatch
 
 
 async def test_global_restore_cd_and_draft_preserve_grants_and_history(saved):
-    from agent_contracts.errors import OperationError
     home, root, store, a, b, _ = saved
     elsewhere = root / "乙 B"
     elsewhere.mkdir()
@@ -168,8 +164,9 @@ async def test_global_restore_cd_and_draft_preserve_grants_and_history(saved):
                 controller.configure(cwd=root)
         outside = root.parent / (root.name + "-outside")
         outside.mkdir()
-        with pytest.raises(OperationError, match="explicitly"):
-            controller.configure(cwd=outside)
+        controller.configure(cwd=outside)
+        assert controller.session["granted_roots"] == [str(root)]
+        assert not store.is_trusted(canonical_directory(outside))
         controller.configure([outside])
         controller.configure(cwd=outside)
         saved_position = dict(controller.session)

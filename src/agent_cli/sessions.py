@@ -9,9 +9,8 @@ from agent_adapters.storage.session_queries import decode
 from agent_adapters.storage.session_lock import SessionLock
 from agent_adapters.storage.sqlite import SQLiteStore
 from agent_contracts.errors import ConfigurationError, OperationError
-from agent_contracts.execution import ExecutionLocation, WorkspaceSpec
 from agent_subsystems.observability.redaction import Redactor
-from agent_subsystems.workspaces.paths import canonical_directory, effective_roots, resolve_resource
+from agent_subsystems.workspaces.paths import canonical_directory
 
 
 def short(text, length=100):
@@ -222,10 +221,7 @@ class SessionController:
             if not authorize_path(self.permission_snapshot(session), cwd, "read").allowed:
                 raise ConfigurationError("保存位置不在长期权限范围内；使用 --cwd 选择已授权位置。")
             return []
-        check = self.writable().is_trusted if trusted else lambda _: True
-        roots, inactive = effective_roots(session["granted_roots"], check)
-        resolve_resource(WorkspaceSpec(roots), ExecutionLocation(cwd), ".", directory=True)
-        return inactive
+        return []
 
     def _prepare(self, session, additional, cwd, base, execution_options=None, access="read"):
         candidate = {**session, "granted_roots": list(session["granted_roots"])}
@@ -268,7 +264,6 @@ class SessionController:
                         *roots, {"path": str(path), "access": access},
                     ]}
                 continue
-            self.ensure_trusted(self.writable(), path)
             if str(path) not in candidate["granted_roots"]:
                 candidate["granted_roots"].append(str(path))
         if cwd is not None:
@@ -309,7 +304,7 @@ class SessionController:
                 raise ConfigurationError(
                     f"无法恢复保存位置：{session['cwd']}。"
                     f"只读查看：agenthub history {identifier}；修复：agenthub --resume {identifier} "
-                    '--add-dir "有效目录" --cwd "有效目录"。' + str(exc)
+                    '--cwd "有效目录"。' + str(exc)
                 ) from exc
             await store.recover_session(identifier)
             session = store.update_workspace(
@@ -333,11 +328,6 @@ class SessionController:
             self._validate(self.session)
             return self.session
         cwd = canonical_directory(self.session["cwd"])
-        for name in (self.session["granted_roots"]
-                     if self.session["execution_mode"] == "current_user" else []):
-            if cwd.is_relative_to(Path(name)):
-                self.ensure_trusted(self.writable(), canonical_directory(name))
-                break
         self._validate(self.session)
         session = self.writable().new_session(
             self.session["origin_root"], cwd=cwd, granted_roots=self.session["granted_roots"],

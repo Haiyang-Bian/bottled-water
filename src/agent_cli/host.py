@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 import time
+from pathlib import Path
 from dataclasses import asdict
 from logging.handlers import RotatingFileHandler
 
@@ -18,7 +19,7 @@ from agent_runtime import AgentConfig, RunRequest, RuntimeEngine
 from agent_subsystems.execution.agent_executor import AgentLoopExecutor
 from agent_subsystems.scheduling.single_agent import SingleAgentPolicy
 from agent_subsystems.context.local import LocalContextProvider
-from agent_subsystems.workspaces.paths import canonical_directory, effective_roots, resolve_resource
+from agent_subsystems.workspaces.paths import canonical_directory
 from agent_adapters.local.processes import LocalProcessDriver
 from agent_adapters.local.tools import LocalToolExecutor, TrustAuthorization
 from agent_adapters.storage.memory import SQLiteMemory
@@ -93,11 +94,10 @@ async def run_turn(
     execution=None,
 ):
     if execution is None:
-        roots, inactive = effective_roots(session["granted_roots"], store.is_trusted)
+        roots, inactive = tuple(Path(p) for p in session["granted_roots"]), []
         workspace = WorkspaceSpec(roots)
         location = ExecutionLocation(canonical_directory(session["cwd"]), session["workspace_version"])
-        resolve_resource(workspace, location, ".", directory=True)
-        grant = ResourceGrant(workspace, frozenset({"files", "process"}))
+        grant = ResourceGrant(workspace, frozenset({"files", "process"}), file_access_scope="user")
         driver = LocalProcessDriver(redactor)
     else:
         grant, location, driver = execution.grant, execution.location, execution.driver
@@ -130,7 +130,8 @@ async def run_turn(
         ), resources, resource_access, execution.software if execution else LocalSoftware(driver),
             tasks, probe, redactor, execution.file_operations if execution else None), memory, memory_access),
         context_provider=LocalContextProvider(workspace, location, profile.max_history_chars,
-                                             execution_mode=grant.execution_mode),
+                                             execution_mode=grant.execution_mode,
+                                             file_access_scope=grant.file_access_scope),
         use_streaming=True,
         run_journal=store,
         context_budget=ContextBudget(
@@ -160,6 +161,8 @@ async def run_turn(
                 policy=SingleAgentPolicy(),
                 metadata={
                     "execution_mode": grant.execution_mode,
+                    "file_access_scope": grant.file_access_scope,
+                    "network": "deny" if execution else "available",
                     "permission_managed": bool(
                         execution and execution.metadata.get("permission_managed")
                     ),
@@ -170,7 +173,9 @@ async def run_turn(
                     "environment_id": store.environment.environment_id,
                     "agent_id": store.environment.default_agent_id,
                     "execution_location": {"cwd": str(location.cwd), "version": location.version},
-                    "effective_roots": [str(p) for p in roots],
+                    "effective_roots": [str(p) for p in roots]
+                    if grant.file_access_scope == "workspace" else [],
+                    "reference_roots": [str(p) for p in roots],
                     "inactive_roots": inactive,
                     "system_version": system_version(),
                     "model": profile.model,

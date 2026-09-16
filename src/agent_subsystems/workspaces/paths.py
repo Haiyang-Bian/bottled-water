@@ -18,14 +18,18 @@ def canonical_directory(value, *, base=None):
     return path
 
 
-def resolve_resource(workspace, location, value, *, directory=False):
-    candidate = Path(value)
+def resolve_resource(workspace, location, value, *, directory=False, file_access_scope="workspace"):
+    if file_access_scope not in {"workspace", "user"}:
+        raise OperationError("invalid_access_scope", "Unsupported file access scope")
+    candidate = Path(value).expanduser()
     if candidate.drive and not candidate.is_absolute():
         raise OperationError("ambiguous_path", "Drive-relative paths are not supported")
     if not candidate.is_absolute():
         candidate = location.cwd / candidate
     candidate = Path(os.path.normcase(str(candidate.resolve())))
-    if not any(candidate.is_relative_to(root) for root in workspace.roots):
+    if file_access_scope == "workspace" and not any(
+        candidate.is_relative_to(root) for root in workspace.roots
+    ):
         raise OperationError(
             "outside_workspace", "Add this directory explicitly before using file tools"
         )

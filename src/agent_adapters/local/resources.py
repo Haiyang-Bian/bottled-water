@@ -120,14 +120,17 @@ class LocalSoftware:
                 "software_argument_limit", "At most 20 outputs and 200 arguments; no NUL"
             )
         workspace, location = context.grant.workspace, context.location
-        directory = resolve_resource(workspace, location, cwd, directory=True)
+        scope = context.grant.file_access_scope
+        directory = resolve_resource(workspace, location, cwd, directory=True,
+                                     file_access_scope=scope)
         current = await probe(Path(cfg.executable), context, hash_limit=None)
         if current.get("sha256") != cfg.sha256:
             raise OperationError(
                 "software_changed",
                 "Executable missing or changed; run agenthub software verify ID --revision N",
             )
-        targets = [resolve_resource(workspace, location, str(directory / p)) for p in outputs]
+        targets = [resolve_resource(workspace, location, str(directory / p),
+                                    file_access_scope=scope) for p in outputs]
         before = [await probe(p, context) for p in targets]
         argv = [cfg.executable, *args]
         env = None
@@ -139,7 +142,7 @@ class LocalSoftware:
         for path, previous in zip(targets, before):
             # Re-resolve after execution: a process may have replaced a parent with a junction.
             try:
-                actual = resolve_resource(workspace, location, str(path))
+                actual = resolve_resource(workspace, location, str(path), file_access_scope=scope)
                 after = await probe(actual, context)
                 item = {"path": str(actual), "before": previous, "after": after}
             except (OSError, OperationError) as exc:

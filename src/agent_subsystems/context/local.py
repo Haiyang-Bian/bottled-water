@@ -6,11 +6,13 @@ from agent_runtime.core.interfaces import AgentContextBuildResult
 class LocalContextProvider:
     fallback_on_error = False
 
-    def __init__(self, workspace, location, max_history_chars=64000, *, execution_mode="current_user"):
+    def __init__(self, workspace, location, max_history_chars=64000, *, execution_mode="current_user",
+                 file_access_scope="workspace"):
         self.workspace = workspace
         self.location = location
         self.max_history_chars = max_history_chars
         self.execution_mode = execution_mode
+        self.file_access_scope = file_access_scope
 
     async def build_agent_context(self, request):
         history = list(request.context_snapshot.messages) if request.context_snapshot else []
@@ -23,9 +25,16 @@ class LocalContextProvider:
             while history and history[0].get("role") != "user":
                 history.pop(0)
         roots = "\n".join(str(p) for p in self.workspace.roots)
+        access = (
+            f"Reference directories (not access boundaries):\n{roots}\n"
+            "File tools and commands may access any path available to the ordinary OS user. "
+            "Do not ask for directory trust or /add-dir before accessing another directory. "
+            "Network and normal tool caches are available. "
+            if self.file_access_scope == "user" else f"Accessible file tool roots:\n{roots}\n"
+        )
         system = request.base_system_prompt + (
             f"\nCurrent working directory: {self.location.cwd}\n"
-            f"Workspace version: {self.location.version}\nAccessible file tool roots:\n{roots}\n"
+            f"Workspace version: {self.location.version}\n" + access +
             "Earlier messages may describe another working location. Use the current location "
             "for relative paths. A command's cwd applies only to that command. "
             + ("Local tools and descendants use the Windows LPAC restricted driver, frozen file "

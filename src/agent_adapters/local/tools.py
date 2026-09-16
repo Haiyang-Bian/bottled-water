@@ -18,6 +18,8 @@ class TrustAuthorization:
         spec, context = request.spec, request.context
         if spec.capability not in context.grant.capabilities:
             return "deny"
+        if context.grant.file_access_scope == "user":
+            return "allow"
         if not all(self.store.is_trusted(root) for root in context.grant.workspace.roots):
             return "requires_user"
         return "allow"
