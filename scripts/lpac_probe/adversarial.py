@@ -63,7 +63,7 @@ def startup_faults(profile, launch, report, save):
         save()
 
 
-def aliases(output, launch, report, save):
+def aliases(output, launch, report, save, *, provided_symbolic=None):
     import _winapi
 
     own, private = output / "A", output / "C"
@@ -95,7 +95,15 @@ def aliases(output, launch, report, save):
         _winapi.CreateJunction(str(private), str(replacement))
         create_link = ctypes.WinDLL("kernel32", use_last_error=True).CreateSymbolicLinkW
         create_link.argtypes, create_link.restype = [w.LPCWSTR, w.LPCWSTR, w.DWORD], w.BOOLEAN
-        has_symlink = bool(create_link(str(symlink), str(private), 3))
+        if provided_symbolic is not None:
+            if not provided_symbolic.is_symlink():
+                raise RuntimeError("Expected the reviewed prepared symbolic-link fixture")
+            provided_symbolic.rename(symlink)
+            has_symlink = True
+        else:
+            has_symlink = bool(create_link(str(symlink), str(private), 3))
+        if has_symlink:
+            report["checks"]["reject_alias_grants"] &= rejected(symlink)
         if not has_symlink:
             error = ctypes.get_last_error()
             if error != 1314:
@@ -130,4 +138,8 @@ def aliases(output, launch, report, save):
         if hardlink.exists():
             hardlink.unlink()
         report["checks"]["alias_target_unchanged"] = (private / "sample.txt").read_text() == "C"
+        if provided_symbolic is not None:
+            report["checks"]["alias_target_unchanged"] &= (
+                (provided_symbolic.parent / "Private/sample.txt").read_text() == "C")
+        report["symbolic_link_cleaned"] = not os.path.lexists(symlink)
         save()

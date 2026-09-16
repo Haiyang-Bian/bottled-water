@@ -5,6 +5,7 @@ No user directory is accepted. The production adapter still needs persistent
 ownership, cross-host coordination and recovery before it can use this protocol.
 """
 
+import json
 from pathlib import Path
 import time
 
@@ -13,8 +14,9 @@ from .standing import MODIFY, READ_EXECUTE, add_aces, cleanup_tree, describe, fi
 
 
 class FixturePreparationBackend:
-    def __init__(self, root, report, save):
+    def __init__(self, root, report, save, *, dependencies=None):
         self.root, self.report, self.save = Path(root), report, save
+        self.dependencies = dependencies
         self.records = {}
         self.failure = None
 
@@ -73,6 +75,8 @@ class FixturePreparationBackend:
         record = self.records[generation]
         if record["state"] != "prepared":
             raise RuntimeError("Fixture preparation is not ready")
+        if self.dependencies is not None:
+            self.dependencies.verify()
         for item in record["roots"]:
             if self.identity(Path(item["path"])) != tuple(item["identity"]):
                 raise RuntimeError("Root object changed; repair required")
@@ -80,7 +84,10 @@ class FixturePreparationBackend:
                 raise RuntimeError("Prepared root ACL disappeared")
         record["verifications"].append({"seconds": time.perf_counter() - started,
                                          "root_checks": len(record["roots"]),
-                                         "recursive_scans": 0})
+                                         "business_recursive_scans": 0,
+                                         "dependency_objects_rechecked": len(json.loads(
+                                             self.dependencies.encoded))
+                                         if self.dependencies is not None else 0})
         self.save()
 
     def retire(self, generation):

@@ -357,6 +357,7 @@ class LpacProfile:
         namespace_experiment=None,
         policy_experiment=None,
         cancel_event=None,
+        parent_jobs=(),
     ):
         """Run with an LPAC token, explicit stdio handles and a kill-on-close Job."""
         import pywintypes
@@ -526,8 +527,12 @@ class LpacProfile:
             process = pywintypes.HANDLE(pi.hProcess)
             thread = pywintypes.HANDLE(pi.hThread)
             handles.extend((process, thread))
+            for parent in parent_jobs:
+                win32job.AssignProcessToJobObject(parent, process)
             win32job.AssignProcessToJobObject(job, process)
             assigned = True
+            if not all(win32job.IsProcessInJob(process, item) for item in (*parent_jobs, job)):
+                raise RuntimeError("Process Job membership did not match the launch plan")
             token = {"appcontainer": token_flag(process, 29), "lpac": token_flag(process, 46)}
             if not all(token.values()):
                 raise RuntimeError("Created process does not have the required LPAC token")
@@ -600,6 +605,7 @@ class LpacProfile:
             "pid": pi.dwProcessId,
             "token": token,
             "job_drained": True,
+            "verified_job_depth": len(parent_jobs) + 1,
             "elapsed": time.monotonic() - started,
             "stdout": bytes(output[0]).decode("utf-8", "replace"),
             "stderr": bytes(output[1]).decode("utf-8", "replace"),

@@ -1,7 +1,7 @@
 # P1 experiment orchestrator. Only the fixed ACL helper is elevated; tools are not.
 [CmdletBinding()]
 param(
-    [ValidateSet('legacy', 'quiescent')]
+    [ValidateSet('legacy', 'quiescent', 'completion')]
     [string]$Probe = 'legacy'
 )
 
@@ -20,6 +20,18 @@ $output = Join-Path $repo "var\l4a-lpac-namespace-$experiment"
 if ($Probe -eq 'quiescent') {
     $output = Join-Path $repo "var\l4a-quiescent-namespace-$experiment"
 }
+$helperExtra = @()
+if ($Probe -eq 'completion') {
+    $output = Join-Path $repo "var\l4a-completion-$experiment"
+    $fixture = Join-Path $repo "var\l4a-symbolic-$experiment"
+    if (Test-Path -LiteralPath $fixture) { throw 'Symbolic fixture already exists' }
+    $private = Join-Path $fixture 'Private'
+    [void][IO.Directory]::CreateDirectory($private)
+    [IO.File]::WriteAllText((Join-Path $private 'sample.txt'), 'C')
+    $helperExtra = @('--symbolic-fixture')
+    Write-Output "Additional fixed action: create $fixture\link-to-private -> $private for the alias test."
+    Write-Output 'No Developer Mode or system privilege setting is changed.'
+}
 $helper = Join-Path $PSScriptRoot 'probe-lpac-namespace-admin.py'
 Write-Output "Namespace experiment: $experiment"
 Write-Output 'The UAC helper can only add/remove five fixed query ACEs for this experiment.'
@@ -28,9 +40,9 @@ Write-Output "Report: $report"
 $adminProcess = $null
 $probeExit = 1
 try {
-    $adminProcess = Start-Process -FilePath $python -ArgumentList @(
-        '-I', ('"{0}"' -f $helper), '--experiment', $experiment, '--apply'
-    ) -Verb RunAs -WindowStyle Hidden -PassThru
+    $helperArguments = @('-I', ('"{0}"' -f $helper), '--experiment', $experiment, '--apply') + $helperExtra
+    $adminProcess = Start-Process -FilePath $python -ArgumentList $helperArguments `
+        -Verb RunAs -WindowStyle Hidden -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $ready = $false
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -49,7 +61,10 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $ready) { throw "Namespace initialization was not ready; inspect $report" }
-    if ($Probe -eq 'quiescent') {
+    if ($Probe -eq 'completion') {
+        & $python (Join-Path $PSScriptRoot 'probe-lpac-completion.py') --output $output `
+            --namespace-experiment $experiment
+    } elseif ($Probe -eq 'quiescent') {
         & $python (Join-Path $PSScriptRoot 'probe-lpac-quiescent.py') --output $output `
             --toolchain --namespace-experiment $experiment
     } else {
@@ -71,5 +86,9 @@ if (Test-Path -LiteralPath $report) {
     $finalState = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
     Write-Output ($finalState | ConvertTo-Json -Depth 8)
     if ($finalState.status -ne 'cleaned') { exit 1 }
+}
+if ($Probe -eq 'completion' -and $probeExit -eq 0) {
+    & $python (Join-Path $PSScriptRoot 'finalize-lpac-completion.py') --experiment $experiment
+    $probeExit = $LASTEXITCODE
 }
 exit $probeExit

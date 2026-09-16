@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--toolchain", action="store_true")
+    parser.add_argument("--remaining-gate", action="store_true")
     parser.add_argument("--namespace-experiment")
     args = parser.parse_args()
     if sys.platform != "win32" or ctypes.windll.shell32.IsUserAnAdmin():
@@ -53,6 +54,16 @@ def main():
     for name in ("Work", "Archive", "Private", "DetachedWork"):
         (root / name).mkdir(parents=True)
         (root / name / "sample.txt").write_text(name.lower(), encoding="utf-8")
+    if args.remaining_gate:
+        import win32security as security
+
+        special = root / "Work/Special"
+        special.mkdir()
+        (special / "sample.txt").write_text("special")
+        acl = security.GetNamedSecurityInfo(str(special), 1, 4).GetSecurityDescriptorDacl()
+        security.SetNamedSecurityInfo(
+            str(special), 1, security.DACL_SECURITY_INFORMATION
+            | security.PROTECTED_DACL_SECURITY_INFORMATION, None, None, acl, None)
     for name, content in (("archive.txt", "archive-move"), ("private.txt", "private")):
         (root / "Work" / name).write_text(content, encoding="utf-8")
     (root / "Work/folder").mkdir()
@@ -69,6 +80,9 @@ def main():
         shutil.copytree(base / name, python / name,
                         ignore=shutil.ignore_patterns("site-packages", "__pycache__", "test"))
     shutil.copyfile(repo / "scripts/lpac-movement-payload.py", runtime / "payload.py")
+    if args.remaining_gate:
+        shutil.copyfile(repo / "scripts/lpac-policy-payload.py", runtime / "policy-payload.py")
+        shutil.copyfile(repo / "scripts/lpac-isolation-payload.py", runtime / "isolation-payload.py")
     (runtime / "hold.py").write_text(
         "import pathlib,sys,time\npathlib.Path(sys.argv[1]).write_text('ready')\n"
         "time.sleep(60)\n", encoding="utf-8")
@@ -94,6 +108,9 @@ def main():
                       repo / "scripts/lpac_probe/native.py", repo / "scripts/lpac_probe/standing.py",
                       repo / "scripts/lpac_probe/movement.py", repo / "scripts/lpac-movement-payload.py",
                       repo / "scripts/lpac_probe/toolchain.py",
+                      repo / "scripts/lpac_probe/jobs.py", repo / "scripts/lpac_probe/gate_cases.py",
+                      repo / "scripts/lpac-policy-payload.py",
+                      repo / "src/agent_adapters/local/dependencies.py",
                       repo / "src/agent_subsystems/workspaces/permission_preparation.py")},
               "not_executed": ["full_P1b", "cross_host_withdrawal", "live_move_revocation",
                                "production_file_worker", "complete_toolchain"]}
@@ -110,7 +127,11 @@ def main():
             os.fsync(file.fileno())
         os.replace(pending, output / "report.json")
 
-    backend = FixturePreparationBackend(root, report, save)
+    from agent_adapters.local.dependencies import DependencyManifest
+
+    dependencies = DependencyManifest.capture(runtime) if args.remaining_gate else None
+    backend = FixturePreparationBackend(root, report, save, dependencies=dependencies)
+    report["extra_checks"], report["extra_results"] = {}, {}
 
     def new_preparation(access, revision):
         snapshot = freeze_policy(StandingPermissionPolicy("probe", "local", revision, (
@@ -157,6 +178,15 @@ def main():
         report["checks"]["baseline"] = all(evaluate(result, sid).values())
         if not report["checks"]["baseline"]:
             raise RuntimeError("Positive baseline failed")
+        if args.remaining_gate:
+            from lpac_probe.gate_cases import command_groups, parallel_policies
+
+            (root / "Work/sample.txt").write_text("work", encoding="utf-8")
+            parallel_policies(old, new_preparation, profiles, root, runtime, output,
+                              backend, report, save)
+            command_groups(old, profiles, root, runtime, output, backend, report, save)
+            if not all(report["extra_checks"].values()):
+                raise RuntimeError("A required native policy or Job gate failed")
         if args.toolchain:
             from lpac_probe.toolchain import run as run_toolchain
 
@@ -252,6 +282,12 @@ def main():
                 lease.finish(job_drained=not profiles[4].cleanup_blocked)
         current.retire()
         save()
+        if args.remaining_gate:
+            from lpac_probe.gate_cases import mutation_gates
+            from lpac_probe.standing import fixture_acl
+
+            report["extra_checks"]["special_inheritance_preserved"] = fixture_acl(special)["protected"]
+            mutation_gates(new_preparation, backend, root, runtime, output, report, save)
 
         # Compensation and failed withdrawal must not create a ready or successful state.
         backend.failure = "prepare"
@@ -307,6 +343,9 @@ def main():
             not report.get("error") and not report.get("cleanup_error")
             and report.get("cleanup_verified") is True and len(report["checks"]) == 14
             and all(value is True for value in report["checks"].values()))
+        if args.remaining_gate:
+            report["subset_passed"] &= (len(report["extra_checks"]) == 12
+                                         and all(report["extra_checks"].values()))
         if args.toolchain:
             report["toolchain_passed"] = all(report.get(name, {}).get("passed") is True
                                              for name in ("toolchain_modify", "toolchain_readonly"))

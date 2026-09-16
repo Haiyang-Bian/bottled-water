@@ -120,6 +120,8 @@
   },
     "system": {
       "sandbox:unit": [
+        "tests/test_dependency_manifest.py",
+        "tests/test_lpac_completion_gate.py",
         "tests/test_lpac_probe.py",
         "tests/test_permission_policy.py",
         "tests/test_permission_preparation.py",
@@ -127,6 +129,7 @@
         "tests/test_lpac_movement_probe.py"
       ],
       "sandbox:integration": [
+        "tests/test_lpac_completion_native.py",
         "tests/test_lpac_native.py",
         "tests/test_lpac_quiescent_native.py",
         "tests/test_lpac_movement_native.py"

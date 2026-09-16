@@ -29,11 +29,14 @@ def main():
     import win32api
     import win32event
     import win32file
+    import win32job
     import win32security as security
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--crash-host", action="store_true")
+    parser.add_argument("--nested-jobs", action="store_true")
+    parser.add_argument("--symbolic-fixture-id")
     args = parser.parse_args()
     if ctypes.windll.shell32.IsUserAnAdmin():
         parser.error("The probe must run as the ordinary user")
@@ -75,6 +78,9 @@ def main():
     python = str(runtime / "python.exe")
     prefix = [python, "-I", "-S", "-B", str(output / "R/payload.py")]
     profiles = [LpacProfile(), LpacProfile()]
+    from lpac_probe.jobs import OwnedJob
+
+    run_jobs = [OwnedJob(), OwnedJob()] if args.nested_jobs else []
     report = {
         "profiles": [{"name": p.name} for p in profiles],
         "results": {},
@@ -83,6 +89,8 @@ def main():
         "checks": {},
         "p1_release_gate": "not_passed",
         "os_build": str(sys.getwindowsversion()),
+        "nested_jobs": args.nested_jobs,
+        "host_in_outer_job": bool(win32job.IsProcessInJob(win32api.GetCurrentProcess(), None)),
         "source_sha256": {
             str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in (
@@ -90,6 +98,7 @@ def main():
                 repo / "scripts/lpac-isolation-payload.py",
                 repo / "scripts/lpac_probe/native.py",
                 repo / "scripts/lpac_probe/adversarial.py",
+                repo / "scripts/lpac_probe/jobs.py",
             )
         },
     }
@@ -123,6 +132,7 @@ def main():
             own,
             environment=env(own),
             registry_read=True,
+            parent_jobs=(run_jobs[index].handle,) if run_jobs else (),
             **kwargs,
         )
 
@@ -340,7 +350,12 @@ def main():
             for listener in listeners:
                 listener.close()
         startup_faults(profiles[0], launch, report, save)
-        aliases(output, launch, report, save)
+        provided = None
+        if args.symbolic_fixture_id:
+            from lpac_probe.symbolic_fixture import paths
+
+            _, provided, _ = paths(repo, args.symbolic_fixture_id)
+        aliases(output, launch, report, save, provided_symbolic=provided)
     except BaseException as exc:
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc()
@@ -352,6 +367,9 @@ def main():
             os.environ.pop("AGENTHUB_PROBE_PRIVATE", None)
         else:
             os.environ["AGENTHUB_PROBE_PRIVATE"] = previous_sentinel
+        for parent in run_jobs:
+            parent.close()
+        report["parent_jobs_closed"] = all(parent.handle is None for parent in run_jobs)
         # Reuse the existing no-follow fixture walker; never follow aliases in cleanup.
         spec = importlib.util.spec_from_file_location(
             "lpac_probe_main", repo / "scripts/probe-windows-lpac.py"

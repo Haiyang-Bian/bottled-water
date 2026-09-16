@@ -1,6 +1,7 @@
 """Bounded administrator experiment: add fixed query ACEs, wait, then remove.
 
-Only accepts an experiment UUID. It cannot execute commands, accept target paths,
+Accepts an experiment UUID and optional fixed symbolic fixture creation. It cannot
+execute commands or accept target paths,
 change ownership, grant network access, or interpret requests from the LPAC child.
 The ordinary host runs probes separately. The stop file only requests cleanup.
 """
@@ -37,6 +38,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--symbolic-fixture", action="store_true")
     args = parser.parse_args()
     name = capability_name(args.experiment)
     root = Path(__file__).resolve().parents[1] / "var"
@@ -89,6 +91,13 @@ def main():
             if not args.apply:
                 report["status"] = "preview_only"
                 return
+            if args.symbolic_fixture:
+                from lpac_probe.symbolic_fixture import create
+
+                report["symbolic_fixture"] = {"state": "intent"}
+                save()
+                report["symbolic_fixture"] = create(root.parent, args.experiment)
+                save()
             for index, (target, handle) in enumerate(handles):
                 report["targets"][index]["state"] = "intent"
                 managed.append((index, target, handle))
@@ -119,6 +128,13 @@ def main():
             report["traceback"] = traceback.format_exc()
             report["status"] = "failed"
         finally:
+            if "symbolic_fixture" in report:
+                try:
+                    from lpac_probe.symbolic_fixture import cleanup
+
+                    report["symbolic_fixture"]["cleanup"] = cleanup(root.parent, args.experiment)
+                except Exception as exc:
+                    report["cleanup_errors"].append({"fixture": "symbolic_link", "error": str(exc)})
             for index, target, handle in reversed(managed):
                 try:
                     acl = read_acl(handle)
