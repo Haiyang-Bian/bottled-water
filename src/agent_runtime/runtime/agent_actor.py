@@ -103,6 +103,7 @@ class AgentActor:
         current: asyncio.Future[AgentExecutionResult] | None = None
         try:
             while True:
+                self.cancellation.raise_if_cancelled()
                 event = await self.mailbox.recv()
                 if event.type in {CONTROL_CANCEL, CONTROL_SHUTDOWN}:
                     return
@@ -122,6 +123,7 @@ class AgentActor:
                         cancellation=self.cancellation,
                         lease=self.lease,
                     )
+                    self.cancellation.raise_if_cancelled()
                     self.lease.require_valid()
                     if not current.done():
                         current.set_result(result)

@@ -3,7 +3,7 @@
 import json
 
 from agent_contracts.errors import OperationError
-from agent_contracts.execution import ToolSpec
+from agent_contracts.execution import AuthorizationRequest, ToolSpec
 from agent_runtime.core.types import ToolResult
 from .invoker import validate
 
@@ -91,7 +91,8 @@ class HistoryToolExecutor:
                 context.check()
                 if (
                     authorization.authorize(
-                        ToolSpec(NAME, DESCRIPTION, PARAMETERS, "files"), context
+                        AuthorizationRequest(ToolSpec(NAME, DESCRIPTION, PARAMETERS, "files"),
+                                             context, call.parameters)
                     )
                     != "allow"
                 ):

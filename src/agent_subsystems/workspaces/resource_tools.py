@@ -3,7 +3,7 @@
 from dataclasses import asdict
 
 from agent_contracts.errors import OperationError
-from agent_contracts.execution import ToolSpec
+from agent_contracts.execution import AuthorizationRequest, ToolSpec
 from agent_contracts.resources import ResourceAccessContext, ResourceSource
 from agent_runtime.core.types import ToolResult
 from agent_subsystems.memory.tools import spec
@@ -64,11 +64,13 @@ SPECS = [
 
 
 class ResourceToolExecutor:
-    def __init__(self, delegate, resources, access, software, tasks, probe, redactor):
+    def __init__(self, delegate, resources, access, software, tasks, probe, redactor,
+                 file_operations=None):
         self.delegate, self.resources, self.access = delegate, resources, access
         self.software, self.tasks, self.probe, self.redactor = software, tasks, probe, redactor
         self.context = getattr(delegate, "context", None)
         self.authorization = getattr(delegate, "authorization", None)
+        self.file_operations = file_operations
 
     def bind_execution(self, request, cancellation, lease):
         bound = self.delegate.bind_execution(request, cancellation, lease)
@@ -76,7 +78,8 @@ class ResourceToolExecutor:
             self.access.environment_id, request.agent.id, request.context_scope_id, request.run_id
         )
         return ResourceToolExecutor(
-            bound, self.resources, access, self.software, self.tasks, self.probe, self.redactor
+            bound, self.resources, access, self.software, self.tasks, self.probe, self.redactor,
+            self.file_operations,
         )
 
     async def list_tools(self):
@@ -104,7 +107,8 @@ class ResourceToolExecutor:
             if (
                 capability
                 and self.authorization.authorize(
-                    ToolSpec(name, "", schema, capability), self.context
+                    AuthorizationRequest(ToolSpec(name, "", schema, capability),
+                                         self.context, args)
                 )
                 != "allow"
             ):
@@ -145,10 +149,15 @@ class ResourceToolExecutor:
                 }
             elif name == "resource.verify":
                 record = self.resources.read(self.access, args["id"])
-                path = resolve_resource(
-                    self.context.grant.workspace, self.context.location, record.content.path
-                )
-                facts = await self.probe(path, self.context)
+                if self.file_operations is not None:
+                    facts = await self.file_operations.invoke(
+                        "probe", {"path": record.content.path}, self.context)
+                    path = facts.pop("path")
+                else:
+                    path = resolve_resource(
+                        self.context.grant.workspace, self.context.location, record.content.path
+                    )
+                    facts = await self.probe(path, self.context)
                 record = self.resources.observe(
                     self.access,
                     str(path),

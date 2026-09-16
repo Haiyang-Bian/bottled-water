@@ -11,6 +11,8 @@
 import asyncio
 
 from agent_contracts.logging import get_logger
+from agent_contracts.harness import ExecutionStopped
+from agent_contracts.errors import OperationError
 from .registry import ToolRegistry
 from agent_runtime.core.types import ToolCall, ToolResult
 
@@ -71,6 +73,10 @@ class ToolExecutorImpl:
                 success=True,
                 result=result,
             )
+        except ExecutionStopped:
+            raise
+        except OperationError as exc:
+            return ToolResult(tool_call.call_id, False, {"error_code": exc.code}, str(exc))
         except Exception as e:
             logger.error(
                 "内置工具执行失败",
@@ -111,6 +117,8 @@ class ToolExecutorImpl:
                 success=True,
                 result=result,
             )
+        except ExecutionStopped:
+            raise
         except Exception as e:
             logger.error(
                 "MCP 工具执行失败",

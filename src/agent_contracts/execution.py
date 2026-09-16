@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from .permissions import ExecutionPolicySnapshot
+
 
 @dataclass(frozen=True)
 class WorkspaceSpec:
@@ -21,6 +23,13 @@ class ResourceGrant:
     workspace: WorkspaceSpec
     capabilities: frozenset[str]
     execution_mode: str = "current_user"
+    policy: ExecutionPolicySnapshot | None = None
+
+    def __post_init__(self):
+        if self.execution_mode not in {"current_user", "windows_lpac"}:
+            raise ValueError("Unsupported execution mode")
+        if (self.execution_mode == "windows_lpac") != (self.policy is not None):
+            raise ValueError("Restricted execution requires a frozen policy")
 
 
 @dataclass(frozen=True)
@@ -47,9 +56,20 @@ class ToolSpec:
     capability: str
 
 
+@dataclass(frozen=True)
+class AuthorizationRequest:
+    """Validated arguments; target resolution belongs to the selected driver."""
+
+    spec: ToolSpec
+    context: ExecutionContext
+    parameters: dict
+    operation: str | None = None
+    target: str | None = None
+
+
 class AuthorizationPort(Protocol):
     def authorize(
-        self, spec: ToolSpec, context: ExecutionContext
+        self, request: AuthorizationRequest
     ) -> Literal["allow", "deny", "requires_user"]: ...
 
 
@@ -70,6 +90,24 @@ class ProcessDriver(Protocol):
         context: ExecutionContext,
         env: dict[str, str] | None = None,
     ) -> dict: ...
+    async def aclose(self) -> None: ...
+
+
+class FileOperationsPort(Protocol):
+    async def invoke(self, operation: str, parameters: dict, context: ExecutionContext) -> dict: ...
+
+
+class PermissionLeasePort(Protocol):
+    def require_valid(self) -> None: ...
+    def finish(self, *, job_drained: bool) -> None: ...
+
+
+class ExecutionIsolationPort(Protocol):
+    capabilities: dict[str, bool]
+
+    async def prepare(self, context: ExecutionContext) -> None: ...
+    async def drain(self) -> None: ...
+    async def revoke(self, reason_code: str) -> None: ...
     async def aclose(self) -> None: ...
 
 

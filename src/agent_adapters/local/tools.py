@@ -2,11 +2,11 @@
 
 import base64
 
+from agent_contracts.errors import OperationError
 from agent_contracts.execution import ExecutionContext, ToolSpec
 from agent_subsystems.tools.registry import ToolRegistry
 from agent_subsystems.tools.invoker import AuthorizedToolInvoker
-from agent_subsystems.workspaces.paths import resolve_resource
-from .files import LocalFiles
+from .file_operations import BoundFileOperations, LocalFileOperations
 from .processes import executable, powershell_executable
 
 
@@ -14,7 +14,8 @@ class TrustAuthorization:
     def __init__(self, store):
         self.store = store
 
-    def authorize(self, spec, context):
+    def authorize(self, request):
+        spec, context = request.spec, request.context
         if spec.capability not in context.grant.capabilities:
             return "deny"
         if not all(self.store.is_trusted(root) for root in context.grant.workspace.roots):
@@ -37,13 +38,16 @@ async def read_git_index(driver, directory, context):
 
 
 class LocalToolExecutor:
-    def __init__(self, grant, location, authorization, process_driver, redactor, *, shell=None):
+    def __init__(self, grant, location, authorization, process_driver, redactor, *, shell=None,
+                 file_operations=None, executables=None):
         self.grant = grant
         self.location = location
         self.authorization = authorization
         self.process_driver = process_driver
         self.redactor = redactor
         self.shell = shell
+        self.file_operations = file_operations
+        self.executables = executables
 
     def bind_execution(self, request, cancellation, lease):
         context = ExecutionContext(
@@ -61,7 +65,16 @@ class LocalToolExecutor:
         async def read_index(directory):
             return await read_git_index(self.process_driver, directory, context)
 
-        files = LocalFiles(self.grant.workspace, self.location, index_reader=read_index)
+        files = BoundFileOperations(
+            self.file_operations or LocalFileOperations(index_reader=read_index), context)
+
+        def selected_executable(kind):
+            if self.executables is not None:
+                selected = self.executables.get(kind)
+                if not selected:
+                    raise OperationError("software_incompatible", "No verified isolated " + kind + " copy")
+                return selected
+            return powershell_executable(self.shell) if kind == "pwsh" else executable(kind)
 
         def register(name, description, handler, properties, required, capability):
             schema = {
@@ -75,14 +88,12 @@ class LocalToolExecutor:
                 execution = {"default_cwd": str(context.location.cwd),
                              "workspace_version": context.location.version}
                 if capability == "process":
-                    execution["cwd"] = str(resolve_resource(
-                        self.grant.workspace, context.location, kwargs.get("cwd", "."),
+                    execution["cwd"] = str(await files.resolve(
+                        kwargs.get("cwd", "."),
                         directory=True,
                     ))
                 else:
-                    execution["path"] = str(resolve_resource(
-                        self.grant.workspace, context.location, kwargs.get("path", ".")
-                    ))
+                    execution["path"] = str(await files.resolve(kwargs.get("path", ".")))
                 result = await handler(**kwargs)
                 if isinstance(result, dict):
                     result["execution"] = execution
@@ -149,18 +160,29 @@ class LocalToolExecutor:
         )
 
         async def powershell(script, cwd=".", timeout=120):
-            directory = resolve_resource(self.grant.workspace, context.location, cwd, directory=True)
+            directory = await files.resolve(cwd, directory=True)
             prefix = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; $ErrorActionPreference = 'Stop'; $global:LASTEXITCODE = 0;\n"
+            location_setup = ""
+            if self.executables is not None:
+                # A PSDrive rooted at the approved cwd avoids walking ungranted
+                # ancestors while PowerShell normalizes its initial location.
+                literal = str(directory).replace("'", "''")
+                location_setup = (
+                    f"New-PSDrive -Name AgentHub -PSProvider FileSystem -Root '{literal}' "
+                    "-Scope Global -ErrorAction Stop | Out-Null;\n"
+                    "Set-Location -LiteralPath 'AgentHub:\\' -ErrorAction Stop;\n"
+                )
             code = (
                 prefix
                 + "try {\n"
+                + location_setup
                 + script
                 + "\nif ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }\n} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }"
             )
             encoded = base64.b64encode(code.encode("utf-16-le")).decode("ascii")
             return await self.process_driver.run(
                 [
-                    powershell_executable(self.shell),
+                    selected_executable("pwsh"),
                     "-NoLogo",
                     "-NoProfile",
                     "-NonInteractive",
@@ -173,9 +195,9 @@ class LocalToolExecutor:
             )
 
         async def git(args, cwd=".", timeout=120):
-            directory = resolve_resource(self.grant.workspace, context.location, cwd, directory=True)
+            directory = await files.resolve(cwd, directory=True)
             return await self.process_driver.run(
-                [executable("git"), "--no-pager", *args],
+                [selected_executable("git"), "--no-pager", *args],
                 directory,
                 timeout=timeout,
                 context=context,
@@ -185,7 +207,11 @@ class LocalToolExecutor:
         common = {"cwd": string, "timeout": {"type": "number"}}
         register(
             "powershell.run",
-            "Execute a non-interactive PowerShell script with current-user permissions. Supports pipes and multiline scripts; no OS sandbox.",
+            ("Execute PowerShell 7 inside the Windows restricted driver; offline with frozen file permissions. "
+             "Initial location is the temporary AgentHub: drive rooted at cwd. "
+             "Use (Get-Location).ProviderPath for its actual filesystem path."
+             if self.grant.execution_mode == "windows_lpac" else
+             "Execute a non-interactive PowerShell script with current-user permissions. Supports pipes and multiline scripts; no OS sandbox."),
             powershell,
             {"script": string, **common},
             ["script"],

@@ -4,13 +4,13 @@ import codecs
 import fnmatch
 import hashlib
 import os
-import asyncio
 import json
 from pathlib import Path
 from uuid import uuid4
 
 from agent_contracts.errors import OperationError
 from agent_subsystems.workspaces.paths import resolve_resource
+from .file_probes import cooperate
 
 OUTPUT_LIMIT = 65536
 MAX_TEXT_BYTES = 8 * 1024 * 1024
@@ -47,10 +47,11 @@ def bounded(text):
 
 
 class LocalFiles:
-    def __init__(self, workspace, location, *, index_reader=None):
+    def __init__(self, workspace, location, *, index_reader=None, checkpoint=cooperate):
         self.index_reader = index_reader
         self.workspace = workspace
         self.location = location
+        self.checkpoint = checkpoint
 
     def _read(self, path):
         if path.stat().st_size > MAX_TEXT_BYTES:
@@ -171,7 +172,7 @@ class LocalFiles:
 
     async def _walk(self, directory, policy, *, recursive=True, directories=False):
         for root, dirs, files in os.walk(directory, followlinks=False):
-            await asyncio.sleep(0)
+            await self.checkpoint()
             root_path = Path(root)
             self._load_ignore(policy, root_path)
             visible_dirs = []
@@ -191,7 +192,7 @@ class LocalFiles:
                     continue
             dirs[:] = visible_dirs if recursive else []
             for name in sorted(files):
-                await asyncio.sleep(0)
+                await self.checkpoint()
                 path = root_path / name
                 if not policy.visible(path):
                     continue
